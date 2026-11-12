@@ -1,19 +1,82 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import {
+  ThemeProvider,
+  CssBaseline,
+  Box,
+  Drawer,
+  AppBar,
+  Toolbar,
+  Typography,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  IconButton,
+  Button,
+  Fab,
+  BottomNavigation,
+  BottomNavigationAction,
+  Paper,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  Chip,
+  Badge,
+  useMediaQuery,
+  Card,
+  CardContent,
+  Stack,
+  Divider,
+} from '@mui/material';
+import SpaceDashboardRounded from '@mui/icons-material/SpaceDashboardRounded';
+import ReceiptLongRounded from '@mui/icons-material/ReceiptLongRounded';
+import SavingsRounded from '@mui/icons-material/SavingsRounded';
+import AccountBalanceWalletRounded from '@mui/icons-material/AccountBalanceWalletRounded';
+import TuneRounded from '@mui/icons-material/TuneRounded';
+import AddRounded from '@mui/icons-material/AddRounded';
+import LightModeRounded from '@mui/icons-material/LightModeRounded';
+import DarkModeRounded from '@mui/icons-material/DarkModeRounded';
+import ShieldRounded from '@mui/icons-material/ShieldRounded';
+import CloudDoneRounded from '@mui/icons-material/CloudDoneRounded';
+import CloudOffRounded from '@mui/icons-material/CloudOffRounded';
+import RestartAltRounded from '@mui/icons-material/RestartAltRounded';
+import CloseRounded from '@mui/icons-material/CloseRounded';
+import SyncRounded from '@mui/icons-material/SyncRounded';
+
+import { createMd3Theme } from './theme/md3-theme';
 import { LocalLedgerEngine } from './sync/local-replica';
 import { QuickInputBar } from './components/QuickInputBar';
+import { OverviewPage } from './components/OverviewPage';
+import { TransactionsView } from './components/TransactionsView';
 import { BudgetPoolsDashboard } from './components/BudgetPoolsDashboard';
 import { AccountMatrixPanel } from './components/AccountMatrixPanel';
 import { AssetAndProjectTracker } from './components/AssetAndProjectTracker';
 import { SyncAndConflictModal } from './components/SyncAndConflictModal';
-import { TransactionAggregate } from '@ledger/core';
+
+type NavTab = 'overview' | 'transactions' | 'budgets' | 'accounts' | 'settings';
+
+const DRAWER_WIDTH = 250;
 
 export const App: React.FC = () => {
-  // 单例本地账本引擎
-  const engine = useMemo(() => new LocalLedgerEngine(), []);
-  const [, setTick] = useState(0);
+  // 1. 本地存储主题模式 (默认 'light' 呈现清爽 MD3 质感)
+  const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('geek_ledger_theme_mode');
+    return saved === 'dark' ? 'dark' : 'light';
+  });
+
+  // 2. 当前导航标签
+  const [currentTab, setCurrentTab] = useState<NavTab>('overview');
+
+  // 3. 弹窗状态
+  const [showQuickRecordModal, setShowQuickRecordModal] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
 
-  // 监听本地账本任何变动，驱动整树响应式刷新
+  // 4. 单例本地账本引擎
+  const engine = useMemo(() => new LocalLedgerEngine(), []);
+  const [, setTick] = useState(0);
+
+  // 监听本地账本变动并触发响应式更新
   useEffect(() => {
     const unsubscribe = engine.subscribe(() => {
       setTick((t) => t + 1);
@@ -21,12 +84,25 @@ export const App: React.FC = () => {
     return unsubscribe;
   }, [engine]);
 
-  const transactions: TransactionAggregate[] = engine.state.transactions.filter(
-    (tx) => !tx.header.is_deleted
-  );
+  // 保持 HTML 根元素 theme 属性同步
+  useEffect(() => {
+    localStorage.setItem('geek_ledger_theme_mode', themeMode);
+    document.documentElement.setAttribute('data-theme', themeMode);
+  }, [themeMode]);
+
+  // 构建 MD3 主题
+  const theme = useMemo(() => createMd3Theme(themeMode), [themeMode]);
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
 
   const pendingCount = engine.state.pendingSyncOps.length;
+  const pendingConflictCount = engine.state.conflicts.filter(
+    (c) => c.status === 'PENDING'
+  ).length;
   const isOffline = engine.state.isOfflineMode;
+
+  const handleToggleTheme = () => {
+    setThemeMode((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
 
   const handleResetSeed = () => {
     if (confirm('确定要将本地数据重置回 PRD 初始种子快照吗？')) {
@@ -34,212 +110,542 @@ export const App: React.FC = () => {
     }
   };
 
+  const NAV_ITEMS: { key: NavTab; label: string; icon: React.ReactElement }[] = [
+    { key: 'overview', label: '概览', icon: <SpaceDashboardRounded /> },
+    { key: 'transactions', label: '账单', icon: <ReceiptLongRounded /> },
+    { key: 'budgets', label: '预算与心愿', icon: <SavingsRounded /> },
+    { key: 'accounts', label: '账户与卡包', icon: <AccountBalanceWalletRounded /> },
+    { key: 'settings', label: '设置与同步', icon: <TuneRounded /> },
+  ];
+
   return (
-    <div className="geek-ledger-workbench">
-      {/* 顶部极客风状态导航栏 */}
-      <header className="app-navbar">
-        <div className="navbar-container flex-row items-center justify-between">
-          <div className="flex-row items-center gap-sm">
-            <span className="app-logo">⚡</span>
-            <div>
-              <div className="flex-row items-center gap-xs">
-                <h1 className="app-title font-bold text-light">GeekLedger</h1>
-                <span className="badge badge-accent">Stage 6</span>
-                <span className="badge badge-outline">Local-First</span>
-              </div>
-              <p className="app-subtitle text-xs text-muted">
-                极客大学生分布式个人记账与预算系统 · 纯前端本地优先离线工作台
-              </p>
-            </div>
-          </div>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+        {/* ================================================================= */}
+        {/* 1. 桌面端永久抽屉导航 (Desktop Left Drawer) */}
+        {/* ================================================================= */}
+        {isDesktop && (
+          <Drawer
+            variant="permanent"
+            sx={{
+              width: DRAWER_WIDTH,
+              flexShrink: 0,
+              '& .MuiDrawer-paper': {
+                width: DRAWER_WIDTH,
+                boxSizing: 'border-box',
+                borderRight: '1px solid',
+                borderColor: 'divider',
+                bgcolor: 'background.paper',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                p: 2,
+              },
+            }}
+          >
+            {/* 抽屉顶部：品牌 Header + 记一笔主操作 */}
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2.5, px: 1 }}>
+                <Box
+                  sx={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: '12px',
+                    bgcolor: 'primary.main',
+                    color: 'primary.contrastText',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.25rem',
+                    boxShadow: '0 4px 12px rgba(11, 87, 208, 0.3)',
+                  }}
+                >
+                  ⚡
+                </Box>
+                <Box>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>
+                    GeekLedger
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+                    MD3 个人分布式账本
+                  </Typography>
+                </Box>
+              </Box>
 
-          <div className="navbar-right-actions flex-row items-center gap-sm">
-            {/* 在线/离线网络状态药丸 */}
-            <button
-              type="button"
-              className={`status-pill ${
-                isOffline ? 'status-pill-offline' : 'status-pill-online'
-              }`}
-              onClick={() => engine.setOfflineMode(!isOffline)}
-              title="点击可一键切换在线与离线无网模式"
+              {/* 醒目的「+ 记一笔」按钮 */}
+              <Button
+                variant="contained"
+                color="primary"
+                fullWidth
+                size="large"
+                startIcon={<AddRounded />}
+                onClick={() => setShowQuickRecordModal(true)}
+                sx={{
+                  py: 1.2,
+                  mb: 2.5,
+                  borderRadius: 999,
+                  fontWeight: 700,
+                  fontSize: '0.95rem',
+                  boxShadow: '0 4px 14px rgba(11, 87, 208, 0.25)',
+                }}
+              >
+                + 记一笔
+              </Button>
+
+              {/* 5 大核心导航按钮列表 */}
+              <List disablePadding>
+                {NAV_ITEMS.map((item) => {
+                  const isSelected = currentTab === item.key;
+                  return (
+                    <ListItem key={item.key} disablePadding sx={{ mb: 0.5 }}>
+                      <ListItemButton
+                        selected={isSelected}
+                        onClick={() => setCurrentTab(item.key)}
+                        sx={{ py: 1.2, px: 2 }}
+                      >
+                        <ListItemIcon
+                          sx={{
+                            minWidth: 40,
+                            color: isSelected ? 'primary.main' : 'text.secondary',
+                          }}
+                        >
+                          {item.icon}
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={
+                            <Typography
+                              sx={{
+                                fontWeight: isSelected ? 700 : 500,
+                                fontSize: '0.9rem',
+                                color: isSelected ? 'primary.main' : 'text.primary',
+                              }}
+                            >
+                              {item.label}
+                            </Typography>
+                          }
+                        />
+                      </ListItemButton>
+                    </ListItem>
+                  );
+                })}
+              </List>
+            </Box>
+
+            {/* 抽屉底部状态与操作控制栏 */}
+            <Box sx={{ pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+              {/* 在线/离线网络状态 */}
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  p: 1,
+                  borderRadius: 2,
+                  bgcolor: (t) =>
+                    t.palette.mode === 'light' ? '#f5f7fc' : '#141a24',
+                  mb: 1.5,
+                  cursor: 'pointer',
+                }}
+                onClick={() => engine.setOfflineMode(!isOffline)}
+                title="点击切换离线/在线状态"
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {isOffline ? (
+                    <CloudOffRounded fontSize="small" color="warning" />
+                  ) : (
+                    <CloudDoneRounded fontSize="small" color="success" />
+                  )}
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                    {isOffline ? '离线无网模式' : '在线同步就绪'}
+                  </Typography>
+                </Box>
+                {pendingCount > 0 && (
+                  <Chip
+                    size="small"
+                    label={`待传 ${pendingCount}`}
+                    color="warning"
+                    sx={{ height: 20, fontSize: '0.65rem' }}
+                  />
+                )}
+              </Box>
+
+              {/* 快捷操作条：深浅色切换、协同中心、重置种子 */}
+              <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                <IconButton
+                  size="small"
+                  onClick={handleToggleTheme}
+                  title={themeMode === 'light' ? '切换深色模式' : '切换浅色模式'}
+                  sx={{ color: 'text.secondary' }}
+                >
+                  {themeMode === 'light' ? <DarkModeRounded /> : <LightModeRounded />}
+                </IconButton>
+
+                <IconButton
+                  size="small"
+                  color={pendingConflictCount > 0 ? 'error' : 'primary'}
+                  onClick={() => setShowSyncModal(true)}
+                  title="多端分布式协同演练中心"
+                >
+                  <Badge badgeContent={pendingConflictCount} color="error">
+                    <ShieldRounded />
+                  </Badge>
+                </IconButton>
+
+                <Button
+                  size="small"
+                  variant="text"
+                  color="inherit"
+                  onClick={handleResetSeed}
+                  startIcon={<RestartAltRounded fontSize="small" />}
+                  sx={{ fontSize: '0.75rem', color: 'text.secondary' }}
+                >
+                  重置种子
+                </Button>
+              </Stack>
+            </Box>
+          </Drawer>
+        )}
+
+        {/* ================================================================= */}
+        {/* 2. 主体工作区 (Main Content Area) */}
+        {/* ================================================================= */}
+        <Box
+          component="main"
+          sx={{
+            flexGrow: 1,
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflowX: 'hidden',
+          }}
+        >
+          {/* 桌面端顶栏 Header */}
+          {isDesktop ? (
+            <Box
+              sx={{
+                px: 4,
+                py: 2,
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+                bgcolor: 'background.paper',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
             >
-              <span className="status-dot" />
-              <span>{isOffline ? '离线无网模式' : '在线同步中'}</span>
-            </button>
+              <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                {NAV_ITEMS.find((it) => it.key === currentTab)?.label}
+              </Typography>
 
-            {/* 待同步队列标记 */}
-            {pendingCount > 0 && (
-              <span className="badge badge-warning" title="等待同步到服务端的 OpLog 数量">
-                待同步: {pendingCount}
-              </span>
+              <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+                <Chip
+                  icon={isOffline ? <CloudOffRounded /> : <CloudDoneRounded />}
+                  label={isOffline ? '离线模式' : '在线同步中'}
+                  color={isOffline ? 'warning' : 'success'}
+                  variant="outlined"
+                  size="small"
+                  onClick={() => engine.setOfflineMode(!isOffline)}
+                  sx={{ cursor: 'pointer' }}
+                />
+
+                <Button
+                  variant="outlined"
+                  size="small"
+                  color={pendingConflictCount > 0 ? 'error' : 'secondary'}
+                  startIcon={<ShieldRounded />}
+                  onClick={() => setShowSyncModal(true)}
+                  sx={{ borderRadius: 999 }}
+                >
+                  分布式防炸机中心
+                  {pendingConflictCount > 0 && ` (${pendingConflictCount})`}
+                </Button>
+              </Stack>
+            </Box>
+          ) : (
+            /* 移动端顶栏 AppBar */
+            <AppBar
+              position="sticky"
+              elevation={0}
+              sx={{
+                bgcolor: 'background.paper',
+                color: 'text.primary',
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+              }}
+            >
+              <Toolbar sx={{ justifyContent: 'space-between', px: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 800, color: 'primary.main' }}>
+                    ⚡
+                  </Typography>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                    {NAV_ITEMS.find((it) => it.key === currentTab)?.label}
+                  </Typography>
+                </Box>
+
+                <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+                  <IconButton size="small" onClick={handleToggleTheme}>
+                    {themeMode === 'light' ? <DarkModeRounded /> : <LightModeRounded />}
+                  </IconButton>
+
+                  <IconButton
+                    size="small"
+                    color={pendingConflictCount > 0 ? 'error' : 'primary'}
+                    onClick={() => setShowSyncModal(true)}
+                  >
+                    <Badge badgeContent={pendingConflictCount} color="error">
+                      <ShieldRounded />
+                    </Badge>
+                  </IconButton>
+                </Stack>
+              </Toolbar>
+            </AppBar>
+          )}
+
+          {/* 核心页面内容挂载容器 */}
+          <Box
+            sx={{
+              flex: 1,
+              p: { xs: 2, sm: 3, md: 4 },
+              pb: { xs: 12, md: 4 }, // 移动端预留底栏高度
+              maxWidth: 1300,
+              width: '100%',
+              margin: '0 auto',
+            }}
+          >
+            {/* Tab 1: 概览 */}
+            {currentTab === 'overview' && (
+              <OverviewPage
+                engine={engine}
+                onNavigate={(tab) => setCurrentTab(tab as NavTab)}
+                onOpenQuickRecord={() => setShowQuickRecordModal(true)}
+              />
             )}
 
-            {/* 同步演练中心呼出按钮 */}
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-cyan flex-row items-center gap-xs"
-              onClick={() => setShowSyncModal(true)}
+            {/* Tab 2: 账单 */}
+            {currentTab === 'transactions' && (
+              <TransactionsView
+                engine={engine}
+                onOpenQuickRecord={() => setShowQuickRecordModal(true)}
+              />
+            )}
+
+            {/* Tab 3: 预算与心愿 */}
+            {currentTab === 'budgets' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <BudgetPoolsDashboard engine={engine} />
+                <AssetAndProjectTracker engine={engine} />
+              </Box>
+            )}
+
+            {/* Tab 4: 账户与卡包 */}
+            {currentTab === 'accounts' && (
+              <AccountMatrixPanel engine={engine} />
+            )}
+
+            {/* Tab 5: 设置与同步 */}
+            {currentTab === 'settings' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <Card>
+                  <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+                      ⚙️ 系统设置与多端协同同步
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>
+                      基于混合逻辑时钟 (HLC) 与 OpLogs 增量日志的本地优先离线账本
+                    </Typography>
+
+                    <Divider sx={{ mb: 3 }} />
+
+                    <Stack spacing={2.5}>
+                      {/* 同步状态 */}
+                      <Stack
+                        direction={{ xs: 'column', sm: 'row' }}
+                        spacing={2}
+                        sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                            分布式同步状态
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            当前本地待同步 OpLogs: {pendingCount} 条 · 未决冲突:{' '}
+                            {pendingConflictCount} 项
+                          </Typography>
+                        </Box>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          startIcon={<ShieldRounded />}
+                          onClick={() => setShowSyncModal(true)}
+                        >
+                          打开分布式协同中心
+                        </Button>
+                      </Stack>
+
+                      <Divider />
+
+                      {/* 网络离线切换 */}
+                      <Stack
+                        direction={{ xs: 'column', sm: 'row' }}
+                        spacing={2}
+                        sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                            网络连接模式
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            {isOffline
+                              ? '当前处于纯前端离线脱网模式，所有变动暂存于 IndexedDB / LocalStorage'
+                              : '当前处于在线模式，自动保持后台同步心跳'}
+                          </Typography>
+                        </Box>
+                        <Button
+                          variant="outlined"
+                          color={isOffline ? 'warning' : 'primary'}
+                          onClick={() => engine.setOfflineMode(!isOffline)}
+                        >
+                          {isOffline ? '切换至在线模式' : '模拟断网离线'}
+                        </Button>
+                      </Stack>
+
+                      <Divider />
+
+                      {/* 重置演示数据 */}
+                      <Stack
+                        direction={{ xs: 'column', sm: 'row' }}
+                        spacing={2}
+                        sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'error.main' }}>
+                            数据恢复与重置
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            一键清空本地草稿与脏数据，恢复至 PRD 规范标准演示种子快照
+                          </Typography>
+                        </Box>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          startIcon={<RestartAltRounded />}
+                          onClick={handleResetSeed}
+                        >
+                          恢复初始 PRD 种子
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Box>
+            )}
+          </Box>
+        </Box>
+
+        {/* ================================================================= */}
+        {/* 3. 移动端浮动操作按钮 (FAB) & 底部导航 (Mobile Bottom Navigation) */}
+        {/* ================================================================= */}
+        {!isDesktop && (
+          <>
+            {/* 悬浮 + 记账 FAB 按钮 */}
+            <Fab
+              color="primary"
+              aria-label="add"
+              onClick={() => setShowQuickRecordModal(true)}
+              sx={{
+                position: 'fixed',
+                bottom: 76,
+                right: 20,
+                zIndex: 1100,
+              }}
             >
-              <span>🛡️</span>
-              <span>分布式协同与防炸机中心</span>
-              {engine.state.conflicts.filter((c) => c.status === 'PENDING').length > 0 && (
-                <span className="badge badge-danger">
-                  {engine.state.conflicts.filter((c) => c.status === 'PENDING').length}
-                </span>
-              )}
-            </button>
+              <AddRounded />
+            </Fab>
 
-            {/* 重置种子 */}
-            <button
-              type="button"
-              className="btn btn-sm btn-muted"
-              onClick={handleResetSeed}
-              title="重置本地为纯净种子数据"
+            {/* 底部固定导航栏 */}
+            <Paper
+              sx={{
+                position: 'fixed',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                zIndex: 1000,
+                borderTop: '1px solid',
+                borderColor: 'divider',
+              }}
+              elevation={3}
             >
-              ↺ 重置种子
-            </button>
-          </div>
-        </div>
-      </header>
+              <BottomNavigation
+                showLabels
+                value={currentTab}
+                onChange={(_, newVal: NavTab) => setCurrentTab(newVal)}
+                sx={{ bgcolor: 'background.paper' }}
+              >
+                {NAV_ITEMS.map((item) => (
+                  <BottomNavigationAction
+                    key={item.key}
+                    value={item.key}
+                    label={item.label}
+                    icon={item.icon}
+                  />
+                ))}
+              </BottomNavigation>
+            </Paper>
+          </>
+        )}
 
-      {/* 主体工作台内容区域 */}
-      <main className="main-content-layout container">
-        {/* 1. 模块 5：极速自然语言与公式记账台 */}
-        <section className="workbench-section">
-          <QuickInputBar engine={engine} />
-        </section>
+        {/* ================================================================= */}
+        {/* 4. 快捷记账全局 MD3 Dialog 弹窗 */}
+        {/* ================================================================= */}
+        <Dialog
+          open={showQuickRecordModal}
+          onClose={() => setShowQuickRecordModal(false)}
+          maxWidth="md"
+          fullWidth
+          slotProps={{
+            paper: {
+              sx: { borderRadius: '24px' },
+            },
+          }}
+        >
+          <DialogTitle
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontWeight: 700,
+              pb: 1,
+            }}
+          >
+            <span>⚡ 记一笔交易</span>
+            <IconButton
+              size="small"
+              onClick={() => setShowQuickRecordModal(false)}
+              sx={{ color: 'text.secondary' }}
+            >
+              <CloseRounded />
+            </IconButton>
+          </DialogTitle>
+          <Divider />
+          <DialogContent sx={{ p: { xs: 1.5, sm: 2.5 } }}>
+            <QuickInputBar
+              engine={engine}
+              onSuccess={() => setShowQuickRecordModal(false)}
+            />
+          </DialogContent>
+        </Dialog>
 
-        {/* 2. 模块 2：松紧结合二级预算池与动态日均看板 */}
-        <section className="workbench-section">
-          <BudgetPoolsDashboard engine={engine} />
-        </section>
-
-        {/* 3. 模块 1 & 4：四层账户矩阵、万事达外币清算与虚拟卡包 */}
-        <section className="workbench-section">
-          <AccountMatrixPanel engine={engine} />
-        </section>
-
-        {/* 4. 模块 2.2：跨期专项立项 & 大件固定资产日均成本追踪 */}
-        <section className="workbench-section">
-          <AssetAndProjectTracker engine={engine} />
-        </section>
-
-        {/* 5. 模块 1 实时账单流水历史流水列表 */}
-        <section className="workbench-section card recent-transactions-card">
-          <div className="card-header flex-row items-center justify-between">
-            <div className="flex-row items-center gap-xs">
-              <span className="badge badge-primary">账目流水</span>
-              <h3 className="card-title">本地账本最近流水明细 ({transactions.length} 笔)</h3>
-            </div>
-            <span className="text-xs text-muted">
-              完全由本地 OpLogs 与离线引擎实时计算
-            </span>
-          </div>
-
-          {transactions.length === 0 ? (
-            <div className="empty-state text-muted text-center py-md text-sm">
-              暂无交易流水。在上方单行记账台输入 DSL 命令或点击快捷胶囊立即记账！
-            </div>
-          ) : (
-            <div className="table-responsive mt-sm">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>类型</th>
-                    <th>原始输入 / 备注</th>
-                    <th>扣款账户</th>
-                    <th className="text-right">原价 (Gross)</th>
-                    <th className="text-right">分摊优惠 (Discount)</th>
-                    <th className="text-right">实付净额 (Net)</th>
-                    <th>清算状态</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transactions.slice(0, 10).map((tx) => {
-                    const h = tx.header;
-                    const isFx = h.original_currency !== 'CNY';
-                    const isPending = h.settlement_status === 'PENDING_HOLD';
-                    return (
-                      <tr key={h.id}>
-                        <td className="text-muted text-xs font-mono">{h.tx_date}</td>
-                        <td>
-                          <span
-                            className={`badge ${
-                              h.tx_type === 'EXPENSE'
-                                ? 'badge-primary'
-                                : h.tx_type === 'TRANSFER'
-                                ? 'badge-purple'
-                                : 'badge-success'
-                            }`}
-                          >
-                            {h.tx_type}
-                          </span>
-                        </td>
-                        <td>
-                          <div className="font-medium text-light">
-                            {h.merchant_or_note || h.raw_input_text}
-                          </div>
-                          {h.raw_input_text && h.raw_input_text !== h.merchant_or_note && (
-                            <div className="text-muted text-xs font-mono">
-                              {h.raw_input_text}
-                            </div>
-                          )}
-                        </td>
-                        <td className="text-xs text-secondary font-mono">
-                          {h.account_id}
-                          {h.target_account_id && ` ➜ ${h.target_account_id}`}
-                        </td>
-                        <td className="text-right text-muted font-mono">
-                          ¥{h.total_gross}
-                          {isFx && h.original_amount && (
-                            <span className="text-xs ml-xs">
-                              ({h.original_currency} {h.original_amount})
-                            </span>
-                          )}
-                        </td>
-                        <td className="text-right text-success font-mono">
-                          -¥{h.payment_discount || h.platform_discount}
-                        </td>
-                        <td className="text-right font-bold text-light font-mono">
-                          ¥{h.total_net}
-                        </td>
-                        <td>
-                          {isPending ? (
-                            <span className="badge badge-warning">
-                              ⏳ 待清算 (冻结 ¥{h.hold_amount_cny})
-                            </span>
-                          ) : (
-                            <span className="badge badge-outline">已锁定</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </main>
-
-      {/* 分布式多端同步与防炸机演练中心弹窗 */}
-      <SyncAndConflictModal
-        engine={engine}
-        isOpen={showSyncModal}
-        onClose={() => setShowSyncModal(false)}
-      />
-
-      {/* 极客底栏 */}
-      <footer className="app-footer text-center py-md text-xs text-muted">
-        <p>
-          GeekLedger · 极客大学生分布式个人记账与预算管理系统 · 纯前端离线优先
-          (Stage 6)
-        </p>
-        <p className="mt-xxs text-dim">
-          基于 Decimal.js 精确算术 · 混合逻辑时钟 HLC 因果定序 · 守恒定律双轨校验
-        </p>
-      </footer>
-    </div>
+        {/* ================================================================= */}
+        {/* 5. 分布式多端同步与防炸机演练中心弹窗 */}
+        {/* ================================================================= */}
+        <SyncAndConflictModal
+          engine={engine}
+          isOpen={showSyncModal}
+          onClose={() => setShowSyncModal(false)}
+        />
+      </Box>
+    </ThemeProvider>
   );
 };
