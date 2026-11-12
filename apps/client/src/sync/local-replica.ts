@@ -30,6 +30,7 @@ import {
   parseQuickInputDsl,
   computeOrderAllocation,
   processMastercardFxLifecycle,
+  DEFAULT_FX_RATES,
   SplitItemInput,
   DEFAULT_CATEGORIES,
   DEFAULT_ACCOUNTS,
@@ -953,10 +954,52 @@ export class LocalLedgerEngine {
     return op;
   }
 
+  private repairBuggedFxTransactions(): void {
+    for (const tx of this.state.transactions) {
+      const h = tx.header;
+      if (
+        !h.is_deleted &&
+        h.tx_type === 'EXPENSE' &&
+        h.settlement_status === 'PENDING_HOLD' &&
+        h.original_currency &&
+        h.original_currency !== 'CNY' &&
+        h.original_amount != null &&
+        (h.exchange_rate == null || h.exchange_rate === '') &&
+        Number(h.total_net) === Number(h.original_amount)
+      ) {
+        const acc = this.state.accounts.find((a) => a.id === h.account_id);
+        const fxRate = DEFAULT_FX_RATES[h.original_currency] ?? '7.200000';
+        const holdRatio = acc?.fx_hold_ratio || '1.020';
+        const cashbackRate = acc?.fx_cashback_rate || '0.0100';
+        const holdAmountCny = formatCny(
+          roundCny(toDecimal(h.original_amount).times(fxRate).times(holdRatio))
+        );
+        const fxResult = processMastercardFxLifecycle({
+          foreignAmount: h.original_amount,
+          holdAmountCny,
+          holdRatio,
+          cashbackRate,
+        });
+        h.total_gross = fxResult.total_gross;
+        h.payment_discount = fxResult.payment_discount;
+        h.total_net = fxResult.total_net;
+        h.exchange_rate = fxResult.exchange_rate;
+        h.hold_amount_cny = fxResult.hold_amount_cny;
+        if (tx.items.length > 0) {
+          tx.items[0].item_gross = fxResult.total_gross;
+          tx.items[0].allocated_discount = fxResult.payment_discount;
+          tx.items[0].item_net = fxResult.total_net;
+        }
+      }
+    }
+  }
+
   // --------------------------------------------------------------------------
   // 核心财务确定性重算
   // --------------------------------------------------------------------------
   public recalculateAllBalances(): void {
+    this.repairBuggedFxTransactions();
+
     const voucherCostMap = new Map<number, Decimal>();
     for (const v of this.state.vouchers) {
       voucherCostMap.set(v.id, toDecimal(v.acquire_cost ?? 0));
@@ -1041,6 +1084,7 @@ export class LocalLedgerEngine {
       categories: this.state.categories,
       accounts: this.state.accounts,
       projectTags: this.state.projectTags,
+      budgetPools: this.state.budgetPools,
     });
 
     let voucherInfo: Voucher | null = null;
@@ -1255,6 +1299,7 @@ export class LocalLedgerEngine {
     let items: TransactionItem[] = [];
     let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
     let holdAmountCny = '0.00';
+    let exchangeRate: string | null = isFx ? null : '1.000000';
 
     if (params.tx_type === 'EXPENSE') {
       const catId = params.category_id ?? (this.state.categories[0]?.id ?? 'CAT_FOOD');
@@ -1332,13 +1377,35 @@ export class LocalLedgerEngine {
       }
 
       if (isFx) {
-        holdAmountCny = params.hold_amount_cny
-          ? formatCny(params.hold_amount_cny)
-          : formatCny(
-              roundCny(
-                toDecimal(totalNet).times(toDecimal(acc.fx_hold_ratio || '1.020'))
-              )
-            );
+        const fxRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
+        const holdRatio = acc.fx_hold_ratio || '1.020';
+        const cashbackRate = acc.fx_cashback_rate || '0.0100';
+
+        if (params.hold_amount_cny && Number(params.hold_amount_cny) > 0) {
+          holdAmountCny = formatCny(params.hold_amount_cny);
+        } else {
+          holdAmountCny = formatCny(
+            roundCny(toDecimal(params.amount).times(fxRate).times(holdRatio))
+          );
+        }
+
+        const fxResult = processMastercardFxLifecycle({
+          foreignAmount: params.amount,
+          holdAmountCny,
+          holdRatio,
+          cashbackRate,
+        });
+
+        totalGross = fxResult.total_gross;
+        paymentDiscount = fxResult.payment_discount;
+        totalNet = fxResult.total_net;
+        exchangeRate = fxResult.exchange_rate;
+
+        if (items.length > 0) {
+          items[0].item_gross = fxResult.total_gross;
+          items[0].allocated_discount = fxResult.payment_discount;
+          items[0].item_net = fxResult.total_net;
+        }
       }
     } else if (params.tx_type === 'TRANSFER') {
       let discountDec = toDecimal(params.discount ?? 0);
@@ -1374,7 +1441,7 @@ export class LocalLedgerEngine {
       allocation_mode: 'SINGLE',
       original_currency: currency,
       original_amount: isFx ? formatCny(params.amount) : null,
-      exchange_rate: isFx ? null : '1.000000',
+      exchange_rate: exchangeRate,
       settlement_status: settlementStatus,
       hold_amount_cny: holdAmountCny,
       settled_at: settlementStatus === 'SETTLED' ? nowIso : null,
@@ -2394,6 +2461,7 @@ export class LocalLedgerEngine {
 
       for (const tx of txsInMonth) {
         for (const it of tx.items) {
+          if (it.project_tag_id) continue;
           if (it.budget_pool_id === pool.id) {
             spentGross = spentGross.plus(toDecimal(it.item_gross));
             totalDiscount = totalDiscount.plus(toDecimal(it.allocated_discount));

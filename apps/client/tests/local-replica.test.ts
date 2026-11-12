@@ -551,4 +551,166 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN')?.book_balance).toBe('2935.00');
     });
   });
+
+  // ==========================================================================
+  // Stage 11: Phase 3 Logic Fixes & UX Simplification
+  // ==========================================================================
+  describe('Stage 11: Phase 3 Logic Fixes & UX Simplification', () => {
+    it('recordManualTransaction with JPY 720 should convert to CNY ~34 and not add 720 to budget pool', () => {
+      const engine = new LocalLedgerEngine('test-stage11-fx');
+      engine.resetToSeed();
+
+      const initialPoolStatus = engine.getMonthlyBudgetStatus('2026-11');
+      const initialDailySpent = Number(
+        initialPoolStatus.find((p) => p.pool_id === 'POOL_DAILY')?.spent_net ?? 0
+      );
+
+      const tx = engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        account_id: 'ACC_MC_DEBIT_A',
+        amount: '720',
+        currency: 'JPY',
+        merchant_or_note: 'Gemini Pro会员',
+        budget_pool_id: 'POOL_DAILY',
+      });
+
+      expect(tx.header.original_currency).toBe('JPY');
+      expect(tx.header.original_amount).toBe('720.00');
+      expect(tx.header.exchange_rate).toBe('0.048000');
+      // 720 * 0.048 * 1.02 = 35.2512 -> 35.25
+      expect(tx.header.hold_amount_cny).toBe('35.25');
+      // base = 35.25 / 1.02 = 34.56, cashback = 0.35, net = 34.21
+      expect(tx.header.total_gross).toBe('34.56');
+      expect(tx.header.payment_discount).toBe('0.35');
+      expect(tx.header.total_net).toBe('34.21');
+      expect(tx.items[0].item_net).toBe('34.21');
+
+      // Check account frozen amount: increased by 35.25, NOT 734.40
+      const mcAcc = engine.state.accounts.find((a) => a.id === 'ACC_MC_DEBIT_A');
+      expect(mcAcc?.frozen_amount).toBe('35.25');
+
+      // Check budget pool: spent increased by 34.21, NEVER 720.00!
+      const afterPoolStatus = engine.getMonthlyBudgetStatus('2026-11');
+      const afterDailySpent = Number(
+        afterPoolStatus.find((p) => p.pool_id === 'POOL_DAILY')?.spent_net ?? 0
+      );
+      expect((afterDailySpent - initialDailySpent).toFixed(2)).toBe('34.21');
+    });
+
+    it('an expense with project_tag_id should only deduct from project and NEVER from any monthly budget pool', () => {
+      const engine = new LocalLedgerEngine('test-stage11-mutex');
+      engine.resetToSeed();
+
+      // Create a wish goal / project tag
+      const project = engine.upsertProjectTag({
+        name: '去天津考试',
+        target_budget: '500.00',
+        tag_type: 'PROJECT',
+      });
+
+      const initialStatuses = engine.getMonthlyBudgetStatus('2026-11');
+      const initialTotalSpent = initialStatuses.reduce(
+        (sum, s) => sum + Number(s.spent_net),
+        0
+      );
+
+      // Record an expense with project_tag_id
+      const tx = engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        account_id: 'ACC_UNION_MAIN',
+        amount: '114.00',
+        merchant_or_note: '火车票',
+        budget_pool_id: 'POOL_DAILY', // even if a pool was internally linked/passed
+        project_tag_id: project.id,
+      });
+
+      expect(tx.items[0].project_tag_id).toBe(project.id);
+
+      // Monthly budget status must NOT deduct this 114.00 from POOL_DAILY or any monthly pool!
+      const afterStatuses = engine.getMonthlyBudgetStatus('2026-11');
+      const afterTotalSpent = afterStatuses.reduce(
+        (sum, s) => sum + Number(s.spent_net),
+        0
+      );
+      expect(afterTotalSpent).toBe(initialTotalSpent);
+
+      const dailyRow = afterStatuses.find((s) => s.pool_id === 'POOL_DAILY');
+      const initialDailyRow = initialStatuses.find((s) => s.pool_id === 'POOL_DAILY');
+      expect(dailyRow?.spent_net).toBe(initialDailyRow?.spent_net);
+
+      // But project tracking should reflect the 114.00 spent
+      const relatedTxs = engine.state.transactions.filter(
+        (t) => !t.header.is_deleted && t.items.some((it) => it.project_tag_id === project.id)
+      );
+      expect(relatedTxs).toHaveLength(1);
+      expect(relatedTxs[0].items[0].item_net).toBe('114.00');
+    });
+
+    it('should auto-repair existing bugged PENDING_HOLD foreign transaction on recalculateAllBalances', () => {
+      const engine = new LocalLedgerEngine('test-stage11-repair');
+      engine.resetToSeed();
+
+      // Inject a bugged transaction from the old version
+      const buggedTx = {
+        header: {
+          id: 'tx_old_bugged_01',
+          tx_date: '2026-11-12',
+          tx_timestamp: new Date().toISOString(),
+          tx_type: 'EXPENSE' as const,
+          account_id: 'ACC_MC_DEBIT_A',
+          target_account_id: null,
+          total_gross: '720.00',
+          platform_discount: '0.00',
+          payment_discount: '0.00',
+          total_net: '720.00', // Bug: raw JPY directly in total_net
+          allocation_mode: 'SINGLE' as const,
+          original_currency: 'JPY',
+          original_amount: '720.00',
+          exchange_rate: null, // Bug: exchange_rate was null
+          settlement_status: 'PENDING_HOLD' as const,
+          hold_amount_cny: '734.40',
+          settled_at: null,
+          raw_input_text: '手动录入：Gemini Pro 720',
+          merchant_or_note: 'Gemini Pro',
+          applied_voucher_id: null,
+          is_deleted: false,
+          updated_hlc: engine.hlc.now(),
+          created_at: new Date().toISOString(),
+        },
+        items: [
+          {
+            id: 1,
+            header_id: 'tx_old_bugged_01',
+            item_name: 'Gemini Pro',
+            category_id: 'CAT_DIGITAL_SUB',
+            budget_pool_id: 'POOL_FLEX',
+            project_tag_id: null,
+            item_gross: '720.00',
+            allocated_discount: '0.00',
+            item_net: '720.00',
+            is_primary_item: true,
+            raw_formula_expr: null,
+          },
+        ],
+        appliedVoucherId: null,
+      };
+
+      engine.state.transactions.unshift(buggedTx);
+
+      // Trigger recalculation
+      engine.recalculateAllBalances();
+
+      // Verify the transaction was auto-repaired
+      expect(buggedTx.header.exchange_rate).toBe('0.048000');
+      expect(buggedTx.header.hold_amount_cny).toBe('35.25');
+      expect(buggedTx.header.total_gross).toBe('34.56');
+      expect(buggedTx.header.payment_discount).toBe('0.35');
+      expect(buggedTx.header.total_net).toBe('34.21');
+      expect(buggedTx.items[0].item_net).toBe('34.21');
+
+      // Check account frozen amount
+      const mcAcc = engine.state.accounts.find((a) => a.id === 'ACC_MC_DEBIT_A');
+      expect(mcAcc?.frozen_amount).toBe('35.25');
+    });
+  });
 });

@@ -35,6 +35,7 @@ import {
   computeOrderAllocation,
   allocateSplitDiscounts,
   processMastercardFxLifecycle,
+  DEFAULT_FX_RATES,
   SplitItemInput,
 } from '@ledger/core';
 import { SCHEMA_SQL, SEED_SQL } from './schema.js';
@@ -1579,13 +1580,33 @@ export class LedgerRepository {
       }
 
       if (isFx) {
-        holdAmountCny = params.hold_amount_cny
-          ? formatCny(params.hold_amount_cny)
-          : formatCny(
-              roundCny(
-                toDecimal(totalNet).times(toDecimal(account.fx_hold_ratio || '1.020'))
-              )
-            );
+        const refRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
+        const holdRatio = account.fx_hold_ratio || '1.020';
+        const cashbackRate = account.fx_cashback_rate || '0.0100';
+        holdAmountCny =
+          params.hold_amount_cny && Number(params.hold_amount_cny) > 0
+            ? formatCny(params.hold_amount_cny)
+            : formatCny(
+                roundCny(
+                  toDecimal(params.amount)
+                    .times(toDecimal(refRate))
+                    .times(toDecimal(holdRatio))
+                )
+              );
+        const fxRes = processMastercardFxLifecycle({
+          foreignAmount: params.amount,
+          holdAmountCny,
+          holdRatio,
+          cashbackRate,
+        });
+        totalGross = fxRes.total_gross;
+        paymentDiscount = fxRes.payment_discount;
+        totalNet = fxRes.total_net;
+        if (items.length > 0) {
+          items[0].item_gross = fxRes.total_gross;
+          items[0].allocated_discount = fxRes.payment_discount;
+          items[0].item_net = fxRes.total_net;
+        }
       }
     } else if (params.tx_type === 'TRANSFER') {
       let discountDec = toDecimal(params.discount ?? 0);

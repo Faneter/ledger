@@ -30,7 +30,6 @@ import {
 } from '@mui/material';
 import SavingsRounded from '@mui/icons-material/SavingsRounded';
 import FlagRounded from '@mui/icons-material/FlagRounded';
-import CategoryRounded from '@mui/icons-material/CategoryRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
 import EditRounded from '@mui/icons-material/EditRounded';
 import DeleteOutlineRounded from '@mui/icons-material/DeleteOutlineRounded';
@@ -40,7 +39,6 @@ import StarsRounded from '@mui/icons-material/StarsRounded';
 import ReceiptLongRounded from '@mui/icons-material/ReceiptLongRounded';
 
 import {
-  Category,
   MonthlyBudgetStatusRow,
   PoolType,
   ProjectTag,
@@ -64,7 +62,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   currentDate = '2026-11-12',
   onRefresh,
 }) => {
-  // 1. 标签页控制 (0: 月度预算资金池, 1: 专项储蓄与心愿单, 2: 收支分类管理)
+  // 1. 标签页控制 (0: 月度预算资金池, 1: 专项预算与心愿单)
   const [activeTab, setActiveTab] = useState(0);
 
   // 2. 年月选择器状态
@@ -123,9 +121,35 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       ? Math.min(100, Math.round((totalMonthlySpent / totalMonthlyBudget) * 100))
       : 0;
 
-  // 专项基金池 (POOL_FUND)
-  const fundStatus = budgetStatuses.find((p) => p.pool_id === 'POOL_FUND');
-  const fundDef = poolDefMap.get('POOL_FUND');
+  // 计算心愿单 / 专项预算统计数据
+  const projectStats = useMemo(() => {
+    const activeTags = engine.state.projectTags.filter((t) => t.is_active !== false);
+    let totalTargetDec = toDecimal(0);
+    let totalSpentDec = toDecimal(0);
+
+    for (const tag of engine.state.projectTags) {
+      totalTargetDec = totalTargetDec.plus(toDecimal(tag.target_budget || '0'));
+      const relatedTxs = engine.state.transactions.filter(
+        (tx) =>
+          !tx.header.is_deleted &&
+          tx.items.some((it) => it.project_tag_id === tag.id)
+      );
+      const tagSpent = relatedTxs
+        .flatMap((tx) => tx.items)
+        .filter((it) => it.project_tag_id === tag.id)
+        .reduce((sum, it) => sum.plus(toDecimal(it.item_net)), toDecimal(0));
+      totalSpentDec = totalSpentDec.plus(tagSpent);
+    }
+
+    const totalRemainingDec = totalTargetDec.minus(totalSpentDec);
+
+    return {
+      activeCount: activeTags.length,
+      totalTarget: formatCny(totalTargetDec),
+      totalSpent: formatCny(totalSpentDec),
+      totalRemaining: formatCny(totalRemainingDec),
+    };
+  }, [engine.state.projectTags, engine.state.transactions]);
 
   // ===========================================================================
   // 弹窗状态与表单模型
@@ -137,7 +161,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   const [poolForm, setPoolForm] = useState<{
     id: string;
     name: string;
-    pool_type: PoolType;
     rollover_strategy: RolloverStrategy;
     description: string;
     base_allocation: string;
@@ -145,7 +168,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   }>({
     id: '',
     name: '',
-    pool_type: 'FLEX',
     rollover_strategy: 'RESET',
     description: '',
     base_allocation: '500.00',
@@ -175,23 +197,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     is_active: true,
   });
 
-  // 分类编辑/创建弹窗
-  const [catModalOpen, setCatModalOpen] = useState(false);
-  const [catEditingId, setCatEditingId] = useState<string | null>(null);
-  const [catForm, setCatForm] = useState<{
-    id: string;
-    name: string;
-    default_pool_id: string;
-    icon_name: string;
-    keywords: string;
-  }>({
-    id: '',
-    name: '',
-    default_pool_id: 'POOL_DAILY',
-    icon_name: '🏷️',
-    keywords: '',
-  });
-
   // ===========================================================================
   // Tab 0: 月度预算资金池处理逻辑
   // ===========================================================================
@@ -201,7 +206,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     setPoolForm({
       id: `POOL_CUSTOM_${Date.now()}`,
       name: '',
-      pool_type: 'FLEX',
       rollover_strategy: 'RESET',
       description: '',
       base_allocation: '300.00',
@@ -216,7 +220,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     setPoolForm({
       id: poolRow.pool_id,
       name: poolRow.pool_name,
-      pool_type: poolRow.pool_type,
       rollover_strategy: def?.rollover_strategy || 'RESET',
       description: def?.description || '',
       base_allocation: poolRow.base_allocation,
@@ -255,7 +258,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
         const newPool = engine.upsertBudgetPool({
           id: poolForm.id,
           name: poolForm.name.trim(),
-          pool_type: poolForm.pool_type,
           is_monthly_budget: true,
           rollover_strategy: poolForm.rollover_strategy,
           description: poolForm.description.trim() || null,
@@ -279,19 +281,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     try {
       engine.deleteBudgetPool(poolId);
       showToast(`资金池【${poolName}】已删除`, 'success');
-      onRefresh?.();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), 'error');
-    }
-  };
-
-  const handleSweepDailyToFund = () => {
-    try {
-      const res = engine.sweepDailyToFund(yearMonth);
-      showToast(
-        `✨ 结余划转成功！高频池结余 ¥${res.sweptAmount} 已划入年度专项基金池`,
-        'success'
-      );
       onRefresh?.();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), 'error');
@@ -373,78 +362,11 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   };
 
   // ===========================================================================
-  // Tab 2: 收支分类管理处理逻辑
-  // ===========================================================================
-
-  const handleOpenAddCategory = () => {
-    setCatEditingId(null);
-    setCatForm({
-      id: `CAT_CUSTOM_${Date.now()}`,
-      name: '',
-      default_pool_id: 'POOL_DAILY',
-      icon_name: '🏷️',
-      keywords: '',
-    });
-    setCatModalOpen(true);
-  };
-
-  const handleOpenEditCategory = (cat: Category) => {
-    setCatEditingId(cat.id);
-    setCatForm({
-      id: cat.id,
-      name: cat.name,
-      default_pool_id: cat.default_pool_id,
-      icon_name: cat.icon_name || '🏷️',
-      keywords: cat.keywords || '',
-    });
-    setCatModalOpen(true);
-  };
-
-  const handleSaveCategory = () => {
-    if (!catForm.name.trim()) {
-      showToast('请输入分类名称', 'warning');
-      return;
-    }
-    try {
-      engine.upsertCategory({
-        id: catEditingId || catForm.id,
-        name: catForm.name.trim(),
-        default_pool_id: catForm.default_pool_id,
-        icon_name: catForm.icon_name.trim() || '🏷️',
-        keywords: catForm.keywords.trim() || null,
-      });
-      showToast(
-        catEditingId
-          ? `分类【${catForm.name}】已更新`
-          : `已新增收支分类【${catForm.name}】`,
-        'success'
-      );
-      setCatModalOpen(false);
-      onRefresh?.();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), 'error');
-    }
-  };
-
-  const handleDeleteCategory = (catId: string, catName: string) => {
-    if (!window.confirm(`确定要删除分类【${catName}】吗？`)) return;
-    try {
-      engine.deleteCategory(catId);
-      showToast(`分类【${catName}】已删除`, 'success');
-      onRefresh?.();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), 'error');
-    }
-  };
-
-  // ===========================================================================
   // 辅助渲染方法
   // ===========================================================================
 
   const getRolloverChip = (strategy?: RolloverStrategy) => {
     switch (strategy) {
-      case 'SWEEP_TO_FUND':
-        return <Chip size="small" color="info" label="结余划转 (SWEEP)" variant="outlined" />;
       case 'RESET':
         return <Chip size="small" color="default" label="月末清零 (RESET)" variant="outlined" />;
       case 'ACCUMULATE':
@@ -474,13 +396,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
             <Tab
               icon={<FlagRounded fontSize="small" />}
               iconPosition="start"
-              label="专项储蓄与心愿单 (Wish Goals)"
-              sx={{ fontWeight: 700 }}
-            />
-            <Tab
-              icon={<CategoryRounded fontSize="small" />}
-              iconPosition="start"
-              label="收支分类管理 (Categories)"
+              label="专项预算与心愿单 (Wish Goals)"
               sx={{ fontWeight: 700 }}
             />
           </Tabs>
@@ -700,6 +616,15 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                         </Stack>
 
                         <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                            日均可用
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                            ¥{(Math.max(0, Number(pool.remaining_budget)) / dailySummary.remainingDays).toFixed(2)} / 天
+                          </Typography>
+                        </Stack>
+
+                        <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                             本月支出净额
                           </Typography>
@@ -743,21 +668,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                           sx={{ height: 6, borderRadius: 3 }}
                         />
                       </Box>
-
-                      {/* 划转动作按钮 */}
-                      {poolDef?.rollover_strategy === 'SWEEP_TO_FUND' && (
-                        <Button
-                          fullWidth
-                          size="small"
-                          variant="outlined"
-                          color="info"
-                          startIcon={<AutoAwesomeRounded />}
-                          onClick={handleSweepDailyToFund}
-                          sx={{ mt: 1.5, borderRadius: 2 }}
-                        >
-                          ✨ 月末结余一键划入专项沉淀
-                        </Button>
-                      )}
                     </CardContent>
 
                     {/* 卡片底栏操作 */}
@@ -800,19 +710,17 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* Tab 1: 专项储蓄与心愿单 (Wish Goals) */}
+      {/* Tab 1: 专项预算与心愿单 (Wish Goals) */}
       {/* ===================================================================== */}
       {activeTab === 1 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-          {/* 年度专项基金池 (Sinking Fund Pool) 顶栏横幅 */}
+          {/* 专项预算与心愿单概览汇总条 */}
           <Card
             sx={{
               borderRadius: 3,
               p: 2.5,
-              background: (t) =>
-                t.palette.mode === 'dark'
-                  ? 'linear-gradient(135deg, rgba(124, 77, 255, 0.15) 0%, rgba(33, 150, 243, 0.15) 100%)'
-                  : 'linear-gradient(135deg, #ede7f6 0%, #e3f2fd 100%)',
+              bgcolor: (t) =>
+                t.palette.mode === 'dark' ? 'grey.900' : 'background.paper',
               border: '1px solid',
               borderColor: 'secondary.light',
             }}
@@ -823,40 +731,47 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
               sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between' }}
             >
               <Box>
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>
-                  <StarsRounded color="secondary" />
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
+                  <FlagRounded color="secondary" />
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    年度专项基金沉淀池 (Sinking Fund Pool)
+                    专项预算与心愿单总览
                   </Typography>
-                  <Chip size="small" color="secondary" label="跨期储蓄保障" />
+                  <Chip
+                    size="small"
+                    color="secondary"
+                    label={`进行中: ${projectStats.activeCount} 个`}
+                    variant="outlined"
+                  />
                 </Stack>
-                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                  {fundDef?.description ||
-                    '承接每月生活饮食池结余划入，沉淀专款专用资金，为大额跨期立项与愿望清单提供确定性资金保障。'}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 3, mt: 1.5 }}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, mt: 1 }}>
                   <Box>
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                      专项沉淀总可用额度
+                      专项总目标预算
                     </Typography>
-                    <Typography variant="h5" sx={{ fontWeight: 800, color: 'secondary.main' }}>
-                      ¥{fundStatus?.total_available_budget || '0.00'}
+                    <Typography variant="h6" sx={{ fontWeight: 800, color: 'text.primary' }}>
+                      ¥{projectStats.totalTarget}
                     </Typography>
                   </Box>
                   <Box>
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                      已在专项中消耗
+                      累计已支出
                     </Typography>
-                    <Typography variant="h5" sx={{ fontWeight: 800, color: 'text.primary' }}>
-                      ¥{fundStatus?.spent_net || '0.00'}
+                    <Typography variant="h6" sx={{ fontWeight: 800, color: 'text.primary' }}>
+                      ¥{projectStats.totalSpent}
                     </Typography>
                   </Box>
                   <Box>
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                      剩余可用沉淀
+                      专项剩余可用总额
                     </Typography>
-                    <Typography variant="h5" sx={{ fontWeight: 800, color: 'success.main' }}>
-                      ¥{fundStatus?.remaining_budget || '0.00'}
+                    <Typography
+                      variant="h6"
+                      sx={{
+                        fontWeight: 800,
+                        color: Number(projectStats.totalRemaining) < 0 ? 'error.main' : 'success.main',
+                      }}
+                    >
+                      ¥{projectStats.totalRemaining}
                     </Typography>
                   </Box>
                 </Box>
@@ -1105,140 +1020,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* Tab 2: 收支分类管理 (Categories) */}
-      {/* ===================================================================== */}
-      {activeTab === 2 && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-          {/* 顶栏：分类管理头部 */}
-          <Card sx={{ borderRadius: 3, p: 2 }}>
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={2}
-              sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}
-            >
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  收支分类与自动匹配规则
-                </Typography>
-                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                  为消费自动关联默认预算池，并根据关键词智能匹配记账流水分拣
-                </Typography>
-              </Box>
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={<AddRounded />}
-                onClick={handleOpenAddCategory}
-              >
-                新增收支分类
-              </Button>
-            </Stack>
-          </Card>
-
-          {/* 分类列表网格 */}
-          <Grid container spacing={2}>
-            {engine.state.categories.map((cat) => {
-              const pool = poolDefMap.get(cat.default_pool_id);
-              const kwList = (cat.keywords || '')
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-
-              return (
-                <Grid size={{ xs: 12, sm: 6, md: 4 }} key={cat.id}>
-                  <Card
-                    sx={{
-                      height: '100%',
-                      borderRadius: 3,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'space-between',
-                      border: '1px solid',
-                      borderColor: 'divider',
-                    }}
-                  >
-                    <CardContent sx={{ p: 2 }}>
-                      <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                          <Typography variant="h5">{cat.icon_name || '🏷️'}</Typography>
-                          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                            {cat.name}
-                          </Typography>
-                        </Stack>
-                        <Chip
-                          size="small"
-                          color="primary"
-                          variant="outlined"
-                          label={pool ? pool.name : cat.default_pool_id}
-                        />
-                      </Stack>
-
-                      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
-                        默认绑定资金池: <strong>{pool?.name || cat.default_pool_id}</strong>
-                      </Typography>
-
-                      <Box sx={{ mt: 1 }}>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                          自动匹配关键词 ({kwList.length}):
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
-                          {kwList.length > 0 ? (
-                            kwList.map((kw, i) => (
-                              <Chip
-                                key={i}
-                                label={kw}
-                                size="small"
-                                sx={{ fontSize: '0.75rem', height: 22 }}
-                              />
-                            ))
-                          ) : (
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              暂无关键词
-                            </Typography>
-                          )}
-                        </Box>
-                      </Box>
-                    </CardContent>
-
-                    <Box
-                      sx={{
-                        p: 1.5,
-                        pt: 0,
-                        display: 'flex',
-                        justifyContent: 'flex-end',
-                        gap: 1,
-                        borderTop: '1px solid',
-                        borderColor: 'divider',
-                      }}
-                    >
-                      <Tooltip title="编辑分类">
-                        <IconButton
-                          size="small"
-                          color="primary"
-                          onClick={() => handleOpenEditCategory(cat)}
-                        >
-                          <EditRounded fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="删除分类">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => handleDeleteCategory(cat.id, cat.name)}
-                        >
-                          <DeleteOutlineRounded fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </Card>
-                </Grid>
-              );
-            })}
-          </Grid>
-        </Box>
-      )}
-
-      {/* ===================================================================== */}
       {/* 弹窗 1: 资金池编辑 / 新增 Dialog */}
       {/* ===================================================================== */}
       <Dialog
@@ -1261,22 +1042,15 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
             placeholder="如: 高频生活饮食池"
           />
 
-          <FormControl fullWidth size="small">
-            <InputLabel>池职能分类 (Pool Type)</InputLabel>
-            <Select
-              value={poolForm.pool_type}
-              label="池职能分类 (Pool Type)"
-              onChange={(e) =>
-                setPoolForm({ ...poolForm, pool_type: e.target.value as PoolType })
-              }
-              disabled={Boolean(poolEditingId)} // 已创建池保留原有职能
-            >
-              <MenuItem value="DAILY">DAILY - 高频生活池 (动态日均管控)</MenuItem>
-              <MenuItem value="FIXED">FIXED - 固定刚需与定投池</MenuItem>
-              <MenuItem value="FLEX">FLEX - 月度弹性发展池</MenuItem>
-              <MenuItem value="EMERGENCY">EMERGENCY - 突发应急池</MenuItem>
-            </Select>
-          </FormControl>
+          <TextField
+            label={`本月 (${yearMonth}) 基准分配预算 (¥)`}
+            fullWidth
+            size="small"
+            type="number"
+            value={poolForm.base_allocation}
+            onChange={(e) => setPoolForm({ ...poolForm, base_allocation: e.target.value })}
+            placeholder="如 1200.00"
+          />
 
           <FormControl fullWidth size="small">
             <InputLabel>月末结余滚存策略</InputLabel>
@@ -1290,21 +1064,10 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 })
               }
             >
-              <MenuItem value="RESET">RESET - 月末清零 (零基预算)</MenuItem>
-              <MenuItem value="SWEEP_TO_FUND">SWEEP_TO_FUND - 结余划转专项沉淀基金</MenuItem>
-              <MenuItem value="ACCUMULATE">ACCUMULATE - 全额滚存至下月同池</MenuItem>
+              <MenuItem value="RESET">RESET - 月末清零</MenuItem>
+              <MenuItem value="ACCUMULATE">ACCUMULATE - 结余滚存下月</MenuItem>
             </Select>
           </FormControl>
-
-          <TextField
-            label={`本月 (${yearMonth}) 基准分配预算 (¥)`}
-            fullWidth
-            size="small"
-            type="number"
-            value={poolForm.base_allocation}
-            onChange={(e) => setPoolForm({ ...poolForm, base_allocation: e.target.value })}
-            placeholder="如 1200.00"
-          />
 
           <TextField
             label="资金池说明与管控规则"
@@ -1424,73 +1187,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
           <Button onClick={() => setWishModalOpen(false)}>取消</Button>
           <Button variant="contained" color="secondary" onClick={handleSaveWish}>
             保存心愿单
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* ===================================================================== */}
-      {/* 弹窗 3: 收支分类编辑 / 新增 Dialog */}
-      {/* ===================================================================== */}
-      <Dialog
-        open={catModalOpen}
-        onClose={() => setCatModalOpen(false)}
-        maxWidth="sm"
-        fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
-      >
-        <DialogTitle sx={{ fontWeight: 700 }}>
-          {catEditingId ? `编辑收支分类: ${catForm.name}` : '新增收支分类'}
-        </DialogTitle>
-        <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          <TextField
-            label="分类名称"
-            fullWidth
-            size="small"
-            value={catForm.name}
-            onChange={(e) => setCatForm({ ...catForm, name: e.target.value })}
-            placeholder="如: 三餐正餐"
-          />
-
-          <TextField
-            label="图标 Emoji / 图标标识"
-            fullWidth
-            size="small"
-            value={catForm.icon_name}
-            onChange={(e) => setCatForm({ ...catForm, icon_name: e.target.value })}
-            placeholder="如: 🍱 或 🍜"
-          />
-
-          <FormControl fullWidth size="small">
-            <InputLabel>默认绑定资金池</InputLabel>
-            <Select
-              value={catForm.default_pool_id}
-              label="默认绑定资金池"
-              onChange={(e) => setCatForm({ ...catForm, default_pool_id: e.target.value })}
-            >
-              {engine.state.budgetPools.map((p) => (
-                <MenuItem key={p.id} value={p.id}>
-                  {p.name} ({p.id})
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <TextField
-            label="智能分拣关键词 (英文逗号分隔)"
-            fullWidth
-            size="small"
-            multiline
-            rows={2}
-            value={catForm.keywords}
-            onChange={(e) => setCatForm({ ...catForm, keywords: e.target.value })}
-            placeholder="如: 食堂,外卖,美团,饿了么,肯德基,麦当劳"
-            helperText="记账 DSL 解析时，命中上述关键词将自动匹配到此分类"
-          />
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setCatModalOpen(false)}>取消</Button>
-          <Button variant="contained" onClick={handleSaveCategory}>
-            保存收支分类
           </Button>
         </DialogActions>
       </Dialog>

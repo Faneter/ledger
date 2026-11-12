@@ -10,13 +10,17 @@ import {
   Category,
   Account,
   ProjectTag,
+  BudgetPool,
   TransactionType,
   AllocationMode,
   SettlementStatus,
   SplitItemInput,
 } from './types.js';
 import { allocateSplitDiscounts } from './allocation.js';
-import { processMastercardFxLifecycle } from './mastercard-fx.js';
+import {
+  processMastercardFxLifecycle,
+  DEFAULT_FX_RATES,
+} from './mastercard-fx.js';
 
 // ============================================================================
 // 1. 默认种子字典常量定义（与 PRD 12.1 ~ 12.4 严格对齐）
@@ -635,6 +639,7 @@ export interface DslParserContext {
   categories?: Category[];
   accounts?: Pick<Account, 'id' | 'name' | 'account_role' | 'is_default_pay'>[];
   projectTags?: ProjectTag[];
+  budgetPools?: BudgetPool[];
   txDate?: string;
 }
 
@@ -687,10 +692,12 @@ function resolveAccount(
 function resolveTagOrCategory(
   rawTag: string,
   categories: Category[],
-  projectTags: ProjectTag[]
+  projectTags: ProjectTag[],
+  budgetPools?: BudgetPool[]
 ): {
   category?: Category;
   projectTag?: ProjectTag;
+  budgetPool?: BudgetPool;
 } {
   const clean = rawTag.replace(/^#/, '').trim();
   const lower = clean.toLowerCase();
@@ -715,7 +722,23 @@ function resolveTagOrCategory(
   );
   if (ptBySub) return { projectTag: ptBySub };
 
-  // B. 匹配商品服务分类
+  // B. 匹配月度资金池 (BudgetPool)
+  if (budgetPools && budgetPools.length > 0) {
+    const bpById = budgetPools.find((p) => p.id.toLowerCase() === lower);
+    if (bpById) return { budgetPool: bpById };
+
+    const bpByName = budgetPools.find((p) => p.name.toLowerCase() === lower);
+    if (bpByName) return { budgetPool: bpByName };
+
+    const bpBySub = budgetPools.find(
+      (p) =>
+        p.name.toLowerCase().includes(lower) ||
+        lower.includes(p.name.toLowerCase())
+    );
+    if (bpBySub) return { budgetPool: bpBySub };
+  }
+
+  // C. 匹配商品服务分类
   const catAliasId = CATEGORY_ALIASES[lower] ?? CATEGORY_ALIASES[clean];
   if (catAliasId) {
     const cat = categories.find((c) => c.id === catAliasId);
@@ -793,6 +816,7 @@ export function parseQuickInputDsl(
   const categories = context?.categories ?? DEFAULT_CATEGORIES;
   const accounts = context?.accounts ?? DEFAULT_ACCOUNTS;
   const projectTags = context?.projectTags ?? DEFAULT_PROJECT_TAGS;
+  const budgetPools = context?.budgetPools;
 
   const defaultAccount =
     accounts.find((a) => a.is_default_pay) ?? accounts[0];
@@ -942,6 +966,14 @@ export function parseQuickInputDsl(
     }
   }
 
+  if (isFxDetected && originalAmount && holdAmountCny === '0.00') {
+    const fxRate = DEFAULT_FX_RATES[originalCurrency] ?? '7.200000';
+    holdAmountCny = formatCny(
+      roundCny(toDecimal(originalAmount).times(fxRate).times('1.02'))
+    );
+    settlementStatus = 'PENDING_HOLD';
+  }
+
   if (isFxDetected && !hasExplicitAccount) {
     const fxAcc = accounts.find((a) => a.account_role === 'DEBIT_FX');
     if (fxAcc) {
@@ -995,16 +1027,26 @@ export function parseQuickInputDsl(
     // 提取该子项内所有 `#标签`
     const tagMatches = Array.from(itemStr.matchAll(/#([^\s#=]+)/g));
     for (const tm of tagMatches) {
-      const resolved = resolveTagOrCategory(tm[1], categories, projectTags);
+      const resolved = resolveTagOrCategory(
+        tm[1],
+        categories,
+        projectTags,
+        budgetPools
+      );
       if (resolved.projectTag) {
         itemProjectTagId = resolved.projectTag.id;
         if (!itemPoolId && resolved.projectTag.linked_pool_id) {
           itemPoolId = resolved.projectTag.linked_pool_id;
         }
       }
+      if (resolved.budgetPool) {
+        itemPoolId = resolved.budgetPool.id;
+      }
       if (resolved.category) {
         itemCategoryId = resolved.category.id;
-        itemPoolId = resolved.category.default_pool_id;
+        if (!itemPoolId) {
+          itemPoolId = resolved.category.default_pool_id;
+        }
       }
       itemStr = itemStr.replace(tm[0], ' ');
     }
@@ -1015,6 +1057,8 @@ export function parseQuickInputDsl(
     if (idx === rawSubItemStrings.length - 1) {
       if (itemCategoryId) {
         globalCategoryId = itemCategoryId;
+      }
+      if (itemPoolId) {
         globalPoolId = itemPoolId;
       }
       if (itemProjectTagId) {
@@ -1027,7 +1071,10 @@ export function parseQuickInputDsl(
       const name = itemStr.trim() || '外币消费';
       parsedItems.push({
         name,
-        rawFormula: `$${originalAmount}`,
+        rawFormula:
+          originalCurrency === 'USD'
+            ? `$${originalAmount}`
+            : `${originalCurrency} ${originalAmount}`,
         gross: '0.00',
         discount: '0.00',
         net: '0.00',
@@ -1085,6 +1132,8 @@ export function parseQuickInputDsl(
   for (const item of parsedItems) {
     if (!item.categoryId && globalCategoryId) {
       item.categoryId = globalCategoryId;
+    }
+    if (!item.poolId && globalPoolId) {
       item.poolId = globalPoolId;
     }
     if (!item.projectTagId && globalProjectTagId) {
@@ -1107,11 +1156,15 @@ export function parseQuickInputDsl(
       const matchedCat = autoMatchCategoryByItemName(item.name, categories);
       if (matchedCat) {
         item.categoryId = matchedCat.id;
-        item.poolId = matchedCat.default_pool_id;
+        if (!item.poolId) {
+          item.poolId = matchedCat.default_pool_id;
+        }
       } else {
         // 兜底为日常餐饮高频池
         item.categoryId = 'CAT_FOOD';
-        item.poolId = 'POOL_DAILY';
+        if (!item.poolId) {
+          item.poolId = 'POOL_DAILY';
+        }
       }
     }
 

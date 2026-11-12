@@ -321,6 +321,7 @@ LEFT JOIN transaction_headers th
 LEFT JOIN transaction_items ti 
     ON ti.header_id = th.id 
     AND ti.budget_pool_id = bp.id
+    AND (ti.project_tag_id IS NULL OR bp.is_monthly_budget = 0)
 GROUP BY mb.year_month, bp.id, bp.name, bp.pool_type, mb.base_allocation, mb.rollover_from_prev, mb.reserved_fixed, mb.swept_to_fund
 ORDER BY mb.year_month DESC, bp.sort_order ASC;
 `;

@@ -31,36 +31,19 @@ import EditNoteRounded from '@mui/icons-material/EditNoteRounded';
 import CheckRounded from '@mui/icons-material/CheckRounded';
 import LocalOfferRounded from '@mui/icons-material/LocalOfferRounded';
 import { LocalLedgerEngine } from '../sync/local-replica';
-import { Voucher } from '@ledger/core';
+import {
+  Voucher,
+  DEFAULT_FX_RATES,
+  toDecimal,
+  roundCny,
+  formatCny,
+} from '@ledger/core';
 
 export interface QuickInputBarProps {
   engine: LocalLedgerEngine;
   onSuccess?: () => void;
   onRecordSuccess?: () => void;
 }
-
-const PRESET_PILLS = [
-  {
-    label: '场景 1：拌面与饭卡立减',
-    dsl: '咸蛋黄拌面 16.8-0.15 + 饭卡充值 20-1.08*3 #饮食',
-    desc: '单据多品算式计算与自含立减',
-  },
-  {
-    label: '场景 2：跨品类凑单信用卡满减',
-    dsl: '牛奶 28 #饮食 + 晾衣架 12 #日用 + 排针 15 #电子 = 50 @招行信用卡',
-    desc: '多品类权重等比分摊与最后一分尾差兜底',
-  },
-  {
-    label: '场景 3：万事达外币预授权消费',
-    dsl: 'Porkbun域名 $4.35 冻结31.95 #数字服务 @万事达A',
-    desc: '自动唤醒外币借记卡 + 102%冻结 + 1%返现',
-  },
-  {
-    label: '场景 4：花呗用券还款',
-    dsl: '还款 @花呗 500 - 还款券 5 从 @主力银联卡',
-    desc: '信用负债清偿与还款抵扣券核销',
-  },
-];
 
 export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   engine,
@@ -91,6 +74,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   const [amount, setAmount] = useState('');
   const [discount, setDiscount] = useState('');
   const [currency, setCurrency] = useState('CNY');
+  const [holdAmountCnyInput, setHoldAmountCnyInput] = useState('');
   const [accountId, setAccountId] = useState(() => {
     const defaultAcc = engine.state.accounts.find((a) => a.is_default_pay);
     return defaultAcc?.id || engine.state.accounts[0]?.id || 'ACC_UNION_MAIN';
@@ -99,19 +83,35 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
     const candidate = engine.state.accounts.find((a) => a.account_role === 'CREDIT');
     return candidate?.id || 'ACC_HUABEI';
   });
-  const [categoryId, setCategoryId] = useState(() => {
-    return engine.state.categories[0]?.id || 'CAT_FOOD';
+  const [targetSelection, setTargetSelection] = useState<{
+    type: 'POOL' | 'PROJECT';
+    id: string;
+  }>(() => {
+    const dailyPool =
+      engine.state.budgetPools.find(
+        (p) => p.is_monthly_budget && p.id === 'POOL_DAILY'
+      ) || engine.state.budgetPools.find((p) => p.is_monthly_budget);
+    return {
+      type: 'POOL',
+      id: dailyPool?.id || 'POOL_DAILY',
+    };
   });
   const [merchantOrNote, setMerchantOrNote] = useState('');
   const [selectedVoucherIdVisual, setSelectedVoucherIdVisual] = useState<number | null>(null);
-  const [projectTagId, setProjectTagId] = useState<string>('');
+
+  // 外币预授权冻结金额预估折算
+  const estimatedHoldAmount = useMemo(() => {
+    if (currency === 'CNY' || !amount.trim() || isNaN(Number(amount)) || Number(amount) <= 0) {
+      return '';
+    }
+    const fxRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
+    return formatCny(roundCny(toDecimal(amount).times(fxRate).times('1.02')));
+  }, [currency, amount]);
 
   // --------------------------------------------------------------------------
   // Tab B: DSL 极客算式状态
   // --------------------------------------------------------------------------
-  const [dslInput, setDslInput] = useState(
-    '咸蛋黄拌面 16.8-0.15 + 饭卡充值 20-1.08*3 #饮食'
-  );
+  const [dslInput, setDslInput] = useState('');
   const [selectedVoucherIdDsl, setSelectedVoucherIdDsl] = useState<number | null>(null);
 
   // 实时编译解析 DSL
@@ -146,13 +146,20 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
 
     try {
       setErrorMsg(null);
-      const noteToSave = merchantOrNote.trim() || (
-        txType === 'EXPENSE'
-          ? engine.state.categories.find((c) => c.id === categoryId)?.name || '日常消费'
+      const budgetPoolId =
+        targetSelection.type === 'POOL' ? targetSelection.id : undefined;
+      const projTagId =
+        targetSelection.type === 'PROJECT' ? targetSelection.id : null;
+
+      const noteToSave =
+        merchantOrNote.trim() ||
+        (txType === 'EXPENSE'
+          ? targetSelection.type === 'PROJECT'
+            ? engine.state.projectTags.find((t) => t.id === targetSelection.id)?.name || '专项支出'
+            : engine.state.budgetPools.find((p) => p.id === targetSelection.id)?.name || '日常消费'
           : txType === 'INCOME'
           ? '日常收入'
-          : '内部资金互转'
-      );
+          : '内部资金互转');
 
       const tx = engine.recordManualTransaction({
         tx_type: txType,
@@ -161,11 +168,12 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
         target_account_id: txType === 'TRANSFER' ? targetAccountId : null,
         amount: amount.trim(),
         discount: txType === 'EXPENSE' && discount.trim() ? discount.trim() : '0.00',
-        category_id: txType === 'EXPENSE' ? categoryId : undefined,
-        project_tag_id: projectTagId ? projectTagId : null,
+        budget_pool_id: budgetPoolId,
+        project_tag_id: projTagId,
         merchant_or_note: noteToSave,
         applied_voucher_id: txType === 'EXPENSE' ? selectedVoucherIdVisual : null,
         currency,
+        hold_amount_cny: holdAmountCnyInput.trim() || undefined,
       });
 
       triggerSuccess(
@@ -176,6 +184,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
       setAmount('');
       setDiscount('');
       setMerchantOrNote('');
+      setHoldAmountCnyInput('');
       setSelectedVoucherIdVisual(null);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -192,6 +201,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
         `✅ 记账成功！单据号: ${tx.header.id}，实付 ¥${tx.header.total_net}`
       );
       setSelectedVoucherIdDsl(null);
+      setDslInput('');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
     }
@@ -416,6 +426,31 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                 )}
               </Stack>
 
+              {/* 外币预授权冻结人民币金额选填 */}
+              {txType === 'EXPENSE' && currency !== 'CNY' && (
+                <TextField
+                  label="预授权冻结人民币金额 (CNY，选填)"
+                  type="number"
+                  fullWidth
+                  value={holdAmountCnyInput}
+                  onChange={(e) => setHoldAmountCnyInput(e.target.value)}
+                  placeholder={estimatedHoldAmount ? `预估约 ¥${estimatedHoldAmount}` : '0.00'}
+                  slotProps={{
+                    htmlInput: { step: '0.01', min: '0.01' },
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">¥</InputAdornment>
+                      ),
+                    },
+                  }}
+                  helperText={
+                    estimatedHoldAmount
+                      ? `未填则按参考汇率自动折算预估冻结约 ¥${estimatedHoldAmount}`
+                      : '未填则按参考汇率与102%比例自动折算预估冻结金额'
+                  }
+                />
+              )}
+
               {/* 账户选择与备注 */}
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
@@ -472,7 +507,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                 />
               </Stack>
 
-              {/* 支出专属：分类 Chip 选择器 */}
+              {/* 支出专属：支出归属（选择资金池或专项） */}
               {txType === 'EXPENSE' && (
                 <Box>
                   <Typography
@@ -484,68 +519,84 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                       mb: 1,
                     }}
                   >
-                    支出分类选择
+                    支出归属（选择资金池或专项）
                   </Typography>
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                    {engine.state.categories.map((cat) => {
-                      const isSelected = categoryId === cat.id;
-                      return (
-                        <Chip
-                          key={cat.id}
-                          label={cat.name}
-                          clickable
-                          color={isSelected ? 'primary' : 'default'}
-                          variant={isSelected ? 'filled' : 'outlined'}
-                          onClick={() => setCategoryId(cat.id)}
-                          sx={{
-                            fontWeight: isSelected ? 700 : 500,
-                            borderWidth: 1,
-                          }}
-                        />
-                      );
-                    })}
+                    {engine.state.budgetPools
+                      .filter((p) => p.is_monthly_budget)
+                      .map((pool) => {
+                        const isSelected =
+                          targetSelection.type === 'POOL' &&
+                          targetSelection.id === pool.id;
+                        return (
+                          <Chip
+                            key={pool.id}
+                            label={`💰 ${pool.name}`}
+                            clickable
+                            color={isSelected ? 'primary' : 'default'}
+                            variant={isSelected ? 'filled' : 'outlined'}
+                            onClick={() =>
+                              setTargetSelection({ type: 'POOL', id: pool.id })
+                            }
+                            sx={{
+                              fontWeight: isSelected ? 700 : 500,
+                              borderWidth: 1,
+                            }}
+                          />
+                        );
+                      })}
+
+                    {engine.state.projectTags
+                      .filter((tag) => tag.is_active !== false)
+                      .map((tag) => {
+                        const isSelected =
+                          targetSelection.type === 'PROJECT' &&
+                          targetSelection.id === tag.id;
+                        return (
+                          <Chip
+                            key={tag.id}
+                            label={`🎯 ${tag.name}`}
+                            clickable
+                            color="secondary"
+                            variant={isSelected ? 'filled' : 'outlined'}
+                            onClick={() =>
+                              setTargetSelection({
+                                type: 'PROJECT',
+                                id: tag.id,
+                              })
+                            }
+                            sx={{
+                              fontWeight: isSelected ? 700 : 500,
+                              borderWidth: 1,
+                            }}
+                          />
+                        );
+                      })}
                   </Box>
                 </Box>
               )}
 
-              {/* 支出专属：优惠券 & 专项/立项标签选择 */}
+              {/* 支出专属：核销虚拟卡包立减金 */}
               {txType === 'EXPENSE' && (
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                  <TextField
-                    select
-                    fullWidth
-                    label="核销虚拟卡包立减金 (可选)"
-                    value={selectedVoucherIdVisual ?? ''}
-                    onChange={(e) =>
-                      setSelectedVoucherIdVisual(
-                        e.target.value ? Number(e.target.value) : null
-                      )
-                    }
-                  >
-                    <MenuItem value="">(不使用卡券 / 纯原价实付)</MenuItem>
-                    {availableVouchers.map((v) => (
-                      <MenuItem key={v.id} value={v.id}>
-                        {v.title} · 面值 ¥{v.face_value} (成本 ¥{v.acquire_cost} / 门槛 ¥
-                        {v.min_spend})
-                      </MenuItem>
-                    ))}
-                  </TextField>
-
-                  <TextField
-                    select
-                    fullWidth
-                    label="归属跨期专项/心愿单立项 (可选)"
-                    value={projectTagId}
-                    onChange={(e) => setProjectTagId(e.target.value)}
-                  >
-                    <MenuItem value="">(无跨期专项 / 归入日常池)</MenuItem>
-                    {engine.state.projectTags.map((tag) => (
-                      <MenuItem key={tag.id} value={tag.id}>
-                        #{tag.name} (目标预算 ¥{tag.target_budget || '0.00'})
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                </Stack>
+                <TextField
+                  select
+                  fullWidth
+                  label="核销虚拟卡包立减金 (可选)"
+                  value={selectedVoucherIdVisual ?? ''}
+                  onChange={(e) =>
+                    setSelectedVoucherIdVisual(
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                >
+                  <MenuItem value="">(不使用卡券 / 纯原价实付)</MenuItem>
+                  {availableVouchers.map((v) => (
+                    <MenuItem key={v.id} value={v.id}>
+                      {v.title} · 面值 ¥{v.face_value} (成本 ¥{v.acquire_cost} / 门槛 ¥
+                      {v.min_spend})
+                    </MenuItem>
+                  ))}
+                </TextField>
               )}
 
               {/* 外币提示 */}
@@ -593,29 +644,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
               />
             </Box>
 
-            {/* 场景胶囊快速载入 */}
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-              {PRESET_PILLS.map((pill, idx) => (
-                <Chip
-                  key={idx}
-                  icon={<FlashOnRounded fontSize="small" />}
-                  label={pill.label}
-                  clickable
-                  variant="outlined"
-                  onClick={() => {
-                    setDslInput(pill.dsl);
-                    setErrorMsg(null);
-                  }}
-                  title={pill.desc}
-                  sx={{
-                    fontSize: '0.8rem',
-                    bgcolor: (t) =>
-                      t.palette.mode === 'light' ? '#f5f7fc' : '#1e2533',
-                  }}
-                />
-              ))}
-            </Box>
-
             {/* 核心单行 DSL 命令输入框 */}
             <Box
               sx={{
@@ -638,7 +666,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     handleDslSubmit();
                   }
                 }}
-                placeholder="输入如: 咸蛋黄拌面 16.8-0.15 + 饭卡充值 20-1.08*3 #饮食 @主力银联卡"
+                placeholder="输入记账算式，如：午饭 15+3 = 16 #日常饮食 @微信  或  Gemini会员 JPY 720"
                 slotProps={{
                   input: {
                     startAdornment: (

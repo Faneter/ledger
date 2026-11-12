@@ -22,6 +22,18 @@ export interface ProcessMastercardFxParams {
 }
 
 /**
+ * 内置外币参考汇率表（对 CNY）
+ */
+export const DEFAULT_FX_RATES: Record<string, string> = {
+  CNY: '1.000000',
+  USD: '7.200000',
+  EUR: '7.800000',
+  JPY: '0.048000',
+  GBP: '9.100000',
+  HKD: '0.920000',
+};
+
+/**
  * 万事网联外币借记卡生命周期状态机计算引擎
  * 严格对应 PRD 模块 4 与第四章 process_mastercard_fx_lifecycle
  *

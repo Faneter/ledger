@@ -52,7 +52,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [monthFilter, setMonthFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
   const [accountFilter, setAccountFilter] = useState<string>('ALL');
-  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [poolOrProjectFilter, setPoolOrProjectFilter] = useState<string>('ALL');
 
   // 展开子项折叠状态 (按 tx.header.id 记录)
   const [expandedTxs, setExpandedTxs] = useState<Record<string, boolean>>({});
@@ -67,10 +67,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [editDate, setEditDate] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editAccountId, setEditAccountId] = useState('');
-  const [editCategoryId, setEditCategoryId] = useState('');
+  const [editTargetSelection, setEditTargetSelection] = useState<string>('');
   const [editGross, setEditGross] = useState('');
   const [editDiscount, setEditDiscount] = useState('');
-  const [editProjectTagId, setEditProjectTagId] = useState('');
 
   // --------------------------------------------------------------------------
   // 删除确认弹窗状态
@@ -122,10 +121,19 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         }
       }
 
-      // 5. 分类过滤
-      if (categoryFilter !== 'ALL') {
-        const hasCategory = tx.items.some((it) => it.category_id === categoryFilter);
-        if (!hasCategory) return false;
+      // 5. 归属资金池 / 专项过滤
+      if (poolOrProjectFilter !== 'ALL') {
+        if (poolOrProjectFilter.startsWith('POOL:')) {
+          const poolId = poolOrProjectFilter.slice(5);
+          const match = tx.items.some(
+            (it) => it.budget_pool_id === poolId && !it.project_tag_id
+          );
+          if (!match) return false;
+        } else if (poolOrProjectFilter.startsWith('PROJECT:')) {
+          const tagId = poolOrProjectFilter.slice(8);
+          const match = tx.items.some((it) => it.project_tag_id === tagId);
+          if (!match) return false;
+        }
       }
 
       return true;
@@ -136,7 +144,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     monthFilter,
     typeFilter,
     accountFilter,
-    categoryFilter,
+    poolOrProjectFilter,
   ]);
 
   // 统计信息条
@@ -169,7 +177,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     setMonthFilter('ALL');
     setTypeFilter('ALL');
     setAccountFilter('ALL');
-    setCategoryFilter('ALL');
+    setPoolOrProjectFilter('ALL');
   };
 
   // 展开/收起子项
@@ -184,10 +192,17 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     setEditDate(h.tx_date);
     setEditNote(h.merchant_or_note || h.raw_input_text || '');
     setEditAccountId(h.account_id);
-    setEditCategoryId(tx.items[0]?.category_id || engine.state.categories[0]?.id || 'CAT_FOOD');
     setEditGross(h.total_gross);
     setEditDiscount(h.payment_discount || h.platform_discount || '0.00');
-    setEditProjectTagId(tx.items[0]?.project_tag_id || '');
+
+    const primaryItem = tx.items[0];
+    if (primaryItem?.project_tag_id) {
+      setEditTargetSelection(`PROJECT:${primaryItem.project_tag_id}`);
+    } else if (primaryItem?.budget_pool_id) {
+      setEditTargetSelection(`POOL:${primaryItem.budget_pool_id}`);
+    } else {
+      setEditTargetSelection('POOL:POOL_DAILY');
+    }
   };
 
   // 保存编辑
@@ -199,14 +214,25 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     }
 
     try {
+      let poolId: string | undefined = undefined;
+      let projId: string | null = null;
+      if (editTargetSelection.startsWith('PROJECT:')) {
+        projId = editTargetSelection.slice(8);
+        const pt = engine.state.projectTags.find((p) => p.id === projId);
+        poolId = pt?.linked_pool_id || 'POOL_FUND';
+      } else if (editTargetSelection.startsWith('POOL:')) {
+        poolId = editTargetSelection.slice(5);
+        projId = null;
+      }
+
       engine.updateTransaction(editingTx.header.id, {
         tx_date: editDate,
         merchant_or_note: editNote.trim(),
         account_id: editAccountId,
-        category_id: editCategoryId,
         total_gross: editGross.trim(),
         payment_discount: editDiscount.trim() || '0.00',
-        project_tag_id: editProjectTagId ? editProjectTagId : null,
+        budget_pool_id: poolId,
+        project_tag_id: projId,
       });
 
       setToastMsg(`✅ 账单 ${editingTx.header.id} 已成功更新！`);
@@ -369,19 +395,26 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 ))}
               </TextField>
 
-              {/* 分类筛选 */}
+              {/* 归属资金池 / 专项筛选 */}
               <TextField
                 select
                 size="small"
-                label="分类筛选"
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                sx={{ minWidth: { xs: '100%', md: 150 } }}
+                label="归属资金池 / 专项筛选"
+                value={poolOrProjectFilter}
+                onChange={(e) => setPoolOrProjectFilter(e.target.value)}
+                sx={{ minWidth: { xs: '100%', md: 200 } }}
               >
-                <MenuItem value="ALL">全部分类</MenuItem>
-                {engine.state.categories.map((c) => (
-                  <MenuItem key={c.id} value={c.id}>
-                    {c.name}
+                <MenuItem value="ALL">全部资金池与专项</MenuItem>
+                {engine.state.budgetPools
+                  .filter((p) => p.is_monthly_budget)
+                  .map((pool) => (
+                    <MenuItem key={pool.id} value={`POOL:${pool.id}`}>
+                      💰 {pool.name}
+                    </MenuItem>
+                  ))}
+                {engine.state.projectTags.map((tag) => (
+                  <MenuItem key={tag.id} value={`PROJECT:${tag.id}`}>
+                    🎯 {tag.name}
                   </MenuItem>
                 ))}
               </TextField>
@@ -551,14 +584,30 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             sx={{ height: 20, fontSize: '0.7rem', fontWeight: 600 }}
                           />
 
-                          {/* 分类胶囊 */}
-                          {isExpense && tx.items[0]?.category_id && (
-                            <Chip
-                              size="small"
-                              label={getCategoryName(tx.items[0].category_id)}
-                              variant="outlined"
-                              sx={{ height: 20, fontSize: '0.7rem' }}
-                            />
+                          {/* 支出归属胶囊 */}
+                          {isExpense && (
+                            tx.items[0]?.project_tag_id ? (
+                              <Chip
+                                size="small"
+                                color="secondary"
+                                label={`🎯 ${engine.state.projectTags.find((p) => p.id === tx.items[0]?.project_tag_id)?.name || tx.items[0].project_tag_id}`}
+                                sx={{ height: 20, fontSize: '0.7rem' }}
+                              />
+                            ) : tx.items[0]?.budget_pool_id ? (
+                              <Chip
+                                size="small"
+                                label={`💰 ${getPoolName(tx.items[0].budget_pool_id)}`}
+                                variant="outlined"
+                                sx={{ height: 20, fontSize: '0.7rem' }}
+                              />
+                            ) : tx.items[0]?.category_id ? (
+                              <Chip
+                                size="small"
+                                label={getCategoryName(tx.items[0].category_id)}
+                                variant="outlined"
+                                sx={{ height: 20, fontSize: '0.7rem' }}
+                              />
+                            ) : null
                           )}
 
                           {/* 立减金使用标记 */}
@@ -613,8 +662,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           {tx.items[0]?.project_tag_id && (
                             <>
                               <span>·</span>
-                              <span style={{ color: '#0b57d0' }}>
-                                #{tx.items[0].project_tag_id}
+                              <span style={{ color: '#7c4dff', fontWeight: 600 }}>
+                                🎯 {engine.state.projectTags.find((p) => p.id === tx.items[0].project_tag_id)?.name || tx.items[0].project_tag_id}
                               </span>
                             </>
                           )}
@@ -776,17 +825,21 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             >
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                 <strong>{it.item_name}</strong>
-                                <Chip
-                                  size="small"
-                                  label={getCategoryName(it.category_id)}
-                                  sx={{ height: 18, fontSize: '0.65rem' }}
-                                />
-                                <Chip
-                                  size="small"
-                                  label={getPoolName(it.budget_pool_id)}
-                                  variant="outlined"
-                                  sx={{ height: 18, fontSize: '0.65rem' }}
-                                />
+                                {it.project_tag_id ? (
+                                  <Chip
+                                    size="small"
+                                    color="secondary"
+                                    label={`🎯 ${engine.state.projectTags.find((p) => p.id === it.project_tag_id)?.name || it.project_tag_id}`}
+                                    sx={{ height: 18, fontSize: '0.65rem' }}
+                                  />
+                                ) : (
+                                  <Chip
+                                    size="small"
+                                    label={`💰 ${getPoolName(it.budget_pool_id)}`}
+                                    variant="outlined"
+                                    sx={{ height: 18, fontSize: '0.65rem' }}
+                                  />
+                                )}
                               </Box>
 
                               <Box sx={{ textAlign: 'right', fontFamily: 'monospace' }}>
@@ -901,35 +954,35 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 ))}
               </TextField>
 
-              <TextField
-                select
-                label="属性分类"
-                fullWidth
-                value={editCategoryId}
-                onChange={(e) => setEditCategoryId(e.target.value)}
-              >
-                {engine.state.categories.map((c) => (
-                  <MenuItem key={c.id} value={c.id}>
-                    {c.name}
+              {editingTx?.header.tx_type === 'EXPENSE' && (
+                <TextField
+                  select
+                  label="支出归属（月度资金池 / 专项预算）"
+                  fullWidth
+                  value={editTargetSelection}
+                  onChange={(e) => setEditTargetSelection(e.target.value)}
+                >
+                  <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
+                    ── 月度预算资金池 ──
                   </MenuItem>
-                ))}
-              </TextField>
+                  {engine.state.budgetPools
+                    .filter((p) => p.is_monthly_budget)
+                    .map((pool) => (
+                      <MenuItem key={pool.id} value={`POOL:${pool.id}`}>
+                        💰 {pool.name}
+                      </MenuItem>
+                    ))}
+                  <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
+                    ── 专项预算与心愿单 ──
+                  </MenuItem>
+                  {engine.state.projectTags.map((tag) => (
+                    <MenuItem key={tag.id} value={`PROJECT:${tag.id}`}>
+                      🎯 {tag.name} (目标 ¥{tag.target_budget || '0.00'})
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
             </Stack>
-
-            <TextField
-              select
-              label="跨期专项标签 (可选)"
-              fullWidth
-              value={editProjectTagId}
-              onChange={(e) => setEditProjectTagId(e.target.value)}
-            >
-              <MenuItem value="">(无专项 / 归入常规池)</MenuItem>
-              {engine.state.projectTags.map((tag) => (
-                <MenuItem key={tag.id} value={tag.id}>
-                  #{tag.name}
-                </MenuItem>
-              ))}
-            </TextField>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>

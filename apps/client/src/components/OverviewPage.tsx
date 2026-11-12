@@ -559,12 +559,29 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             <Typography variant="body2" sx={{ fontWeight: 700 }}>
                               {h.merchant_or_note || h.raw_input_text}
                             </Typography>
-                            {isExpense && tx.items[0]?.category_id && (
-                              <Chip
-                                size="small"
-                                label={getCategoryName(tx.items[0].category_id)}
-                                sx={{ height: 20, fontSize: '0.7rem' }}
-                              />
+                            {isExpense && (
+                              tx.items[0]?.project_tag_id ? (
+                                <Chip
+                                  size="small"
+                                  color="secondary"
+                                  label={`🎯 ${engine.state.projectTags.find((p) => p.id === tx.items[0]?.project_tag_id)?.name || tx.items[0].project_tag_id}`}
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              ) : tx.items[0]?.budget_pool_id ? (
+                                <Chip
+                                  size="small"
+                                  label={`💰 ${engine.state.budgetPools.find((p) => p.id === tx.items[0]?.budget_pool_id)?.name || tx.items[0].budget_pool_id}`}
+                                  variant="outlined"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              ) : tx.items[0]?.category_id ? (
+                                <Chip
+                                  size="small"
+                                  label={getCategoryName(tx.items[0].category_id)}
+                                  variant="outlined"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              ) : null
                             )}
                             {h.applied_voucher_id != null && (
                               <Chip

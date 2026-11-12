@@ -463,5 +463,39 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       expect(result.items[0].budget_pool_id).toBe('POOL_FLEX');
       expect(result.total_net).toBe('15.00');
     });
+
+    it('should auto-convert foreign currency without explicit hold amount using DEFAULT_FX_RATES', () => {
+      const res = parseQuickInputDsl('Gemini会员 JPY 720');
+      expect(res.original_currency).toBe('JPY');
+      expect(res.original_amount).toBe('720');
+      expect(res.settlement_status).toBe('PENDING_HOLD');
+      // 720 * 0.048 * 1.02 = 35.2512 -> 35.25 hold CNY
+      expect(res.hold_amount_cny).toBe('35.25');
+      // base = 35.25 / 1.02 = 34.56, cashback = 34.56 * 0.01 = 0.35, net = 34.21
+      expect(res.total_gross).toBe('34.56');
+      expect(res.payment_discount).toBe('0.35');
+      expect(res.total_net).toBe('34.21');
+      expect(res.items[0].item_net).toBe('34.21');
+    });
+
+    it('should route budget_pool_id when #pool_name is provided in DSL', () => {
+      const customPools = [
+        {
+          id: 'POOL_CUSTOM_SNACK',
+          name: '零食下午茶池',
+          pool_type: 'DAILY' as const,
+          is_monthly_budget: true,
+          rollover_strategy: 'RESET' as const,
+          description: null,
+          sort_order: 1,
+        },
+      ];
+
+      const res = parseQuickInputDsl('奶茶 15 #零食下午茶池', {
+        budgetPools: customPools,
+      });
+
+      expect(res.items[0].budget_pool_id).toBe('POOL_CUSTOM_SNACK');
+    });
   });
 });
