@@ -473,6 +473,24 @@ export interface SyncConflict {
   created_at: string;
 }
 
+/**
+ * 全量数据同步快照包
+ */
+export interface FullSyncBundle {
+  nodeId: string;
+  exportedAt: string;
+  accounts: Account[];
+  oplogs: SyncOpLogEntry[];
+  vouchers: Voucher[];
+  monthlyBudgets: MonthlyBudget[];
+  budgetPools?: BudgetPool[];
+  categories?: Category[];
+  projectTags?: ProjectTag[];
+  recurringRules?: RecurringRule[];
+  fixedAssets?: FixedAsset[];
+  transactions?: TransactionAggregate[];
+}
+
 // ============================================================================
 // 8. 辅助计算业务模型类型
 // ============================================================================

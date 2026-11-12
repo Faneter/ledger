@@ -381,10 +381,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 <HourglassTopRounded color="warning" />
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                    外币预授权清算提醒 ({pendingFxTxs.length} 笔挂起中)
+                    外币预授权待正式清算 ({pendingFxTxs.length} 笔)
                   </Typography>
                   <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    按 102% 汇率上浮冻结暂扣，收到银行正式扣账账单后可一键核销补退差额并结转返现
+                    银行正式出账后，输入最终清算的人民币入账金额，自动释放预授权冻结差额并核算返现。
                   </Typography>
                 </Box>
               </Box>
@@ -499,6 +499,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 const isExpense = h.tx_type === 'EXPENSE';
                 const isIncome = h.tx_type === 'INCOME';
                 const isTransfer = h.tx_type === 'TRANSFER';
+                const isVoucherBuy = h.tx_type === 'VOUCHER_BUY';
+                const isExpenseLike = isExpense || isVoucherBuy;
 
                 return (
                   <React.Fragment key={h.id}>
@@ -522,7 +524,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            bgcolor: isExpense
+                            bgcolor: isExpenseLike
                               ? (t) =>
                                   t.palette.mode === 'light'
                                     ? '#ffebe9'
@@ -536,14 +538,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                                   t.palette.mode === 'light'
                                     ? '#e0f7fa'
                                     : '#00363d',
-                            color: isExpense
+                            color: isExpenseLike
                               ? 'error.main'
                               : isIncome
                               ? 'success.main'
                               : 'secondary.main',
                           }}
                         >
-                          {isExpense ? (
+                          {isExpenseLike ? (
                             <TrendingDownRounded fontSize="small" />
                           ) : isIncome ? (
                             <TrendingUpRounded fontSize="small" />
@@ -559,7 +561,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             <Typography variant="body2" sx={{ fontWeight: 700 }}>
                               {h.merchant_or_note || h.raw_input_text}
                             </Typography>
-                            {isExpense && (
+                            {isExpenseLike && (
                               tx.items[0]?.project_tag_id ? (
                                 <Chip
                                   size="small"
@@ -579,6 +581,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                                   size="small"
                                   label={getCategoryName(tx.items[0].category_id)}
                                   variant="outlined"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              ) : isVoucherBuy ? (
+                                <Chip
+                                  size="small"
+                                  label="购券支出"
+                                  color="primary"
                                   sx={{ height: 20, fontSize: '0.7rem' }}
                                 />
                               ) : null
@@ -629,14 +638,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                           sx={{
                             fontWeight: 800,
                             fontFamily: 'monospace',
-                            color: isExpense
+                            color: isExpenseLike
                               ? 'text.primary'
                               : isIncome
                               ? 'success.main'
                               : 'secondary.main',
                           }}
                         >
-                          {isExpense ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
+                          {isExpenseLike ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
                         </Typography>
                         {(Number(h.payment_discount) > 0 ||
                           Number(h.platform_discount) > 0) && (
@@ -644,7 +653,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             variant="caption"
                             sx={{ color: 'success.main', display: 'block' }}
                           >
-                            省 ¥{h.payment_discount || h.platform_discount}
+                            省 ¥{Number(h.payment_discount) > 0 ? h.payment_discount : h.platform_discount}
                           </Typography>
                         )}
                       </Box>

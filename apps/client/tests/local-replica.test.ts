@@ -837,5 +837,44 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       });
       expect(v2.title).toBe('满50减20立减金');
     });
+
+    it('buyVoucher 创建的 VOUCHER_BUY 流水 total_net 为 acquire_cost，删除该流水自动级联删除卡券并还原账户余额', () => {
+      const initialUnion = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      const initialBalance = Number(initialUnion?.book_balance || 0);
+
+      // 1. 购入一张面值 10.00 元，成本 5.99 元的立减金
+      const { voucher, tx } = engine.buyVoucher({
+        title: '美团外卖10元立减券',
+        voucher_type: 'PREPAID_COUPON',
+        face_value: '10.00',
+        acquire_cost: '5.99',
+        min_spend: '10.01',
+        accountId: 'ACC_UNION_MAIN',
+      });
+
+      // 验证 VOUCHER_BUY 流水账单字段：实付与票面金额一致，不提前虚构折扣
+      expect(tx.header.tx_type).toBe('VOUCHER_BUY');
+      expect(tx.header.total_gross).toBe('5.99');
+      expect(tx.header.platform_discount).toBe('0.00');
+      expect(tx.header.payment_discount).toBe('0.00');
+      expect(tx.header.total_net).toBe('5.99');
+
+      // 验证卡券在卡包中
+      expect(engine.state.vouchers.some((v) => v.id === voucher.id)).toBe(true);
+
+      // 验证扣除现金成本 5.99
+      const afterBuyUnion = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      expect(Number(afterBuyUnion?.book_balance)).toBeCloseTo(initialBalance - 5.99, 2);
+
+      // 2. 删除该 VOUCHER_BUY 交易流水
+      engine.deleteTransaction(tx.header.id);
+
+      // 验证卡券自动从卡包中级联删除
+      expect(engine.state.vouchers.some((v) => v.id === voucher.id)).toBe(false);
+
+      // 验证账户余额恢复如初
+      const afterDeleteUnion = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      expect(Number(afterDeleteUnion?.book_balance)).toBeCloseTo(initialBalance, 2);
+    });
   });
 });

@@ -38,6 +38,7 @@ import {
   DEFAULT_FX_RATES,
   SplitItemInput,
   generateVoucherTitle,
+  FullSyncBundle,
 } from '@ledger/core';
 import { SCHEMA_SQL, SEED_SQL } from './schema.js';
 import { recalculateAllAccounts } from './balance-recalculator.js';
@@ -47,14 +48,7 @@ const { DatabaseSync } = require('node:sqlite') as {
   DatabaseSync: typeof DatabaseSyncType;
 };
 
-export interface FullSyncBundle {
-  nodeId: string;
-  exportedAt: string;
-  accounts: Account[];
-  oplogs: SyncOpLogEntry[];
-  vouchers: Voucher[];
-  monthlyBudgets: MonthlyBudget[];
-}
+export { FullSyncBundle };
 
 export class LedgerRepository {
   public readonly db: DatabaseSyncType;
@@ -222,11 +216,18 @@ export class LedgerRepository {
    * 录入结构化完整交易聚合实体
    */
   public recordTransaction(
-    aggregate: Omit<TransactionAggregate, 'header'> & {
+    aggregate: Omit<TransactionAggregate, 'header' | 'items'> & {
       header: Omit<TransactionHeader, 'id' | 'tx_timestamp'> & {
         id?: string;
         tx_timestamp?: string;
       };
+      items: Array<
+        Omit<TransactionItem, 'id' | 'header_id' | 'raw_formula_expr'> & {
+          id?: number;
+          header_id?: string;
+          raw_formula_expr?: string | null;
+        }
+      >;
     }
   ): TransactionAggregate {
     const { header, items, appliedVoucherId } = aggregate;
@@ -330,6 +331,7 @@ export class LedgerRepository {
         item_gross: formatCny(item.item_gross),
         allocated_discount: formatCny(item.allocated_discount ?? 0),
         item_net: formatCny(item.item_net),
+        raw_formula_expr: item.raw_formula_expr ?? null,
       });
     }
 
@@ -695,9 +697,9 @@ export class LedgerRepository {
         tx_type: 'VOUCHER_BUY',
         account_id: params.accountId,
         target_account_id: null,
-        total_gross: faceValue,
+        total_gross: acquireCost,
         platform_discount: '0.00',
-        payment_discount: discount,
+        payment_discount: '0.00',
         total_net: acquireCost,
         allocation_mode: 'SINGLE',
         original_currency: 'CNY',
@@ -1037,177 +1039,377 @@ export class LedgerRepository {
     }
 
     // 3. 将胜出实体的最新状态重放至业务表
-    for (const [_, winningOp] of winningEntities.entries()) {
-      if (winningOp.entity_type === 'TRANSACTION') {
+    // 按实体依赖顺序排序：
+    // BUDGET_POOL (1) -> CATEGORY (2) -> PROJECT_TAG (3) -> ACCOUNT (4) -> VOUCHER (5) -> MONTHLY_BUDGET/BUDGET (6) -> RECURRING_RULE (7) -> FIXED_ASSET (8) -> TRANSACTION (9)
+    const entityOrder: Record<string, number> = {
+      BUDGET_POOL: 1,
+      CATEGORY: 2,
+      PROJECT_TAG: 3,
+      ACCOUNT: 4,
+      VOUCHER: 5,
+      MONTHLY_BUDGET: 6,
+      BUDGET: 6,
+      RECURRING_RULE: 7,
+      FIXED_ASSET: 8,
+      TRANSACTION: 9,
+    };
+    const sortedWinningOps = Array.from(winningEntities.values()).sort(
+      (a, b) => (entityOrder[a.entity_type] ?? 99) - (entityOrder[b.entity_type] ?? 99)
+    );
+
+    this.db.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      for (const winningOp of sortedWinningOps) {
         let payload: any = {};
         try {
           payload = JSON.parse(winningOp.payload_json);
         } catch {
-          continue;
+          payload = {};
         }
 
-        const header = payload.header ?? payload;
-        const items = payload.items ?? [];
-
-        if (winningOp.op_type === 'DELETE' || header.is_deleted) {
-          this.db
-            .prepare(
-              'UPDATE transaction_headers SET is_deleted = 1, updated_hlc = ? WHERE id = ?'
-            )
-            .run(winningOp.hlc, header.id);
-        } else {
-          this.db
-            .prepare(
-              `
-            INSERT INTO transaction_headers (
-              id, tx_date, tx_timestamp, tx_type, account_id, target_account_id,
-              total_gross, platform_discount, payment_discount, total_net,
-              allocation_mode, original_currency, original_amount, exchange_rate,
-              settlement_status, hold_amount_cny, settled_at, raw_input_text,
-              merchant_or_note, applied_voucher_id, is_deleted, updated_hlc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              tx_date=excluded.tx_date,
-              tx_timestamp=excluded.tx_timestamp,
-              tx_type=excluded.tx_type,
-              account_id=excluded.account_id,
-              target_account_id=excluded.target_account_id,
-              total_gross=excluded.total_gross,
-              platform_discount=excluded.platform_discount,
-              payment_discount=excluded.payment_discount,
-              total_net=excluded.total_net,
-              allocation_mode=excluded.allocation_mode,
-              original_currency=excluded.original_currency,
-              original_amount=excluded.original_amount,
-              exchange_rate=excluded.exchange_rate,
-              settlement_status=excluded.settlement_status,
-              hold_amount_cny=excluded.hold_amount_cny,
-              settled_at=excluded.settled_at,
-              raw_input_text=excluded.raw_input_text,
-              merchant_or_note=excluded.merchant_or_note,
-              applied_voucher_id=excluded.applied_voucher_id,
-              is_deleted=excluded.is_deleted,
-              updated_hlc=excluded.updated_hlc
-          `
-            )
-            .run(
-              header.id,
-              header.tx_date,
-              header.tx_timestamp,
-              header.tx_type,
-              header.account_id,
-              header.target_account_id ?? null,
-              formatCny(header.total_gross),
-              formatCny(header.platform_discount ?? 0),
-              formatCny(header.payment_discount ?? 0),
-              formatCny(header.total_net),
-              header.allocation_mode ?? 'SINGLE',
-              header.original_currency ?? 'CNY',
-              header.original_amount != null
-                ? formatCny(header.original_amount)
-                : null,
-              header.exchange_rate
-                ? formatRate(header.exchange_rate)
-                : '1.000000',
-              header.settlement_status ?? 'SETTLED',
-              formatCny(header.hold_amount_cny ?? 0),
-              header.settled_at ?? null,
-              header.raw_input_text ?? null,
-              header.merchant_or_note ?? null,
-              payload.appliedVoucherId ?? header.applied_voucher_id ?? null,
-              0,
+        if (winningOp.entity_type === 'BUDGET_POOL') {
+          if (winningOp.op_type === 'DELETE') {
+            this.db.prepare('DELETE FROM monthly_budgets WHERE pool_id = ?').run(winningOp.entity_id);
+            this.db.prepare('DELETE FROM budget_pools WHERE id = ?').run(winningOp.entity_id);
+          } else {
+            this.db.prepare(`
+              INSERT OR REPLACE INTO budget_pools (
+                id, name, pool_type, is_monthly_budget, rollover_strategy, description, sort_order
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              payload.id || winningOp.entity_id,
+              payload.name,
+              payload.pool_type,
+              payload.is_monthly_budget ? 1 : 0,
+              payload.rollover_strategy ?? 'ACCUMULATE',
+              payload.description ?? null,
+              payload.sort_order ?? 100
+            );
+          }
+        } else if (winningOp.entity_type === 'CATEGORY') {
+          if (winningOp.op_type === 'DELETE') {
+            this.db.prepare('DELETE FROM categories WHERE id = ?').run(winningOp.entity_id);
+          } else {
+            this.db.prepare(`
+              INSERT OR REPLACE INTO categories (
+                id, parent_id, name, default_pool_id, icon_name, keywords, sort_order
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              payload.id || winningOp.entity_id,
+              payload.parent_id ?? null,
+              payload.name,
+              payload.default_pool_id,
+              payload.icon_name ?? null,
+              payload.keywords ?? null,
+              payload.sort_order ?? 100
+            );
+          }
+        } else if (winningOp.entity_type === 'PROJECT_TAG') {
+          if (winningOp.op_type === 'DELETE') {
+            this.db.prepare('DELETE FROM projects_and_tags WHERE id = ?').run(winningOp.entity_id);
+          } else {
+            this.db.prepare(`
+              INSERT OR REPLACE INTO projects_and_tags (
+                id, name, tag_type, target_budget, linked_pool_id, is_active
+              ) VALUES (?, ?, ?, ?, ?, ?)
+            `).run(
+              payload.id || winningOp.entity_id,
+              payload.name,
+              payload.tag_type,
+              payload.target_budget != null ? formatCny(payload.target_budget) : null,
+              payload.linked_pool_id ?? null,
+              payload.is_active ? 1 : 0
+            );
+          }
+        } else if (winningOp.entity_type === 'ACCOUNT') {
+          if (winningOp.op_type === 'DELETE') {
+            this.db.prepare('DELETE FROM accounts WHERE id = ?').run(winningOp.entity_id);
+          } else if (payload.name && payload.account_role) {
+            this.db.prepare(`
+              INSERT INTO accounts (
+                id, name, account_role, currency, initial_balance, book_balance, frozen_amount,
+                market_value, credit_limit, fx_hold_ratio, fx_cashback_rate, fx_monthly_cap,
+                billing_day, repayment_day, is_default_pay, is_folded, include_in_networth, sort_order, updated_hlc
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                account_role=excluded.account_role,
+                currency=excluded.currency,
+                initial_balance=excluded.initial_balance,
+                market_value=excluded.market_value,
+                credit_limit=excluded.credit_limit,
+                fx_hold_ratio=excluded.fx_hold_ratio,
+                fx_cashback_rate=excluded.fx_cashback_rate,
+                fx_monthly_cap=excluded.fx_monthly_cap,
+                billing_day=excluded.billing_day,
+                repayment_day=excluded.repayment_day,
+                is_default_pay=excluded.is_default_pay,
+                is_folded=excluded.is_folded,
+                include_in_networth=excluded.include_in_networth,
+                sort_order=excluded.sort_order,
+                updated_hlc=excluded.updated_hlc,
+                updated_at=CURRENT_TIMESTAMP
+            `).run(
+              payload.id || winningOp.entity_id,
+              payload.name,
+              payload.account_role,
+              payload.currency ?? 'CNY',
+              formatCny(payload.initial_balance ?? 0),
+              formatCny(payload.book_balance ?? 0),
+              formatCny(payload.frozen_amount ?? 0),
+              payload.market_value ? formatCny(payload.market_value) : null,
+              payload.credit_limit ? formatCny(payload.credit_limit) : null,
+              payload.fx_hold_ratio ?? '1.000',
+              payload.fx_cashback_rate ?? '0.0000',
+              payload.fx_monthly_cap ? formatCny(payload.fx_monthly_cap) : null,
+              payload.billing_day ?? null,
+              payload.repayment_day ?? null,
+              payload.is_default_pay ? 1 : 0,
+              payload.is_folded ? 1 : 0,
+              payload.include_in_networth !== false ? 1 : 0,
+              payload.sort_order ?? 100,
               winningOp.hlc
             );
-
-          // 覆盖更新子明细
-          this.db
-            .prepare('DELETE FROM transaction_items WHERE header_id = ?')
-            .run(header.id);
-
-          const insertItem = this.db.prepare(`
-            INSERT INTO transaction_items (
-              header_id, item_name, category_id, budget_pool_id, project_tag_id,
-              item_gross, allocated_discount, item_net, is_primary_item, raw_formula_expr
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-
-          for (const it of items) {
-            insertItem.run(
-              header.id,
-              it.item_name,
-              it.category_id,
-              it.budget_pool_id,
-              it.project_tag_id ?? null,
-              formatCny(it.item_gross),
-              formatCny(it.allocated_discount ?? 0),
-              formatCny(it.item_net),
-              it.is_primary_item ? 1 : 0,
-              it.raw_formula_expr ?? null
+          } else {
+            if (payload.initial_balance !== undefined) {
+              this.db.prepare(
+                'UPDATE accounts SET initial_balance = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+              ).run(formatCny(payload.initial_balance), winningOp.hlc, payload.id || winningOp.entity_id);
+            }
+            if (payload.market_value !== undefined) {
+              this.db.prepare(
+                'UPDATE accounts SET market_value = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+              ).run(
+                payload.market_value ? formatCny(payload.market_value) : null,
+                winningOp.hlc,
+                payload.id || winningOp.entity_id
+              );
+            }
+          }
+        } else if (winningOp.entity_type === 'VOUCHER') {
+          const vId = Number(payload.id ?? winningOp.entity_id);
+          if (winningOp.op_type === 'DELETE') {
+            const existingVoucher = this.db.prepare('SELECT purchase_tx_id FROM vouchers WHERE id = ?').get(vId) as any;
+            if (existingVoucher?.purchase_tx_id) {
+              this.db.prepare('UPDATE transaction_headers SET is_deleted = 1 WHERE id = ?').run(existingVoucher.purchase_tx_id);
+            }
+            this.db.prepare('UPDATE transaction_headers SET applied_voucher_id = NULL WHERE applied_voucher_id = ?').run(vId);
+            this.db.prepare('DELETE FROM vouchers WHERE id = ?').run(vId);
+          } else if (payload && (payload.id != null || winningOp.entity_id)) {
+            this.db.prepare(`
+              INSERT OR REPLACE INTO vouchers (
+                id, title, voucher_type, face_value, acquire_cost, min_spend,
+                status, purchase_tx_id, used_tx_id, expire_date
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              vId,
+              payload.title,
+              payload.voucher_type ?? 'PREPAID_COUPON',
+              formatCny(payload.face_value ?? 0),
+              formatCny(payload.acquire_cost ?? 0),
+              formatCny(payload.min_spend ?? 0),
+              payload.status ?? 'AVAILABLE',
+              payload.purchase_tx_id ?? null,
+              payload.used_tx_id ?? null,
+              payload.expire_date ?? null
             );
           }
+        } else if (winningOp.entity_type === 'MONTHLY_BUDGET' || winningOp.entity_type === 'BUDGET') {
+          if (winningOp.op_type === 'DELETE') {
+            this.db.prepare(
+              "DELETE FROM monthly_budgets WHERE id = ? OR (year_month || ':' || pool_id) = ?"
+            ).run(winningOp.entity_id, winningOp.entity_id);
+          } else if (payload.year_month && payload.pool_id) {
+            this.db.prepare(`
+              INSERT INTO monthly_budgets (
+                year_month, pool_id, base_allocation, rollover_from_prev, reserved_fixed, swept_to_fund, note
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(year_month, pool_id) DO UPDATE SET
+                base_allocation=excluded.base_allocation,
+                rollover_from_prev=excluded.rollover_from_prev,
+                reserved_fixed=excluded.reserved_fixed,
+                swept_to_fund=excluded.swept_to_fund,
+                note=excluded.note
+            `).run(
+              payload.year_month,
+              payload.pool_id,
+              formatCny(payload.base_allocation ?? 0),
+              formatCny(payload.rollover_from_prev ?? 0),
+              formatCny(payload.reserved_fixed ?? 0),
+              formatCny(payload.swept_to_fund ?? 0),
+              payload.note ?? null
+            );
+          }
+        } else if (winningOp.entity_type === 'RECURRING_RULE') {
+          if (winningOp.op_type === 'DELETE') {
+            this.db.prepare('DELETE FROM recurring_rules WHERE id = ?').run(winningOp.entity_id);
+          } else {
+            this.db.prepare(`
+              INSERT OR REPLACE INTO recurring_rules (
+                id, title, rule_type, cron_cycle, trigger_day, currency, amount,
+                account_id, target_account_id, category_id, budget_pool_id, auto_reserve_budget, is_active
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              payload.id || Number(winningOp.entity_id),
+              payload.title,
+              payload.rule_type,
+              payload.cron_cycle,
+              payload.trigger_day,
+              payload.currency ?? 'CNY',
+              formatCny(payload.amount),
+              payload.account_id,
+              payload.target_account_id ?? null,
+              payload.category_id ?? null,
+              payload.budget_pool_id ?? null,
+              payload.auto_reserve_budget ? 1 : 0,
+              payload.is_active ? 1 : 0
+            );
+          }
+        } else if (winningOp.entity_type === 'FIXED_ASSET') {
+          if (winningOp.op_type === 'DELETE') {
+            this.db.prepare('DELETE FROM fixed_assets WHERE id = ?').run(winningOp.entity_id);
+          } else {
+            this.db.prepare(`
+              INSERT OR REPLACE INTO fixed_assets (
+                id, asset_name, purchase_item_id, purchase_date, purchase_net_cost,
+                target_daily_cost, status, resale_date, resale_recovery, note
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              payload.id || Number(winningOp.entity_id),
+              payload.asset_name,
+              payload.purchase_item_id ?? null,
+              payload.purchase_date,
+              formatCny(payload.purchase_net_cost),
+              payload.target_daily_cost != null ? formatCny(payload.target_daily_cost) : '2.00',
+              payload.status ?? 'IN_USE',
+              payload.resale_date ?? null,
+              formatCny(payload.resale_recovery ?? 0),
+              payload.note ?? null
+            );
+          }
+        } else if (winningOp.entity_type === 'TRANSACTION') {
+          const header = payload.header ?? payload;
+          const items = payload.items ?? [];
 
-          const vId = payload.appliedVoucherId ?? header.applied_voucher_id;
-          if (vId != null) {
+          if (winningOp.op_type === 'DELETE' || header.is_deleted) {
             this.db
               .prepare(
-                "UPDATE vouchers SET status = 'USED', used_tx_id = ? WHERE id = ?"
+                'UPDATE transaction_headers SET is_deleted = 1, updated_hlc = ? WHERE id = ?'
               )
-              .run(header.id, vId);
+              .run(winningOp.hlc, header.id || winningOp.entity_id);
+
+            // Also delete any voucher whose purchase_tx_id = header.id
+            this.db.prepare('DELETE FROM vouchers WHERE purchase_tx_id = ?').run(header.id || winningOp.entity_id);
+
+            // And if header.applied_voucher_id != null, restore that voucher
+            const appliedVId = payload.appliedVoucherId ?? header.applied_voucher_id;
+            if (appliedVId != null) {
+              this.db.prepare("UPDATE vouchers SET status = 'AVAILABLE', used_tx_id = NULL WHERE id = ?").run(appliedVId);
+            }
+          } else {
+            this.db
+              .prepare(
+                `
+              INSERT INTO transaction_headers (
+                id, tx_date, tx_timestamp, tx_type, account_id, target_account_id,
+                total_gross, platform_discount, payment_discount, total_net,
+                allocation_mode, original_currency, original_amount, exchange_rate,
+                settlement_status, hold_amount_cny, settled_at, raw_input_text,
+                merchant_or_note, applied_voucher_id, is_deleted, updated_hlc
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                tx_date=excluded.tx_date,
+                tx_timestamp=excluded.tx_timestamp,
+                tx_type=excluded.tx_type,
+                account_id=excluded.account_id,
+                target_account_id=excluded.target_account_id,
+                total_gross=excluded.total_gross,
+                platform_discount=excluded.platform_discount,
+                payment_discount=excluded.payment_discount,
+                total_net=excluded.total_net,
+                allocation_mode=excluded.allocation_mode,
+                original_currency=excluded.original_currency,
+                original_amount=excluded.original_amount,
+                exchange_rate=excluded.exchange_rate,
+                settlement_status=excluded.settlement_status,
+                hold_amount_cny=excluded.hold_amount_cny,
+                settled_at=excluded.settled_at,
+                raw_input_text=excluded.raw_input_text,
+                merchant_or_note=excluded.merchant_or_note,
+                applied_voucher_id=excluded.applied_voucher_id,
+                is_deleted=excluded.is_deleted,
+                updated_hlc=excluded.updated_hlc
+            `
+              )
+              .run(
+                header.id,
+                header.tx_date,
+                header.tx_timestamp,
+                header.tx_type,
+                header.account_id,
+                header.target_account_id ?? null,
+                formatCny(header.total_gross),
+                formatCny(header.platform_discount ?? 0),
+                formatCny(header.payment_discount ?? 0),
+                formatCny(header.total_net),
+                header.allocation_mode ?? 'SINGLE',
+                header.original_currency ?? 'CNY',
+                header.original_amount != null
+                  ? formatCny(header.original_amount)
+                  : null,
+                header.exchange_rate
+                  ? formatRate(header.exchange_rate)
+                  : '1.000000',
+                header.settlement_status ?? 'SETTLED',
+                formatCny(header.hold_amount_cny ?? 0),
+                header.settled_at ?? null,
+                header.raw_input_text ?? null,
+                header.merchant_or_note ?? null,
+                payload.appliedVoucherId ?? header.applied_voucher_id ?? null,
+                0,
+                winningOp.hlc
+              );
+
+            // 覆盖更新子明细
+            this.db
+              .prepare('DELETE FROM transaction_items WHERE header_id = ?')
+              .run(header.id);
+
+            const insertItem = this.db.prepare(`
+              INSERT INTO transaction_items (
+                header_id, item_name, category_id, budget_pool_id, project_tag_id,
+                item_gross, allocated_discount, item_net, is_primary_item, raw_formula_expr
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+
+            for (const it of items) {
+              insertItem.run(
+                header.id,
+                it.item_name,
+                it.category_id,
+                it.budget_pool_id,
+                it.project_tag_id ?? null,
+                formatCny(it.item_gross),
+                formatCny(it.allocated_discount ?? 0),
+                formatCny(it.item_net),
+                it.is_primary_item ? 1 : 0,
+                it.raw_formula_expr ?? null
+              );
+            }
+
+            const vId = payload.appliedVoucherId ?? header.applied_voucher_id;
+            if (vId != null) {
+              this.db
+                .prepare(
+                  "UPDATE vouchers SET status = 'USED', used_tx_id = ? WHERE id = ?"
+                )
+                .run(header.id, vId);
+            }
           }
         }
-      } else if (winningOp.entity_type === 'ACCOUNT') {
-        let payload: any = {};
-        try {
-          payload = JSON.parse(winningOp.payload_json);
-        } catch {
-          continue;
-        }
-
-        if (payload.initial_balance !== undefined) {
-          this.db
-            .prepare(
-              'UPDATE accounts SET initial_balance = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-            )
-            .run(payload.initial_balance, winningOp.hlc, payload.id);
-        }
-        if (payload.market_value !== undefined) {
-          this.db
-            .prepare(
-              'UPDATE accounts SET market_value = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-            )
-            .run(payload.market_value, winningOp.hlc, payload.id);
-        }
-      } else if (winningOp.entity_type === 'VOUCHER') {
-        let v: any = {};
-        try {
-          v = JSON.parse(winningOp.payload_json);
-        } catch {
-          continue;
-        }
-        if (v && v.id != null) {
-          this.db
-            .prepare(
-              `
-            INSERT OR REPLACE INTO vouchers (
-              id, title, voucher_type, face_value, acquire_cost, min_spend,
-              status, purchase_tx_id, used_tx_id, expire_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `
-            )
-            .run(
-              Number(v.id),
-              v.title,
-              v.voucher_type ?? 'PREPAID_COUPON',
-              formatCny(v.face_value ?? 0),
-              formatCny(v.acquire_cost ?? 0),
-              formatCny(v.min_spend ?? 0),
-              v.status ?? 'AVAILABLE',
-              v.purchase_tx_id ?? null,
-              v.used_tx_id ?? null,
-              v.expire_date ?? null
-            );
-        }
       }
+    } finally {
+      this.db.exec('PRAGMA foreign_keys = ON;');
     }
 
     // 推进本地混合逻辑时钟
@@ -1240,11 +1442,31 @@ export class LedgerRepository {
     const monthlyBudgets = this.db
       .prepare('SELECT * FROM monthly_budgets')
       .all() as any[];
+    const budgetPools = this.db
+      .prepare('SELECT * FROM budget_pools ORDER BY sort_order ASC')
+      .all() as any[];
+    const categories = this.db
+      .prepare('SELECT * FROM categories ORDER BY sort_order ASC')
+      .all() as any[];
+    const projectTags = this.db
+      .prepare('SELECT * FROM projects_and_tags ORDER BY id ASC')
+      .all() as any[];
+    const recurringRules = this.db
+      .prepare('SELECT * FROM recurring_rules ORDER BY id ASC')
+      .all() as any[];
+    const fixedAssets = this.db
+      .prepare('SELECT * FROM fixed_assets ORDER BY id ASC')
+      .all() as any[];
 
     return {
       nodeId: this.nodeId,
       exportedAt: new Date().toISOString(),
       accounts,
+      budgetPools,
+      categories,
+      projectTags,
+      recurringRules,
+      fixedAssets,
       oplogs,
       vouchers,
       monthlyBudgets,
@@ -1255,58 +1477,200 @@ export class LedgerRepository {
    * 在服务端炸机/空库时从完整快照包 100% 幂等恢复
    */
   public reseedFromBundle(bundle: FullSyncBundle): void {
-    // 1. 清空现有业务表数据并重新初始化
-    this.db.exec(`
-      DELETE FROM transaction_items;
-      DELETE FROM transaction_headers;
-      DELETE FROM sync_oplog;
-      DELETE FROM sync_conflicts;
-      DELETE FROM vouchers;
-      DELETE FROM monthly_budgets;
-    `);
-    this.db.exec(SCHEMA_SQL);
-    this.db.exec(SEED_SQL);
-
-    // 2. 还原账户初始状态与市值
-    for (const acc of bundle.accounts) {
-      this.db
-        .prepare(
-          'UPDATE accounts SET initial_balance = ?, market_value = ? WHERE id = ?'
-        )
-        .run(
-          formatCny(acc.initial_balance ?? 0),
-          acc.market_value ? formatCny(acc.market_value) : null,
-          acc.id
-        );
-    }
-
-    // 3. 还原卡券
-    if (bundle.vouchers && bundle.vouchers.length > 0) {
-      const insertVoucher = this.db.prepare(`
-        INSERT OR REPLACE INTO vouchers (id, title, voucher_type, face_value, acquire_cost, min_spend, status, purchase_tx_id, used_tx_id, expire_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    this.db.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      // 1. 清空现有业务表数据并重新初始化
+      this.db.exec(`
+        DELETE FROM transaction_items;
+        DELETE FROM transaction_headers;
+        DELETE FROM sync_oplog;
+        DELETE FROM sync_conflicts;
+        DELETE FROM vouchers;
+        DELETE FROM monthly_budgets;
+        DELETE FROM fixed_assets;
+        DELETE FROM recurring_rules;
+        DELETE FROM projects_and_tags;
+        DELETE FROM categories;
+        DELETE FROM budget_pools;
+        DELETE FROM accounts;
       `);
-      for (const v of bundle.vouchers) {
-        insertVoucher.run(
-          v.id,
-          v.title,
-          v.voucher_type,
-          formatCny(v.face_value),
-          formatCny(v.acquire_cost),
-          formatCny(v.min_spend),
-          v.status,
-          v.purchase_tx_id ?? null,
-          v.used_tx_id ?? null,
-          v.expire_date ?? null
-        );
+      this.db.exec(SCHEMA_SQL);
+      this.db.exec(SEED_SQL);
+
+      // 2. 还原预算池
+      if (bundle.budgetPools && bundle.budgetPools.length > 0) {
+        const stmt = this.db.prepare(`
+          INSERT OR REPLACE INTO budget_pools (id, name, pool_type, is_monthly_budget, rollover_strategy, description, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const p of bundle.budgetPools) {
+          stmt.run(
+            p.id,
+            p.name,
+            p.pool_type,
+            p.is_monthly_budget ? 1 : 0,
+            p.rollover_strategy ?? 'ACCUMULATE',
+            p.description ?? null,
+            p.sort_order ?? 100
+          );
+        }
       }
+
+      // 3. 还原分类
+      if (bundle.categories && bundle.categories.length > 0) {
+        const stmt = this.db.prepare(`
+          INSERT OR REPLACE INTO categories (id, parent_id, name, default_pool_id, icon_name, keywords, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const c of bundle.categories) {
+          stmt.run(
+            c.id,
+            c.parent_id ?? null,
+            c.name,
+            c.default_pool_id,
+            c.icon_name ?? null,
+            c.keywords ?? null,
+            c.sort_order ?? 100
+          );
+        }
+      }
+
+      // 4. 还原项目与标签
+      if (bundle.projectTags && bundle.projectTags.length > 0) {
+        const stmt = this.db.prepare(`
+          INSERT OR REPLACE INTO projects_and_tags (id, name, tag_type, target_budget, linked_pool_id, is_active)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `);
+        for (const t of bundle.projectTags) {
+          stmt.run(
+            t.id,
+            t.name,
+            t.tag_type,
+            t.target_budget != null ? formatCny(t.target_budget) : null,
+            t.linked_pool_id ?? null,
+            t.is_active ? 1 : 0
+          );
+        }
+      }
+
+      // 5. 还原账户（支持自定义账户 ACC_CUSTOM_... 插入）
+      if (bundle.accounts && bundle.accounts.length > 0) {
+        const stmt = this.db.prepare(`
+          INSERT OR REPLACE INTO accounts (
+            id, name, account_role, currency, initial_balance, book_balance, frozen_amount,
+            market_value, credit_limit, fx_hold_ratio, fx_cashback_rate, fx_monthly_cap,
+            billing_day, repayment_day, is_default_pay, is_folded, include_in_networth, sort_order, updated_hlc
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const acc of bundle.accounts) {
+          stmt.run(
+            acc.id,
+            acc.name,
+            acc.account_role,
+            acc.currency ?? 'CNY',
+            formatCny(acc.initial_balance ?? 0),
+            formatCny(acc.book_balance ?? 0),
+            formatCny(acc.frozen_amount ?? 0),
+            acc.market_value ? formatCny(acc.market_value) : null,
+            acc.credit_limit ? formatCny(acc.credit_limit) : null,
+            acc.fx_hold_ratio ?? '1.000',
+            acc.fx_cashback_rate ?? '0.0000',
+            acc.fx_monthly_cap ? formatCny(acc.fx_monthly_cap) : null,
+            acc.billing_day ?? null,
+            acc.repayment_day ?? null,
+            acc.is_default_pay ? 1 : 0,
+            acc.is_folded ? 1 : 0,
+            acc.include_in_networth !== false ? 1 : 0,
+            acc.sort_order ?? 100,
+            acc.updated_hlc ?? null
+          );
+        }
+      }
+
+      // 6. 还原月度预算
+      if (bundle.monthlyBudgets && bundle.monthlyBudgets.length > 0) {
+        const stmt = this.db.prepare(`
+          INSERT INTO monthly_budgets (
+            year_month, pool_id, base_allocation, rollover_from_prev, reserved_fixed, swept_to_fund, note
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(year_month, pool_id) DO UPDATE SET
+            base_allocation=excluded.base_allocation,
+            rollover_from_prev=excluded.rollover_from_prev,
+            reserved_fixed=excluded.reserved_fixed,
+            swept_to_fund=excluded.swept_to_fund,
+            note=excluded.note
+        `);
+        for (const b of bundle.monthlyBudgets) {
+          stmt.run(
+            b.year_month,
+            b.pool_id,
+            formatCny(b.base_allocation ?? 0),
+            formatCny(b.rollover_from_prev ?? 0),
+            formatCny(b.reserved_fixed ?? 0),
+            formatCny(b.swept_to_fund ?? 0),
+            b.note ?? null
+          );
+        }
+      }
+
+      // 7. 还原卡券
+      if (bundle.vouchers && bundle.vouchers.length > 0) {
+        const insertVoucher = this.db.prepare(`
+          INSERT OR REPLACE INTO vouchers (
+            id, title, voucher_type, face_value, acquire_cost, min_spend, status, purchase_tx_id, used_tx_id, expire_date
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const v of bundle.vouchers) {
+          insertVoucher.run(
+            v.id,
+            v.title,
+            v.voucher_type ?? 'PREPAID_COUPON',
+            formatCny(v.face_value),
+            formatCny(v.acquire_cost),
+            formatCny(v.min_spend),
+            v.status ?? 'AVAILABLE',
+            v.purchase_tx_id ?? null,
+            v.used_tx_id ?? null,
+            v.expire_date ?? null
+          );
+        }
+      }
+
+      // 8. 还原周期性规则
+      if (bundle.recurringRules && bundle.recurringRules.length > 0) {
+        const stmt = this.db.prepare(`
+          INSERT OR REPLACE INTO recurring_rules (
+            id, title, rule_type, cron_cycle, trigger_day, currency, amount,
+            account_id, target_account_id, category_id, budget_pool_id, auto_reserve_budget, is_active
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const r of bundle.recurringRules) {
+          stmt.run(
+            r.id,
+            r.title,
+            r.rule_type,
+            r.cron_cycle,
+            r.trigger_day,
+            r.currency ?? 'CNY',
+            formatCny(r.amount),
+            r.account_id,
+            r.target_account_id ?? null,
+            r.category_id ?? null,
+            r.budget_pool_id ?? null,
+            r.auto_reserve_budget ? 1 : 0,
+            r.is_active ? 1 : 0
+          );
+        }
+      }
+
+      // 9. 重放全部操作变更日志
+      this.applyRemoteOpLogs(bundle.oplogs);
+
+      // 10. 最终确定性重算全局账户
+      recalculateAllAccounts(this.db);
+    } finally {
+      this.db.exec('PRAGMA foreign_keys = ON;');
     }
-
-    // 4. 重放全部操作变更日志
-    this.applyRemoteOpLogs(bundle.oplogs);
-
-    // 5. 最终确定性重算全局账户
-    recalculateAllAccounts(this.db);
   }
 
   /**
@@ -1830,6 +2194,26 @@ export class LedgerRepository {
       this.db
         .prepare("UPDATE vouchers SET status = 'AVAILABLE', used_tx_id = NULL WHERE id = ?")
         .run(existing.header.applied_voucher_id);
+    }
+
+    // 若删除的是购券流水，级联删除所购买的卡券
+    const purchasedVouchers = this.db
+      .prepare('SELECT id FROM vouchers WHERE purchase_tx_id = ?')
+      .all(txId) as Array<{ id: number }>;
+    for (const pv of purchasedVouchers) {
+      this.db
+        .prepare('UPDATE transaction_headers SET applied_voucher_id = NULL WHERE applied_voucher_id = ?')
+        .run(pv.id);
+      this.db.prepare('DELETE FROM vouchers WHERE id = ?').run(pv.id);
+      this.recordOpLog({
+        hlc: this.hlc.now(),
+        node_id: this.nodeId,
+        entity_type: 'VOUCHER',
+        entity_id: String(pv.id),
+        op_type: 'DELETE',
+        payload_json: JSON.stringify({ id: pv.id }),
+        created_at: new Date().toISOString(),
+      });
     }
 
     this.recordOpLog({
@@ -2419,10 +2803,23 @@ export class LedgerRepository {
   public deleteVoucher(id: number): void {
     const v = this.db.prepare('SELECT * FROM vouchers WHERE id = ?').get(id) as any;
     if (v?.purchase_tx_id) {
+      const txHlc = this.hlc.now();
       this.db
-        .prepare('UPDATE transaction_headers SET is_deleted = 1 WHERE id = ?')
-        .run(v.purchase_tx_id);
+        .prepare('UPDATE transaction_headers SET is_deleted = 1, updated_hlc = ? WHERE id = ?')
+        .run(txHlc, v.purchase_tx_id);
+      this.recordOpLog({
+        hlc: txHlc,
+        node_id: this.nodeId,
+        entity_type: 'TRANSACTION',
+        entity_id: v.purchase_tx_id,
+        op_type: 'DELETE',
+        payload_json: JSON.stringify({ id: v.purchase_tx_id, is_deleted: true }),
+        created_at: new Date().toISOString(),
+      });
     }
+    this.db
+      .prepare('UPDATE transaction_headers SET applied_voucher_id = NULL WHERE applied_voucher_id = ?')
+      .run(id);
     this.db.prepare('DELETE FROM vouchers WHERE id = ?').run(id);
 
     this.recordOpLog({

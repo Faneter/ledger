@@ -49,6 +49,12 @@ export interface FullSyncBundle {
   oplogs: SyncOpLogEntry[];
   vouchers: Voucher[];
   monthlyBudgets: MonthlyBudget[];
+  budgetPools?: BudgetPool[];
+  categories?: Category[];
+  projectTags?: ProjectTag[];
+  recurringRules?: RecurringRule[];
+  fixedAssets?: FixedAsset[];
+  transactions?: TransactionAggregate[];
 }
 
 export interface LocalReplicaState {
@@ -1611,6 +1617,7 @@ export class LocalLedgerEngine {
     const hlc = this.hlc.now();
     tx.header.updated_hlc = hlc;
 
+    // 1. 若该交易所使用的立减金需要释放回卡包
     if (tx.header.applied_voucher_id != null) {
       const v = this.state.vouchers.find((it) => it.id === tx.header.applied_voucher_id);
       if (v) {
@@ -1618,6 +1625,22 @@ export class LocalLedgerEngine {
         v.used_tx_id = null;
         this.appendOpLog('VOUCHER', String(v.id), 'UPSERT', v);
       }
+    }
+
+    // 2. 若删除的是购券流水（VOUCHER_BUY），级联删除其对应的卡券
+    const purchasedVouchers = this.state.vouchers.filter(
+      (v) => v.purchase_tx_id === txId
+    );
+    for (const pv of purchasedVouchers) {
+      for (const otherTx of this.state.transactions) {
+        if (otherTx.header.applied_voucher_id === pv.id) {
+          otherTx.header.applied_voucher_id = null;
+          otherTx.header.updated_hlc = this.hlc.now();
+          this.appendOpLog('TRANSACTION', otherTx.header.id, 'UPSERT', otherTx);
+        }
+      }
+      this.state.vouchers = this.state.vouchers.filter((v) => v.id !== pv.id);
+      this.appendOpLog('VOUCHER', String(pv.id), 'DELETE', { id: pv.id });
     }
 
     this.appendOpLog('TRANSACTION', txId, 'UPSERT', tx);
@@ -2269,10 +2292,8 @@ export class LocalLedgerEngine {
       tx_type: 'VOUCHER_BUY',
       account_id: params.accountId,
       target_account_id: null,
-      total_gross: formatCny(params.face_value),
-      platform_discount: formatCny(
-        toDecimal(params.face_value).minus(toDecimal(params.acquire_cost))
-      ),
+      total_gross: formatCny(params.acquire_cost),
+      platform_discount: '0.00',
       payment_discount: '0.00',
       total_net: formatCny(params.acquire_cost),
       allocation_mode: 'SINGLE',
@@ -2282,8 +2303,8 @@ export class LocalLedgerEngine {
       settlement_status: 'SETTLED',
       hold_amount_cny: '0.00',
       settled_at: nowIso,
-      raw_input_text: `购买卡券：${finalTitle} 成本 ${params.acquire_cost}`,
-      merchant_or_note: finalTitle,
+      raw_input_text: `购买卡券：${finalTitle}`,
+      merchant_or_note: `购买卡券：${finalTitle}`,
       applied_voucher_id: null,
       is_deleted: false,
       updated_hlc: hlc,
@@ -3012,9 +3033,15 @@ export class LocalLedgerEngine {
       nodeId: this.state.nodeId,
       exportedAt: new Date().toISOString(),
       accounts: this.state.accounts,
+      budgetPools: this.state.budgetPools,
+      categories: this.state.categories,
+      projectTags: this.state.projectTags,
+      recurringRules: this.state.recurringRules,
+      fixedAssets: this.state.fixedAssets,
       oplogs: this.state.oplogs,
       vouchers: this.state.vouchers,
       monthlyBudgets: this.state.monthlyBudgets,
+      transactions: this.state.transactions,
     };
   }
 }

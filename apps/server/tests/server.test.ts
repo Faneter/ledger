@@ -1023,4 +1023,146 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(execRes.body.transaction.header.total_gross).toBe('99.00');
     });
   });
+
+  // ==========================================================================
+  // 测试 8：Stage 13 自定义实体（账户、资金池、心愿标签、卡券）同步与全量灾备恢复免外键冲突
+  // ==========================================================================
+  describe('8. Stage 13 Custom Entities Sync & Reseed Without FK Errors', () => {
+    it('能够成功同步 (POST /api/sync/exchange) 和灾备重置 (POST /api/sync/reseed) 包含自定义账户、心愿目标、资金池的完整流水', async () => {
+      const client = new LedgerRepository(':memory:', 'client-stage13-tester');
+
+      // 1. 创建自定义资金池
+      client.upsertBudgetPool({
+        id: 'POOL_CUSTOM_EQUIP',
+        name: '数码极客装备池',
+        pool_type: 'FLEX',
+        is_monthly_budget: true,
+        base_allocation: '800.00',
+      });
+
+      // 2. 创建自定义商品属性分类
+      client.upsertCategory({
+        id: 'CAT_CUSTOM_KEYBOARD',
+        name: '客制化机械键盘',
+        default_pool_id: 'POOL_CUSTOM_EQUIP',
+      });
+
+      // 3. 创建自定义心愿目标与专项立项
+      client.upsertProjectTag({
+        id: 'TAG_CUSTOM_HHKB',
+        name: '心愿单：HHKB 静电容键盘',
+        tag_type: 'PROJECT',
+        target_budget: '1800.00',
+        linked_pool_id: 'POOL_CUSTOM_EQUIP',
+      });
+
+      // 4. 创建自定义账户
+      client.upsertAccount({
+        id: 'ACC_CUSTOM_SAVINGS',
+        name: '自定义工行储蓄卡',
+        account_role: 'DEBIT_MAIN',
+        currency: 'CNY',
+        initial_balance: '5000.00',
+      });
+
+      // 5. 购买一张立减金
+      const { voucher } = client.buyVoucher({
+        title: '数码外设50元抵扣券',
+        voucherType: 'PREPAID_COUPON',
+        faceValue: '50.00',
+        acquireCost: '20.00',
+        minSpend: '100.00',
+        accountId: 'ACC_CUSTOM_SAVINGS',
+      });
+
+      // 6. 记一笔引用自定义账户、自定义分类、自定义资金池与自定义心愿标签的交易
+      client.recordTransaction({
+        header: {
+          tx_date: '2026-11-12',
+          tx_type: 'EXPENSE',
+          account_id: 'ACC_CUSTOM_SAVINGS',
+          target_account_id: null,
+          total_gross: '120.00',
+          platform_discount: '0.00',
+          payment_discount: '0.00',
+          total_net: '120.00',
+          allocation_mode: 'SINGLE',
+          original_currency: 'CNY',
+          original_amount: null,
+          exchange_rate: '1.000000',
+          settlement_status: 'SETTLED',
+          hold_amount_cny: '0.00',
+          settled_at: null,
+          raw_input_text: 'HHKB键盘配件 120.00',
+          merchant_or_note: 'HHKB键盘配件',
+        },
+        items: [
+          {
+            item_name: 'HHKB静电容轴体',
+            category_id: 'CAT_CUSTOM_KEYBOARD',
+            budget_pool_id: 'POOL_CUSTOM_EQUIP',
+            project_tag_id: 'TAG_CUSTOM_HHKB',
+            item_gross: '120.00',
+            allocated_discount: '0.00',
+            item_net: '120.00',
+            is_primary_item: true,
+          },
+        ],
+      });
+
+      // 7. 测试 POST /api/sync/exchange：增量同步操作日志到服务端
+      const exchangeRes = await server.inject({
+        method: 'POST',
+        url: '/api/sync/exchange',
+        body: {
+          clientNodeId: client.nodeId,
+          sinceHlc: null,
+          ops: client.getOpLogs(),
+        },
+      });
+
+      expect(exchangeRes.statusCode).toBe(200);
+      expect(exchangeRes.body.error).toBeUndefined();
+      expect(exchangeRes.body.appliedCount).toBeGreaterThan(0);
+
+      // 8. 模拟服务端灾备重置：POST /api/sync/simulate-crash
+      const crashRes = await server.inject({
+        method: 'POST',
+        url: '/api/sync/simulate-crash',
+      });
+      expect(crashRes.statusCode).toBe(200);
+
+      // 9. 测试 POST /api/sync/reseed：使用 client.exportFullSyncBundle() 恢复空库
+      const clientBundle = client.exportFullSyncBundle();
+      const reseedRes = await server.inject({
+        method: 'POST',
+        url: '/api/sync/reseed',
+        body: { bundle: clientBundle },
+      });
+
+      expect(reseedRes.statusCode).toBe(200);
+      expect(reseedRes.body.error).toBeUndefined();
+      expect(reseedRes.body.restored).toBe(true);
+
+      // 10. 验证恢复后的服务端状态，确保无外键约束阻断且数据全部完整
+      const stateRes = await server.inject({
+        method: 'GET',
+        url: '/api/state?yearMonth=2026-11&currentDate=2026-11-12',
+      });
+      expect(stateRes.statusCode).toBe(200);
+
+      const customAcc = stateRes.body.accounts.find(
+        (a: any) => a.id === 'ACC_CUSTOM_SAVINGS'
+      );
+      expect(customAcc).toBeDefined();
+      expect(customAcc.name).toBe('自定义工行储蓄卡');
+      expect(customAcc.book_balance).toBe('4860.00');
+
+      const customVoucher = stateRes.body.vouchers.find(
+        (v: any) => v.id === voucher.id
+      );
+      expect(customVoucher).toBeDefined();
+      expect(customVoucher.title).toBe('数码外设50元抵扣券');
+    });
+  });
 });

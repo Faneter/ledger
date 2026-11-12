@@ -711,6 +711,25 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   // 辅助渲染方法
   // ===========================================================================
 
+  const getRoleLabel = (role: AccountRole): string => {
+    switch (role) {
+      case 'CREDIT':
+        return '信用账户';
+      case 'DEBIT_MAIN':
+        return '储蓄卡';
+      case 'PREPAID':
+        return '预付卡';
+      case 'DEBIT_FX':
+        return '外币借记卡';
+      case 'INVESTMENT':
+        return '理财账户';
+      case 'DORMANT':
+        return '备用账户';
+      default:
+        return role;
+    }
+  };
+
   const renderAccountCard = (acc: AccountDashboardRow) => {
     const def = accountDefMap.get(acc.id);
     const bookNum = Number(acc.book_balance);
@@ -718,6 +737,11 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     const isFx = acc.account_role === 'DEBIT_FX';
     const isInvestment = acc.account_role === 'INVESTMENT';
     const isNegative = bookNum < 0;
+
+    const holdRatioNum = Number(def?.fx_hold_ratio ?? (acc as any).fx_hold_ratio ?? 1.02);
+    const cashbackRateNum = Number(def?.fx_cashback_rate ?? (acc as any).fx_cashback_rate ?? 0.01);
+    const holdPct = Number((holdRatioNum * 100).toFixed(1));
+    const cashbackPct = Number((cashbackRateNum * 100).toFixed(2));
 
     return (
       <Grid size={{ xs: 12, sm: 6, md: 4 }} key={acc.id}>
@@ -748,7 +772,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                   {isCredit
                     ? `信用额度: ¥${def?.credit_limit || '0.00'}`
                     : isFx
-                    ? `102%预授权冻结 · 1%返现`
+                    ? `${holdPct}%预授权冻结 · ${cashbackPct}%返现`
                     : isInvestment
                     ? '投资理财账户'
                     : acc.account_role === 'PREPAID'
@@ -763,7 +787,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                 )}
                 <Chip
                   size="small"
-                  label={acc.account_role}
+                  label={getRoleLabel(acc.account_role)}
                   color={
                     isCredit
                       ? 'secondary'
@@ -1006,7 +1030,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Stack>
           </Card>
 
-          {/* 万事达外币待正式清算提醒卡片 */}
+          {/* 外币待正式清算提醒卡片 */}
           {pendingFxTxs.length > 0 && (
             <Alert
               severity="warning"
@@ -1015,10 +1039,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             >
               <Box sx={{ width: '100%' }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                  万事达外币预授权待正式清算 ({pendingFxTxs.length} 笔)
+                  外币预授权待正式清算 ({pendingFxTxs.length} 笔)
                 </Typography>
                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
-                  T+1/T+2 银行出账后，输入银行最终正式清算的人民币金额，释放 102% 多冻结并锁定入账 1% 返现。
+                  银行正式出账后，输入最终清算的人民币入账金额，自动释放预授权冻结差额并核算返现。
                 </Typography>
 
                 <Stack spacing={1}>
@@ -1075,12 +1099,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Alert>
           )}
 
-          {/* 1. 信用支付账户（花呗/信用卡） */}
+          {/* 1. 信用账户 */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="secondary" label="信用支付账户（花呗/信用卡）" />
+              <Chip size="small" color="secondary" label="信用账户" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                花呗 / 信用卡 负债与免息期管控 ({creditAccounts.length})
+                信用卡与消费信贷 ({creditAccounts.length})
               </Typography>
             </Stack>
             <Grid container spacing={2}>
@@ -1088,12 +1112,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Grid>
           </Box>
 
-          {/* 2. 储蓄卡与校园饭卡 */}
+          {/* 2. 主力借记卡与预付卡 */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="primary" label="储蓄卡与校园饭卡" />
+              <Chip size="small" color="primary" label="日常储蓄与预付卡" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                主力借记卡 & 预充值校园饭卡 ({mainDebitAccounts.length})
+                储蓄卡与校园卡账户 ({mainDebitAccounts.length})
               </Typography>
             </Stack>
             <Grid container spacing={2}>
@@ -1101,12 +1125,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Grid>
           </Box>
 
-          {/* 3. 外币预授权借记卡 */}
+          {/* 3. 外币借记卡 */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="info" label="外币预授权借记卡" />
+              <Chip size="small" color="info" label="外币与跨境卡" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                万事达跨境借记卡 (102%预授权冻结 + 1%返现) ({fxAccounts.length})
+                外币及跨境借记卡 ({fxAccounts.length})
               </Typography>
             </Stack>
             <Grid container spacing={2}>
@@ -1117,9 +1141,9 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
           {/* 4. 投资理财账户 */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="warning" label="投资理财账户" />
+              <Chip size="small" color="warning" label="投资理财" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                指数基金与理财账户 ({investmentAccounts.length})
+                基金与理财账户 ({investmentAccounts.length})
               </Typography>
             </Stack>
             <Grid container spacing={2}>
@@ -1615,9 +1639,9 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               }
             >
               <MenuItem value="CREDIT">信用支付账户（花呗/信用卡）</MenuItem>
-              <MenuItem value="DEBIT_MAIN">储蓄卡与校园饭卡</MenuItem>
-              <MenuItem value="DEBIT_FX">外币预授权借记卡</MenuItem>
-              <MenuItem value="PREPAID">储蓄卡与校园饭卡</MenuItem>
+              <MenuItem value="DEBIT_MAIN">日常储蓄借记卡</MenuItem>
+              <MenuItem value="DEBIT_FX">外币及跨境借记卡</MenuItem>
+              <MenuItem value="PREPAID">预充值与校园卡</MenuItem>
               <MenuItem value="INVESTMENT">投资理财账户</MenuItem>
               <MenuItem value="DORMANT">备用折叠账户</MenuItem>
             </Select>
@@ -1894,11 +1918,13 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                 label="支付购券扣款账户"
                 onChange={(e) => setVoucherForm({ ...voucherForm, accountId: e.target.value })}
               >
-                {mainDebitAccounts.map((a) => (
-                  <MenuItem key={a.id} value={a.id}>
-                    {a.name} (可用 ¥{a.available_balance})
-                  </MenuItem>
-                ))}
+                {accounts
+                  .filter((a) => !a.is_folded && a.account_role !== 'INVESTMENT')
+                  .map((a) => (
+                    <MenuItem key={a.id} value={a.id}>
+                      {a.name} (可用 ¥{a.available_balance})
+                    </MenuItem>
+                  ))}
               </Select>
             </FormControl>
           )}

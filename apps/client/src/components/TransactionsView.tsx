@@ -111,7 +111,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
       // 3. 交易类型过滤
       if (typeFilter !== 'ALL') {
-        if (h.tx_type !== typeFilter) return false;
+        if (typeFilter === 'EXPENSE') {
+          if (h.tx_type !== 'EXPENSE' && h.tx_type !== 'VOUCHER_BUY') return false;
+        } else if (h.tx_type !== typeFilter) return false;
       }
 
       // 4. 账户过滤
@@ -155,9 +157,13 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
     for (const tx of filteredTransactions) {
       const h = tx.header;
-      if (h.tx_type === 'EXPENSE') {
+      if (h.tx_type === 'EXPENSE' || h.tx_type === 'VOUCHER_BUY') {
         totalExpense += Number(h.total_net);
-        totalDiscount += Number(h.payment_discount || h.platform_discount || 0);
+        const discountVal =
+          Number(h.payment_discount) > 0
+            ? Number(h.payment_discount)
+            : Number(h.platform_discount);
+        totalDiscount += Number.isFinite(discountVal) && discountVal > 0 ? discountVal : 0;
       } else if (h.tx_type === 'INCOME') {
         totalIncome += Number(h.total_net);
       }
@@ -193,7 +199,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     setEditNote(h.merchant_or_note || h.raw_input_text || '');
     setEditAccountId(h.account_id);
     setEditGross(h.total_gross);
-    setEditDiscount(h.payment_discount || h.platform_discount || '0.00');
+    setEditDiscount(
+      Number(h.payment_discount) > 0 ? h.payment_discount : h.platform_discount
+    );
 
     const primaryItem = tx.items[0];
     if (primaryItem?.project_tag_id) {
@@ -376,6 +384,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 <MenuItem value="EXPENSE">支出</MenuItem>
                 <MenuItem value="INCOME">收入</MenuItem>
                 <MenuItem value="TRANSFER">转账 / 还款</MenuItem>
+                <MenuItem value="VOUCHER_BUY">购券支出</MenuItem>
               </TextField>
 
               {/* 账户筛选 */}
@@ -508,6 +517,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             const isExpense = h.tx_type === 'EXPENSE';
             const isIncome = h.tx_type === 'INCOME';
             const isTransfer = h.tx_type === 'TRANSFER';
+            const isVoucherBuy = h.tx_type === 'VOUCHER_BUY';
+            const isExpenseLike = isExpense || isVoucherBuy;
             const isExpanded = !!expandedTxs[h.id];
             const hasMultipleItems = tx.items.length > 1;
 
@@ -532,7 +543,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          bgcolor: isExpense
+                          bgcolor: isExpenseLike
                             ? (t) =>
                                 t.palette.mode === 'light' ? '#ffebe9' : '#3d1618'
                             : isIncome
@@ -540,7 +551,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                                 t.palette.mode === 'light' ? '#e6f4ea' : '#143821'
                             : (t) =>
                                 t.palette.mode === 'light' ? '#e0f7fa' : '#00363d',
-                          color: isExpense
+                          color: isExpenseLike
                             ? 'error.main'
                             : isIncome
                             ? 'success.main'
@@ -549,7 +560,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           mt: 0.3,
                         }}
                       >
-                        {isExpense ? (
+                        {isExpenseLike ? (
                           <TrendingDownRounded fontSize="small" />
                         ) : isIncome ? (
                           <TrendingUpRounded fontSize="small" />
@@ -568,14 +579,18 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           <Chip
                             size="small"
                             label={
-                              isExpense
+                              isVoucherBuy
+                                ? '购券支出'
+                                : isExpense
                                 ? '支出'
                                 : isIncome
                                 ? '收入'
                                 : '转账'
                             }
                             color={
-                              isExpense
+                              isVoucherBuy
+                                ? 'primary'
+                                : isExpense
                                 ? 'error'
                                 : isIncome
                                 ? 'success'
@@ -585,7 +600,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           />
 
                           {/* 支出归属胶囊 */}
-                          {isExpense && (
+                          {isExpenseLike && (
                             tx.items[0]?.project_tag_id ? (
                               <Chip
                                 size="small"
@@ -713,14 +728,14 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             fontWeight: 800,
                             fontFamily: 'monospace',
                             lineHeight: 1.1,
-                            color: isExpense
+                            color: isExpenseLike
                               ? 'text.primary'
                               : isIncome
                               ? 'success.main'
                               : 'secondary.main',
                           }}
                         >
-                          {isExpense ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
+                          {isExpenseLike ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
                         </Typography>
 
                         <Stack
@@ -740,7 +755,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           {(Number(h.payment_discount) > 0 ||
                             Number(h.platform_discount) > 0) && (
                             <span style={{ color: '#146c2e', fontWeight: 600 }}>
-                              省 ¥{h.payment_discount || h.platform_discount}
+                              省 ¥{Number(h.payment_discount) > 0 ? h.payment_discount : h.platform_discount}
                             </span>
                           )}
                           {h.original_currency !== 'CNY' && h.original_amount && (
