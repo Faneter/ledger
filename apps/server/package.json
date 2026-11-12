@@ -7,7 +7,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "start": "node --experimental-strip-types src/index.ts"
+    "start": "node --import ./register-ts.mjs src/index.ts"
   },
   "dependencies": {
     "@ledger/core": "workspace:*",
