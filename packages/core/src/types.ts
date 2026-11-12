@@ -276,6 +276,7 @@ export interface TransactionHeader {
   settled_at: string | null;
   raw_input_text: string | null;
   merchant_or_note: string | null;
+  applied_voucher_id?: number | null;
   is_deleted?: boolean;
   updated_hlc?: string;
   created_at?: string;

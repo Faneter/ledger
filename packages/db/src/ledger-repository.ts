@@ -1,0 +1,1419 @@
+import { createRequire } from 'node:module';
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
+import {
+  Decimal,
+  toDecimal,
+  roundCny,
+  formatCny,
+  formatRate,
+  sumCny,
+  equalsCny,
+  Account,
+  AccountDashboardRow,
+  AccountRole,
+  BudgetPool,
+  PoolType,
+  Category,
+  MonthlyBudget,
+  MonthlyBudgetStatusRow,
+  ProjectTag,
+  Voucher,
+  VoucherType,
+  TransactionHeader,
+  TransactionItem,
+  TransactionAggregate,
+  AllocationMode,
+  FixedAsset,
+  FixedAssetWithCost,
+  RecurringRule,
+  SyncOpLogEntry,
+  SyncConflict,
+  HybridLogicalClock,
+  mergeOpLogEntries,
+  parseQuickInputDsl,
+  computeOrderAllocation,
+  allocateSplitDiscounts,
+  processMastercardFxLifecycle,
+  SplitItemInput,
+} from '@ledger/core';
+import { SCHEMA_SQL, SEED_SQL } from './schema.js';
+import { recalculateAllAccounts } from './balance-recalculator.js';
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require('node:sqlite') as {
+  DatabaseSync: typeof DatabaseSyncType;
+};
+
+export interface FullSyncBundle {
+  nodeId: string;
+  exportedAt: string;
+  accounts: Account[];
+  oplogs: SyncOpLogEntry[];
+  vouchers: Voucher[];
+  monthlyBudgets: MonthlyBudget[];
+}
+
+export class LedgerRepository {
+  public readonly db: DatabaseSyncType;
+  public readonly nodeId: string;
+  public readonly hlc: HybridLogicalClock;
+
+  constructor(dbPath = ':memory:', nodeId = 'local-node') {
+    this.nodeId = nodeId;
+    this.db = new DatabaseSync(dbPath);
+
+    // 启用外键约束
+    this.db.exec('PRAGMA foreign_keys = ON;');
+
+    // 初始化建表与种子数据
+    this.db.exec(SCHEMA_SQL);
+    this.db.exec(SEED_SQL);
+
+    // 确定混合逻辑时钟初始水位
+    const maxHlcRow = this.db
+      .prepare('SELECT MAX(hlc) as max_hlc FROM sync_oplog')
+      .get() as { max_hlc: string | null } | undefined;
+    this.hlc = new HybridLogicalClock(nodeId, maxHlcRow?.max_hlc ?? undefined);
+
+    // 初始化重算各账户余额
+    recalculateAllAccounts(this.db);
+  }
+
+  /**
+   * 设置账户初始本金/余额
+   */
+  public setAccountInitialBalance(
+    accountId: string,
+    initialBalance: string
+  ): void {
+    const formatted = formatCny(initialBalance);
+    const hlc = this.hlc.now();
+
+    this.db
+      .prepare(
+        'UPDATE accounts SET initial_balance = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      )
+      .run(formatted, hlc, accountId);
+
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'ACCOUNT',
+      entity_id: accountId,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify({
+        id: accountId,
+        initial_balance: formatted,
+      }),
+      created_at: new Date().toISOString(),
+    });
+
+    recalculateAllAccounts(this.db);
+  }
+
+  /**
+   * 获取账户双轨看板数据 (v_account_dashboard)
+   */
+  public getAccountDashboard(): AccountDashboardRow[] {
+    const rows = this.db
+      .prepare('SELECT * FROM v_account_dashboard')
+      .all() as any[];
+
+    return rows.map((r) => ({
+      id: String(r.id),
+      name: String(r.name),
+      account_role: r.account_role as AccountRole,
+      currency: String(r.currency),
+      book_balance: formatCny(r.book_balance),
+      frozen_amount: formatCny(r.frozen_amount),
+      available_balance: formatCny(r.available_balance),
+      market_value: r.market_value != null ? formatCny(r.market_value) : null,
+      unrealized_pnl: formatCny(r.unrealized_pnl),
+      is_folded: Boolean(r.is_folded),
+    }));
+  }
+
+  /**
+   * 获取月度预算池执行水位与剩余额度看板 (v_monthly_budget_status)
+   */
+  public getMonthlyBudgetStatus(
+    yearMonth: string,
+    currentDateStr?: string
+  ): {
+    pools: MonthlyBudgetStatusRow[];
+    dailyPoolRemainingPerDay: string;
+    totalMonthlyBudget: string;
+    totalMonthlySpent: string;
+    totalMonthlySaved: string;
+  } {
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM v_monthly_budget_status WHERE year_month = ? ORDER BY pool_id ASC'
+      )
+      .all(yearMonth) as any[];
+
+    const pools: MonthlyBudgetStatusRow[] = rows.map((r) => ({
+      year_month: String(r.year_month),
+      pool_id: String(r.pool_id),
+      pool_name: String(r.pool_name),
+      pool_type: r.pool_type as PoolType,
+      base_allocation: formatCny(r.base_allocation),
+      rollover_from_prev: formatCny(r.rollover_from_prev),
+      total_available_budget: formatCny(r.total_available_budget),
+      reserved_fixed: formatCny(r.reserved_fixed),
+      spent_gross: formatCny(r.spent_gross),
+      total_saved_discount: formatCny(r.total_saved_discount),
+      spent_net: formatCny(r.spent_net),
+      remaining_budget: formatCny(r.remaining_budget),
+    }));
+
+    // PRD 2.1 高频生活池动态日均可用额度计算
+    // 今日剩余日均可用额度 = (高频池月度总可用额 - 本月累计已用净额) / 本月剩余天数（含今日）
+    const [y, m] = yearMonth.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    let remainingDays = daysInMonth;
+
+    if (currentDateStr && currentDateStr.startsWith(yearMonth)) {
+      const parts = currentDateStr.split('-');
+      const curDay = parseInt(parts[2], 10);
+      if (!Number.isNaN(curDay)) {
+        remainingDays = Math.max(1, daysInMonth - curDay + 1);
+      }
+    }
+
+    const dailyPool = pools.find(
+      (p) => p.pool_id === 'POOL_DAILY' || p.pool_type === 'DAILY'
+    );
+    let dailyPoolRemainingPerDay = '0.00';
+    if (dailyPool) {
+      const remaining = toDecimal(dailyPool.remaining_budget);
+      dailyPoolRemainingPerDay = formatCny(remaining.dividedBy(remainingDays));
+    }
+
+    // 4 个常规月度预算池汇总
+    const monthlyPools = pools.filter((p) =>
+      ['POOL_FIXED', 'POOL_DAILY', 'POOL_FLEX', 'POOL_EMERGENCY'].includes(
+        p.pool_id
+      )
+    );
+    const totalMonthlyBudget = formatCny(
+      sumCny(monthlyPools.map((p) => p.total_available_budget))
+    );
+    const totalMonthlySpent = formatCny(
+      sumCny(monthlyPools.map((p) => p.spent_net))
+    );
+    const totalMonthlySaved = formatCny(
+      sumCny(monthlyPools.map((p) => p.total_saved_discount))
+    );
+
+    return {
+      pools,
+      dailyPoolRemainingPerDay,
+      totalMonthlyBudget,
+      totalMonthlySpent,
+      totalMonthlySaved,
+    };
+  }
+
+  /**
+   * 录入结构化完整交易聚合实体
+   */
+  public recordTransaction(
+    aggregate: Omit<TransactionAggregate, 'header'> & {
+      header: Omit<TransactionHeader, 'id' | 'tx_timestamp'> & {
+        id?: string;
+        tx_timestamp?: string;
+      };
+    }
+  ): TransactionAggregate {
+    const { header, items, appliedVoucherId } = aggregate;
+
+    // 财务守恒定律校验：若为 EXPENSE 支出交易，items 之和必须严格等于 header 总额
+    if (header.tx_type === 'EXPENSE' && items.length > 0) {
+      const sumGross = sumCny(items.map((it) => it.item_gross));
+      const sumNet = sumCny(items.map((it) => it.item_net));
+
+      if (!equalsCny(sumGross, header.total_gross)) {
+        throw new Error(
+          `Conservation law violated: sum(items.item_gross) (${formatCny(
+            sumGross
+          )}) != header.total_gross (${formatCny(header.total_gross)})`
+        );
+      }
+      if (!equalsCny(sumNet, header.total_net)) {
+        throw new Error(
+          `Conservation law violated: sum(items.item_net) (${formatCny(
+            sumNet
+          )}) != header.total_net (${formatCny(header.total_net)})`
+        );
+      }
+    }
+
+    const txId =
+      header.id ??
+      `TX_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const txTimestamp = header.tx_timestamp ?? new Date().toISOString();
+    const hlc = this.hlc.now();
+
+    const voucherIdToUse =
+      appliedVoucherId ?? header.applied_voucher_id ?? null;
+
+    // 1. 写入主表 transaction_headers
+    this.db
+      .prepare(
+        `
+      INSERT INTO transaction_headers (
+        id, tx_date, tx_timestamp, tx_type, account_id, target_account_id,
+        total_gross, platform_discount, payment_discount, total_net,
+        allocation_mode, original_currency, original_amount, exchange_rate,
+        settlement_status, hold_amount_cny, settled_at, raw_input_text,
+        merchant_or_note, applied_voucher_id, is_deleted, updated_hlc
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+      )
+      .run(
+        txId,
+        header.tx_date,
+        txTimestamp,
+        header.tx_type,
+        header.account_id,
+        header.target_account_id ?? null,
+        formatCny(header.total_gross),
+        formatCny(header.platform_discount ?? 0),
+        formatCny(header.payment_discount ?? 0),
+        formatCny(header.total_net),
+        header.allocation_mode ?? 'SINGLE',
+        header.original_currency ?? 'CNY',
+        header.original_amount != null
+          ? formatCny(header.original_amount)
+          : null,
+        header.exchange_rate ? formatRate(header.exchange_rate) : '1.000000',
+        header.settlement_status ?? 'SETTLED',
+        formatCny(header.hold_amount_cny ?? 0),
+        header.settled_at ?? null,
+        header.raw_input_text ?? null,
+        header.merchant_or_note ?? null,
+        voucherIdToUse,
+        0,
+        hlc
+      );
+
+    // 2. 写入子表 transaction_items
+    const insertedItems: TransactionItem[] = [];
+    const insertItemStmt = this.db.prepare(`
+      INSERT INTO transaction_items (
+        header_id, item_name, category_id, budget_pool_id, project_tag_id,
+        item_gross, allocated_discount, item_net, is_primary_item, raw_formula_expr
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const item of items) {
+      const res = insertItemStmt.run(
+        txId,
+        item.item_name,
+        item.category_id,
+        item.budget_pool_id,
+        item.project_tag_id ?? null,
+        formatCny(item.item_gross),
+        formatCny(item.allocated_discount ?? 0),
+        formatCny(item.item_net),
+        item.is_primary_item ? 1 : 0,
+        item.raw_formula_expr ?? null
+      );
+      insertedItems.push({
+        ...item,
+        id: Number(res.lastInsertRowid),
+        header_id: txId,
+        item_gross: formatCny(item.item_gross),
+        allocated_discount: formatCny(item.allocated_discount ?? 0),
+        item_net: formatCny(item.item_net),
+      });
+    }
+
+    // 3. 若核销了卡券，更新 vouchers 状态为 USED
+    if (voucherIdToUse != null) {
+      this.db
+        .prepare(
+          "UPDATE vouchers SET status = 'USED', used_tx_id = ? WHERE id = ?"
+        )
+        .run(txId, voucherIdToUse);
+    }
+
+    const finalAggregate: TransactionAggregate = {
+      header: {
+        ...header,
+        id: txId,
+        tx_timestamp: txTimestamp,
+        total_gross: formatCny(header.total_gross),
+        platform_discount: formatCny(header.platform_discount ?? 0),
+        payment_discount: formatCny(header.payment_discount ?? 0),
+        total_net: formatCny(header.total_net),
+        hold_amount_cny: formatCny(header.hold_amount_cny ?? 0),
+        exchange_rate: header.exchange_rate
+          ? formatRate(header.exchange_rate)
+          : '1.000000',
+        applied_voucher_id: voucherIdToUse,
+        is_deleted: false,
+        updated_hlc: hlc,
+      },
+      items: insertedItems,
+      appliedVoucherId: voucherIdToUse,
+    };
+
+    // 4. 写入同步变更日志
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'TRANSACTION',
+      entity_id: txId,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(finalAggregate),
+      created_at: new Date().toISOString(),
+    });
+
+    // 5. 重新确定性计算各账户余额
+    recalculateAllAccounts(this.db);
+
+    return finalAggregate;
+  }
+
+  /**
+   * 从极速记账算式 DSL 录入交易（支持跨品类凑单、外币预授权、用券还款与立减金核销）
+   */
+  public recordFromDsl(
+    rawText: string,
+    txDate?: string,
+    appliedVoucherId?: number | null
+  ): TransactionAggregate {
+    const categories = this.db
+      .prepare('SELECT * FROM categories')
+      .all() as unknown as Category[];
+    const accounts = (
+      this.db
+        .prepare(
+          'SELECT id, name, account_role, is_default_pay FROM accounts'
+        )
+        .all() as any[]
+    ).map((a) => ({
+      ...a,
+      is_default_pay: Boolean(a.is_default_pay),
+    }));
+    const projectTags = this.db
+      .prepare('SELECT * FROM projects_and_tags')
+      .all() as unknown as ProjectTag[];
+
+    const parsed = parseQuickInputDsl(rawText, {
+      categories,
+      accounts,
+      projectTags,
+      txDate,
+    });
+
+    let totalGross = parsed.total_gross;
+    let paymentDiscount = parsed.payment_discount;
+    let platformDiscount = parsed.platform_discount;
+    let totalNet = parsed.total_net;
+    let items = parsed.items;
+
+    // 若传入 appliedVoucherId，结合卡券成本结转计算
+    if (appliedVoucherId != null) {
+      const voucher = this.db
+        .prepare('SELECT * FROM vouchers WHERE id = ?')
+        .get(appliedVoucherId) as Voucher | undefined;
+
+      if (voucher) {
+        if (parsed.tx_type === 'EXPENSE') {
+          // 实际现场微信/刷卡支付现金
+          const cashPaid = Decimal.max(
+            0,
+            toDecimal(parsed.total_net).minus(toDecimal(voucher.face_value))
+          );
+          const splitInputs: SplitItemInput[] = parsed.items.map((it) => ({
+            name: it.item_name,
+            gross: it.item_gross,
+            category_id: it.category_id,
+            budget_pool_id: it.budget_pool_id,
+            project_tag_id: it.project_tag_id,
+            is_primary: it.is_primary_item,
+          }));
+
+          const alloc = computeOrderAllocation(
+            splitInputs,
+            cashPaid,
+            parsed.allocation_mode,
+            {
+              face_value: voucher.face_value,
+              acquire_cost: voucher.acquire_cost,
+              voucher_type: voucher.voucher_type,
+            }
+          );
+
+          totalGross = alloc.total_gross;
+          paymentDiscount = alloc.total_discount;
+          platformDiscount = '0.00';
+          totalNet = alloc.total_net;
+          items = parsed.items.map((it, idx) => ({
+            ...it,
+            item_gross: alloc.items[idx].gross,
+            allocated_discount: alloc.items[idx].allocated_discount,
+            item_net: alloc.items[idx].net,
+          }));
+        } else if (parsed.tx_type === 'TRANSFER') {
+          // 还款券抵扣（若 DSL 中已包含 `- 还款券 5` 则不重复累加）
+          if (toDecimal(paymentDiscount).isZero()) {
+            paymentDiscount = formatCny(voucher.face_value);
+          }
+          totalNet = formatCny(
+            toDecimal(totalGross).minus(toDecimal(paymentDiscount))
+          );
+        }
+      }
+    }
+
+    return this.recordTransaction({
+      header: {
+        tx_date: txDate ?? new Date().toISOString().slice(0, 10),
+        tx_type: parsed.tx_type,
+        account_id: parsed.account_id,
+        target_account_id: parsed.target_account_id,
+        total_gross: totalGross,
+        platform_discount: platformDiscount,
+        payment_discount: paymentDiscount,
+        total_net: totalNet,
+        allocation_mode: parsed.allocation_mode,
+        original_currency: parsed.original_currency,
+        original_amount: parsed.original_amount,
+        exchange_rate: parsed.exchange_rate,
+        settlement_status: parsed.settlement_status,
+        hold_amount_cny: parsed.hold_amount_cny,
+        settled_at: null,
+        raw_input_text: parsed.raw_input_text,
+        merchant_or_note: parsed.merchant_or_note,
+        applied_voucher_id: appliedVoucherId ?? null,
+      },
+      items: items.map((it) => ({
+        id: 0,
+        header_id: '',
+        item_name: it.item_name,
+        category_id: it.category_id,
+        budget_pool_id: it.budget_pool_id,
+        project_tag_id: it.project_tag_id,
+        item_gross: it.item_gross,
+        allocated_discount: it.allocated_discount,
+        item_net: it.item_net,
+        is_primary_item: it.is_primary_item,
+        raw_formula_expr: it.raw_formula_expr,
+      })),
+      appliedVoucherId,
+    });
+  }
+
+  /**
+   * 万事达外币预授权清算确认 (PENDING_HOLD -> SETTLED)
+   */
+  public settleMastercardTransaction(
+    txId: string,
+    settledAmountCny: string,
+    settledAt?: string
+  ): TransactionAggregate {
+    const header = this.db
+      .prepare('SELECT * FROM transaction_headers WHERE id = ?')
+      .get(txId) as any;
+
+    if (!header) {
+      throw new Error(`Transaction with ID "${txId}" not found`);
+    }
+    if (header.settlement_status !== 'PENDING_HOLD') {
+      throw new Error(
+        `Transaction "${txId}" is in status "${header.settlement_status}", not "PENDING_HOLD"`
+      );
+    }
+
+    const fxResult = processMastercardFxLifecycle({
+      foreignAmount: header.original_amount!,
+      holdAmountCny: header.hold_amount_cny,
+      settledAmountCny,
+    });
+
+    const items = this.db
+      .prepare('SELECT * FROM transaction_items WHERE header_id = ?')
+      .all(txId) as any[];
+
+    let updatedItems: any[] = [];
+    if (items.length <= 1) {
+      updatedItems = items.map((it) => ({
+        ...it,
+        item_gross: fxResult.total_gross,
+        allocated_discount: fxResult.payment_discount,
+        item_net: fxResult.total_net,
+      }));
+    } else {
+      const splitInputs: SplitItemInput[] = items.map((it) => ({
+        name: it.item_name,
+        gross: it.item_gross,
+        category_id: it.category_id,
+        budget_pool_id: it.budget_pool_id,
+        project_tag_id: it.project_tag_id,
+        is_primary: Boolean(it.is_primary_item),
+      }));
+      const allocs = allocateSplitDiscounts(
+        splitInputs,
+        fxResult.total_net,
+        header.allocation_mode as AllocationMode
+      );
+      updatedItems = items.map((it, idx) => ({
+        ...it,
+        item_gross: allocs[idx].gross,
+        allocated_discount: allocs[idx].allocated_discount,
+        item_net: allocs[idx].net,
+      }));
+    }
+
+    const hlc = this.hlc.now();
+    const finalSettledAt = settledAt ?? new Date().toISOString();
+
+    // 更新主表
+    this.db
+      .prepare(
+        `
+      UPDATE transaction_headers
+      SET settlement_status = 'SETTLED',
+          hold_amount_cny = '0.00',
+          total_gross = ?,
+          payment_discount = ?,
+          total_net = ?,
+          exchange_rate = ?,
+          settled_at = ?,
+          updated_hlc = ?
+      WHERE id = ?
+    `
+      )
+      .run(
+        fxResult.total_gross,
+        fxResult.payment_discount,
+        fxResult.total_net,
+        fxResult.exchange_rate,
+        finalSettledAt,
+        hlc,
+        txId
+      );
+
+    // 更新子明细
+    const updateItemStmt = this.db.prepare(`
+      UPDATE transaction_items
+      SET item_gross = ?, allocated_discount = ?, item_net = ?
+      WHERE id = ?
+    `);
+    for (const it of updatedItems) {
+      updateItemStmt.run(
+        it.item_gross,
+        it.allocated_discount,
+        it.item_net,
+        it.id
+      );
+    }
+
+    const finalAggregate: TransactionAggregate = {
+      header: {
+        ...header,
+        settlement_status: 'SETTLED',
+        hold_amount_cny: '0.00',
+        total_gross: fxResult.total_gross,
+        payment_discount: fxResult.payment_discount,
+        total_net: fxResult.total_net,
+        exchange_rate: fxResult.exchange_rate,
+        settled_at: finalSettledAt,
+        updated_hlc: hlc,
+      },
+      items: updatedItems,
+      appliedVoucherId: header.applied_voucher_id,
+    };
+
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'TRANSACTION',
+      entity_id: txId,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(finalAggregate),
+      created_at: new Date().toISOString(),
+    });
+
+    recalculateAllAccounts(this.db);
+
+    return finalAggregate;
+  }
+
+  /**
+   * 购买有偿立减金或领取代金券入库
+   */
+  public buyVoucher(params: {
+    accountId: string;
+    title: string;
+    voucherType?: VoucherType;
+    faceValue: string;
+    acquireCost: string;
+    minSpend?: string;
+    txDate?: string;
+  }): { voucher: Voucher; transaction: TransactionAggregate } {
+    const voucherType = params.voucherType ?? 'PREPAID_COUPON';
+    const faceValue = formatCny(params.faceValue);
+    const acquireCost = formatCny(params.acquireCost);
+    const discount = formatCny(toDecimal(faceValue).minus(toDecimal(acquireCost)));
+    const txDate = params.txDate ?? new Date().toISOString().slice(0, 10);
+
+    // 生成 VOUCHER_BUY 流水
+    const tx = this.recordTransaction({
+      header: {
+        tx_date: txDate,
+        tx_type: 'VOUCHER_BUY',
+        account_id: params.accountId,
+        target_account_id: null,
+        total_gross: faceValue,
+        platform_discount: '0.00',
+        payment_discount: discount,
+        total_net: acquireCost,
+        allocation_mode: 'SINGLE',
+        original_currency: 'CNY',
+        original_amount: null,
+        exchange_rate: '1.000000',
+        settlement_status: 'SETTLED',
+        hold_amount_cny: '0.00',
+        settled_at: null,
+        raw_input_text: `购买卡券: ${params.title}`,
+        merchant_or_note: `购买卡券: ${params.title}`,
+      },
+      items: [],
+    });
+
+    const minSpend = params.minSpend ? formatCny(params.minSpend) : '0.00';
+    const info = this.db
+      .prepare(
+        `
+      INSERT INTO vouchers (title, voucher_type, face_value, acquire_cost, min_spend, status, purchase_tx_id)
+      VALUES (?, ?, ?, ?, ?, 'AVAILABLE', ?)
+    `
+      )
+      .run(
+        params.title,
+        voucherType,
+        faceValue,
+        acquireCost,
+        minSpend,
+        tx.header.id
+      );
+
+    const voucher = this.db
+      .prepare('SELECT * FROM vouchers WHERE id = ?')
+      .get(info.lastInsertRowid) as any;
+
+    return {
+      voucher: {
+        ...voucher,
+        face_value: formatCny(voucher.face_value),
+        acquire_cost: formatCny(voucher.acquire_cost),
+        min_spend: formatCny(voucher.min_spend),
+      },
+      transaction: tx,
+    };
+  }
+
+  /**
+   * 月底手动更新指数基金市值并返回最新盈亏看板
+   */
+  public updateInvestmentMarketValue(
+    accountId: string,
+    marketValue: string
+  ): AccountDashboardRow {
+    const formatted = formatCny(marketValue);
+    const hlc = this.hlc.now();
+
+    this.db
+      .prepare(
+        'UPDATE accounts SET market_value = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      )
+      .run(formatted, hlc, accountId);
+
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'ACCOUNT',
+      entity_id: accountId,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify({ id: accountId, market_value: formatted }),
+      created_at: new Date().toISOString(),
+    });
+
+    const rows = this.getAccountDashboard();
+    const target = rows.find((a) => a.id === accountId);
+    if (!target) {
+      throw new Error(`Account "${accountId}" not found`);
+    }
+    return target;
+  }
+
+  /**
+   * PRD 2.3「清零并归集至专项基金 (SWEEP_TO_FUND)」
+   */
+  public sweepDailyPoolToSinkingFund(yearMonth: string): {
+    sweptAmount: string;
+    dailyPoolRemaining: string;
+    fundPoolTotal: string;
+  } {
+    const status = this.getMonthlyBudgetStatus(yearMonth);
+    const dailyPool = status.pools.find(
+      (p) => p.pool_id === 'POOL_DAILY' || p.pool_type === 'DAILY'
+    );
+    const remaining = toDecimal(dailyPool?.remaining_budget ?? 0);
+
+    let sweptAmount = '0.00';
+    if (remaining.greaterThan(0)) {
+      sweptAmount = formatCny(remaining);
+
+      // 更新高频生活池的 swept_to_fund
+      const dailyMb = this.db
+        .prepare(
+          "SELECT swept_to_fund FROM monthly_budgets WHERE year_month = ? AND pool_id = 'POOL_DAILY'"
+        )
+        .get(yearMonth) as any;
+      const newSwept = formatCny(
+        toDecimal(dailyMb?.swept_to_fund ?? 0).plus(toDecimal(sweptAmount))
+      );
+      this.db
+        .prepare(
+          "UPDATE monthly_budgets SET swept_to_fund = ? WHERE year_month = ? AND pool_id = 'POOL_DAILY'"
+        )
+        .run(newSwept, yearMonth);
+
+      // 划入年度专项基金池 POOL_FUND 的 base_allocation
+      const fundRow = this.db
+        .prepare(
+          "SELECT base_allocation FROM monthly_budgets WHERE year_month = ? AND pool_id = 'POOL_FUND'"
+        )
+        .get(yearMonth) as any;
+
+      if (fundRow) {
+        const newBase = formatCny(
+          toDecimal(fundRow.base_allocation ?? 0).plus(toDecimal(sweptAmount))
+        );
+        this.db
+          .prepare(
+            "UPDATE monthly_budgets SET base_allocation = ? WHERE year_month = ? AND pool_id = 'POOL_FUND'"
+          )
+          .run(newBase, yearMonth);
+      } else {
+        this.db
+          .prepare(
+            "INSERT INTO monthly_budgets (year_month, pool_id, base_allocation, rollover_from_prev) VALUES (?, 'POOL_FUND', ?, '0.00')"
+          )
+          .run(yearMonth, sweptAmount);
+      }
+    }
+
+    const updatedStatus = this.getMonthlyBudgetStatus(yearMonth);
+    const updatedFund = updatedStatus.pools.find(
+      (p) => p.pool_id === 'POOL_FUND'
+    );
+
+    return {
+      sweptAmount,
+      dailyPoolRemaining: '0.00',
+      fundPoolTotal: updatedFund?.total_available_budget ?? '0.00',
+    };
+  }
+
+  /**
+   * PRD 2.3 月末结余滚存执行引擎
+   */
+  public executeMonthRollover(
+    fromYearMonth: string,
+    toYearMonth: string
+  ): MonthlyBudgetStatusRow[] {
+    const fromStatus = this.getMonthlyBudgetStatus(fromYearMonth);
+    const pools = this.db
+      .prepare('SELECT * FROM budget_pools ORDER BY sort_order ASC')
+      .all() as unknown as BudgetPool[];
+
+    // 检查是否存在高频池正结余可归集至专项基金
+    let sweptFromDaily = new Decimal(0);
+    const dailyRow = fromStatus.pools.find((p) => p.pool_id === 'POOL_DAILY');
+    if (dailyRow) {
+      const rem = toDecimal(dailyRow.remaining_budget);
+      if (rem.greaterThan(0)) {
+        sweptFromDaily = rem;
+      }
+    }
+
+    for (const pool of pools) {
+      let rollover = '0.00';
+      const fromRow = fromStatus.pools.find((p) => p.pool_id === pool.id);
+
+      if (pool.rollover_strategy === 'RESET') {
+        rollover = '0.00';
+      } else if (pool.rollover_strategy === 'SWEEP_TO_FUND') {
+        rollover = '0.00';
+      } else if (pool.rollover_strategy === 'ACCUMULATE') {
+        let rem = toDecimal(fromRow?.remaining_budget ?? 0);
+        if (pool.id === 'POOL_FUND') {
+          rem = rem.plus(sweptFromDaily);
+        }
+        rollover = formatCny(rem);
+      }
+
+      const existingTo = this.db
+        .prepare(
+          'SELECT * FROM monthly_budgets WHERE year_month = ? AND pool_id = ?'
+        )
+        .get(toYearMonth, pool.id) as any;
+
+      if (existingTo) {
+        this.db
+          .prepare(
+            'UPDATE monthly_budgets SET rollover_from_prev = ? WHERE year_month = ? AND pool_id = ?'
+          )
+          .run(rollover, toYearMonth, pool.id);
+      } else {
+        const baseAlloc = fromRow?.base_allocation ?? '0.00';
+        this.db
+          .prepare(
+            'INSERT INTO monthly_budgets (year_month, pool_id, base_allocation, rollover_from_prev) VALUES (?, ?, ?, ?)'
+          )
+          .run(toYearMonth, pool.id, baseAlloc, rollover);
+      }
+    }
+
+    return this.getMonthlyBudgetStatus(toYearMonth).pools;
+  }
+
+  /**
+   * PRD 2.2 大件固定资产日均持有成本追踪计算
+   */
+  public getFixedAssetsWithCost(currentDateStr?: string): FixedAssetWithCost[] {
+    const assets = this.db
+      .prepare('SELECT * FROM fixed_assets ORDER BY id ASC')
+      .all() as any[];
+
+    const todayStr = currentDateStr ?? new Date().toISOString().slice(0, 10);
+    const todayMs = new Date(todayStr).getTime();
+
+    return assets.map((asset) => {
+      const purchaseMs = new Date(asset.purchase_date).getTime();
+      const diffMs = todayMs - purchaseMs;
+      const daysHeld = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+
+      const netCost = toDecimal(asset.purchase_net_cost).minus(
+        toDecimal(asset.resale_recovery ?? 0)
+      );
+      const currentDailyCost = formatCny(netCost.dividedBy(daysHeld));
+
+      let progressPercent = 0;
+      if (
+        asset.target_daily_cost != null &&
+        Number(asset.target_daily_cost) > 0
+      ) {
+        const targetCostDec = toDecimal(asset.target_daily_cost);
+        const targetDays = netCost.dividedBy(targetCostDec).toNumber();
+        if (targetDays > 0) {
+          progressPercent = Math.min(
+            100,
+            Math.max(0, Math.round((daysHeld / targetDays) * 100))
+          );
+        }
+      }
+
+      return {
+        id: Number(asset.id),
+        asset_name: String(asset.asset_name),
+        purchase_item_id: asset.purchase_item_id
+          ? Number(asset.purchase_item_id)
+          : null,
+        purchase_date: String(asset.purchase_date),
+        purchase_net_cost: formatCny(asset.purchase_net_cost),
+        target_daily_cost: asset.target_daily_cost
+          ? formatCny(asset.target_daily_cost)
+          : null,
+        status: asset.status,
+        resale_date: asset.resale_date ? String(asset.resale_date) : null,
+        resale_recovery: formatCny(asset.resale_recovery ?? 0),
+        note: asset.note ? String(asset.note) : null,
+        daysHeld,
+        currentDailyCost,
+        progressPercent,
+      };
+    });
+  }
+
+  /**
+   * 应用远端同步变更日志并进行因果合并与冲突解决
+   */
+  public applyRemoteOpLogs(incomingOps: SyncOpLogEntry[]): {
+    appliedCount: number;
+    conflicts: SyncConflict[];
+  } {
+    if (incomingOps.length === 0) {
+      return { appliedCount: 0, conflicts: [] };
+    }
+
+    const existingOps = this.getOpLogs();
+    const { mergedOps, winningEntities, detectedConflicts } =
+      mergeOpLogEntries(existingOps, incomingOps);
+
+    // 1. 批量保存所有新操作入 sync_oplog
+    const insertOpStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO sync_oplog (hlc, node_id, entity_type, entity_id, op_type, payload_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const op of incomingOps) {
+      insertOpStmt.run(
+        op.hlc,
+        op.node_id,
+        op.entity_type,
+        op.entity_id,
+        op.op_type,
+        op.payload_json,
+        op.created_at
+      );
+    }
+
+    // 2. 记录检测到的冲突
+    const insertConflictStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO sync_conflicts (
+        id, conflict_type, entity_id, winner_hlc, loser_hlc,
+        winner_summary, loser_summary, loser_payload_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const c of detectedConflicts) {
+      insertConflictStmt.run(
+        c.id,
+        c.conflict_type,
+        c.entity_id,
+        c.winner_hlc,
+        c.loser_hlc,
+        c.winner_summary,
+        c.loser_summary,
+        c.loser_payload_json,
+        c.status,
+        c.created_at
+      );
+    }
+
+    // 3. 将胜出实体的最新状态重放至业务表
+    for (const [_, winningOp] of winningEntities.entries()) {
+      if (winningOp.entity_type === 'TRANSACTION') {
+        let payload: any = {};
+        try {
+          payload = JSON.parse(winningOp.payload_json);
+        } catch {
+          continue;
+        }
+
+        const header = payload.header ?? payload;
+        const items = payload.items ?? [];
+
+        if (winningOp.op_type === 'DELETE' || header.is_deleted) {
+          this.db
+            .prepare(
+              'UPDATE transaction_headers SET is_deleted = 1, updated_hlc = ? WHERE id = ?'
+            )
+            .run(winningOp.hlc, header.id);
+        } else {
+          this.db
+            .prepare(
+              `
+            INSERT INTO transaction_headers (
+              id, tx_date, tx_timestamp, tx_type, account_id, target_account_id,
+              total_gross, platform_discount, payment_discount, total_net,
+              allocation_mode, original_currency, original_amount, exchange_rate,
+              settlement_status, hold_amount_cny, settled_at, raw_input_text,
+              merchant_or_note, applied_voucher_id, is_deleted, updated_hlc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              tx_date=excluded.tx_date,
+              tx_timestamp=excluded.tx_timestamp,
+              tx_type=excluded.tx_type,
+              account_id=excluded.account_id,
+              target_account_id=excluded.target_account_id,
+              total_gross=excluded.total_gross,
+              platform_discount=excluded.platform_discount,
+              payment_discount=excluded.payment_discount,
+              total_net=excluded.total_net,
+              allocation_mode=excluded.allocation_mode,
+              original_currency=excluded.original_currency,
+              original_amount=excluded.original_amount,
+              exchange_rate=excluded.exchange_rate,
+              settlement_status=excluded.settlement_status,
+              hold_amount_cny=excluded.hold_amount_cny,
+              settled_at=excluded.settled_at,
+              raw_input_text=excluded.raw_input_text,
+              merchant_or_note=excluded.merchant_or_note,
+              applied_voucher_id=excluded.applied_voucher_id,
+              is_deleted=excluded.is_deleted,
+              updated_hlc=excluded.updated_hlc
+          `
+            )
+            .run(
+              header.id,
+              header.tx_date,
+              header.tx_timestamp,
+              header.tx_type,
+              header.account_id,
+              header.target_account_id ?? null,
+              formatCny(header.total_gross),
+              formatCny(header.platform_discount ?? 0),
+              formatCny(header.payment_discount ?? 0),
+              formatCny(header.total_net),
+              header.allocation_mode ?? 'SINGLE',
+              header.original_currency ?? 'CNY',
+              header.original_amount != null
+                ? formatCny(header.original_amount)
+                : null,
+              header.exchange_rate
+                ? formatRate(header.exchange_rate)
+                : '1.000000',
+              header.settlement_status ?? 'SETTLED',
+              formatCny(header.hold_amount_cny ?? 0),
+              header.settled_at ?? null,
+              header.raw_input_text ?? null,
+              header.merchant_or_note ?? null,
+              payload.appliedVoucherId ?? header.applied_voucher_id ?? null,
+              0,
+              winningOp.hlc
+            );
+
+          // 覆盖更新子明细
+          this.db
+            .prepare('DELETE FROM transaction_items WHERE header_id = ?')
+            .run(header.id);
+
+          const insertItem = this.db.prepare(`
+            INSERT INTO transaction_items (
+              header_id, item_name, category_id, budget_pool_id, project_tag_id,
+              item_gross, allocated_discount, item_net, is_primary_item, raw_formula_expr
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+
+          for (const it of items) {
+            insertItem.run(
+              header.id,
+              it.item_name,
+              it.category_id,
+              it.budget_pool_id,
+              it.project_tag_id ?? null,
+              formatCny(it.item_gross),
+              formatCny(it.allocated_discount ?? 0),
+              formatCny(it.item_net),
+              it.is_primary_item ? 1 : 0,
+              it.raw_formula_expr ?? null
+            );
+          }
+
+          const vId = payload.appliedVoucherId ?? header.applied_voucher_id;
+          if (vId != null) {
+            this.db
+              .prepare(
+                "UPDATE vouchers SET status = 'USED', used_tx_id = ? WHERE id = ?"
+              )
+              .run(header.id, vId);
+          }
+        }
+      } else if (winningOp.entity_type === 'ACCOUNT') {
+        let payload: any = {};
+        try {
+          payload = JSON.parse(winningOp.payload_json);
+        } catch {
+          continue;
+        }
+
+        if (payload.initial_balance !== undefined) {
+          this.db
+            .prepare(
+              'UPDATE accounts SET initial_balance = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+            )
+            .run(payload.initial_balance, winningOp.hlc, payload.id);
+        }
+        if (payload.market_value !== undefined) {
+          this.db
+            .prepare(
+              'UPDATE accounts SET market_value = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+            )
+            .run(payload.market_value, winningOp.hlc, payload.id);
+        }
+      }
+    }
+
+    // 推进本地混合逻辑时钟
+    for (const op of incomingOps) {
+      this.hlc.receive(op.hlc);
+    }
+
+    // 触发全局余额收敛重算
+    recalculateAllAccounts(this.db);
+
+    return { appliedCount: incomingOps.length, conflicts: detectedConflicts };
+  }
+
+  /**
+   * 导出全部同步日志
+   */
+  public getOpLogs(): SyncOpLogEntry[] {
+    return this.db
+      .prepare('SELECT * FROM sync_oplog ORDER BY hlc ASC')
+      .all() as any[];
+  }
+
+  /**
+   * 导出完整备份快照包（用于全量同步与冷备恢复）
+   */
+  public exportFullSyncBundle(): FullSyncBundle {
+    const accounts = this.db.prepare('SELECT * FROM accounts').all() as any[];
+    const oplogs = this.getOpLogs();
+    const vouchers = this.db.prepare('SELECT * FROM vouchers').all() as any[];
+    const monthlyBudgets = this.db
+      .prepare('SELECT * FROM monthly_budgets')
+      .all() as any[];
+
+    return {
+      nodeId: this.nodeId,
+      exportedAt: new Date().toISOString(),
+      accounts,
+      oplogs,
+      vouchers,
+      monthlyBudgets,
+    };
+  }
+
+  /**
+   * 在服务端炸机/空库时从完整快照包 100% 幂等恢复
+   */
+  public reseedFromBundle(bundle: FullSyncBundle): void {
+    // 1. 清空现有业务表数据并重新初始化
+    this.db.exec(`
+      DELETE FROM transaction_items;
+      DELETE FROM transaction_headers;
+      DELETE FROM sync_oplog;
+      DELETE FROM sync_conflicts;
+      DELETE FROM vouchers;
+      DELETE FROM monthly_budgets;
+    `);
+    this.db.exec(SCHEMA_SQL);
+    this.db.exec(SEED_SQL);
+
+    // 2. 还原账户初始状态与市值
+    for (const acc of bundle.accounts) {
+      this.db
+        .prepare(
+          'UPDATE accounts SET initial_balance = ?, market_value = ? WHERE id = ?'
+        )
+        .run(
+          formatCny(acc.initial_balance ?? 0),
+          acc.market_value ? formatCny(acc.market_value) : null,
+          acc.id
+        );
+    }
+
+    // 3. 还原卡券
+    if (bundle.vouchers && bundle.vouchers.length > 0) {
+      const insertVoucher = this.db.prepare(`
+        INSERT OR REPLACE INTO vouchers (id, title, voucher_type, face_value, acquire_cost, min_spend, status, purchase_tx_id, used_tx_id, expire_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const v of bundle.vouchers) {
+        insertVoucher.run(
+          v.id,
+          v.title,
+          v.voucher_type,
+          formatCny(v.face_value),
+          formatCny(v.acquire_cost),
+          formatCny(v.min_spend),
+          v.status,
+          v.purchase_tx_id ?? null,
+          v.used_tx_id ?? null,
+          v.expire_date ?? null
+        );
+      }
+    }
+
+    // 4. 重放全部操作变更日志
+    this.applyRemoteOpLogs(bundle.oplogs);
+
+    // 5. 最终确定性重算全局账户
+    recalculateAllAccounts(this.db);
+  }
+
+  /**
+   * 内部辅助：写入同步操作日志表
+   */
+  private recordOpLog(entry: SyncOpLogEntry): void {
+    this.db
+      .prepare(
+        `
+      INSERT OR REPLACE INTO sync_oplog (
+        hlc, node_id, entity_type, entity_id, op_type, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `
+      )
+      .run(
+        entry.hlc,
+        entry.node_id,
+        entry.entity_type,
+        entry.entity_id,
+        entry.op_type,
+        entry.payload_json,
+        entry.created_at
+      );
+  }
+
+  /**
+   * 查询最近交易聚合列表（含子项明细）
+   */
+  public getRecentTransactions(limit = 50): TransactionAggregate[] {
+    const headers = this.db
+      .prepare(
+        'SELECT * FROM transaction_headers WHERE is_deleted = 0 ORDER BY tx_date DESC, tx_timestamp DESC, id DESC LIMIT ?'
+      )
+      .all(limit) as any[];
+
+    const itemStmt = this.db.prepare(
+      'SELECT * FROM transaction_items WHERE header_id = ? ORDER BY id ASC'
+    );
+
+    return headers.map((h) => {
+      const rawItems = itemStmt.all(h.id) as any[];
+      return {
+        header: {
+          ...h,
+          total_gross: formatCny(h.total_gross),
+          platform_discount: formatCny(h.platform_discount),
+          payment_discount: formatCny(h.payment_discount),
+          total_net: formatCny(h.total_net),
+          hold_amount_cny: formatCny(h.hold_amount_cny ?? 0),
+          exchange_rate: h.exchange_rate ? formatRate(h.exchange_rate) : '1.000000',
+          is_deleted: Boolean(h.is_deleted),
+        },
+        items: rawItems.map((it) => ({
+          ...it,
+          item_gross: formatCny(it.item_gross),
+          allocated_discount: formatCny(it.allocated_discount),
+          item_net: formatCny(it.item_net),
+          is_primary_item: Boolean(it.is_primary_item),
+        })),
+        appliedVoucherId: h.applied_voucher_id ?? null,
+      };
+    });
+  }
+
+  /**
+   * 查询所有待清算万事达外币预授权交易 (PENDING_HOLD)
+   */
+  public getPendingFxTransactions(): TransactionAggregate[] {
+    return this.getRecentTransactions(200).filter(
+      (tx) => tx.header.settlement_status === 'PENDING_HOLD'
+    );
+  }
+
+  /**
+   * 查询卡包中的所有优惠券与立减金
+   */
+  public getVouchers(): Voucher[] {
+    const rows = this.db
+      .prepare('SELECT * FROM vouchers ORDER BY id DESC')
+      .all() as any[];
+    return rows.map((v) => ({
+      ...v,
+      face_value: formatCny(v.face_value),
+      acquire_cost: formatCny(v.acquire_cost),
+      min_spend: formatCny(v.min_spend),
+    }));
+  }
+
+  /**
+   * 查询所有分类、专项项目标签与周期性规则
+   */
+  public getMetadata(): {
+    categories: Category[];
+    projectTags: ProjectTag[];
+    recurringRules: RecurringRule[];
+  } {
+    const categories = this.db
+      .prepare('SELECT * FROM categories ORDER BY sort_order ASC')
+      .all() as unknown as Category[];
+    const projectTags = (
+      this.db
+        .prepare('SELECT * FROM projects_and_tags ORDER BY id ASC')
+        .all() as any[]
+    ).map((t) => ({
+      ...t,
+      target_budget: t.target_budget != null ? formatCny(t.target_budget) : null,
+      is_active: Boolean(t.is_active),
+    }));
+    const recurringRules = (
+      this.db
+        .prepare('SELECT * FROM recurring_rules ORDER BY id ASC')
+        .all() as any[]
+    ).map((r) => ({
+      ...r,
+      amount: formatCny(r.amount),
+      auto_reserve_budget: Boolean(r.auto_reserve_budget),
+      is_active: Boolean(r.is_active),
+    }));
+    return { categories, projectTags, recurringRules };
+  }
+
+  /**
+   * 查询同步冲突列表
+   */
+  public getConflicts(): SyncConflict[] {
+    return this.db
+      .prepare('SELECT * FROM sync_conflicts ORDER BY created_at DESC')
+      .all() as unknown as SyncConflict[];
+  }
+
+  /**
+   * 解决同步冲突（保留胜出版本或采纳落败版本）
+   */
+  public resolveConflict(
+    conflictId: string,
+    resolution: 'KEEP_WINNER' | 'USE_LOSER'
+  ): SyncConflict | null {
+    const conflict = this.db
+      .prepare('SELECT * FROM sync_conflicts WHERE id = ?')
+      .get(conflictId) as unknown as SyncConflict | undefined;
+    if (!conflict) return null;
+
+    if (resolution === 'USE_LOSER') {
+      try {
+        const loserPayload = JSON.parse(conflict.loser_payload_json);
+        if (loserPayload?.header) {
+          const newHlc = this.hlc.now();
+          this.applyRemoteOpLogs([
+            {
+              hlc: newHlc,
+              node_id: this.nodeId,
+              entity_type: 'TRANSACTION',
+              entity_id: loserPayload.header.id,
+              op_type: 'UPSERT',
+              payload_json: JSON.stringify(loserPayload),
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+      } catch {}
+    }
+
+    this.db
+      .prepare("UPDATE sync_conflicts SET status = 'RESOLVED' WHERE id = ?")
+      .run(conflictId);
+
+    return {
+      ...conflict,
+      status: 'RESOLVED',
+    };
+  }
+
+  /**
+   * 关闭底层数据库连接
+   */
+  public close(): void {
+    this.db.close();
+  }
+}
