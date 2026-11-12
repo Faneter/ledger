@@ -425,7 +425,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         elevation={0}
         sx={{
           p: 1.5,
-          borderRadius: 3,
+          borderRadius: '16px',
           bgcolor: (t) =>
             t.palette.mode === 'light' ? '#edf2fa' : '#1a2230',
           display: 'flex',

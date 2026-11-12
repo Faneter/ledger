@@ -362,7 +362,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* 顶部主选项卡切换 */}
-      <Card sx={{ borderRadius: 3 }}>
+      <Card>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2, pt: 1 }}>
           <Tabs
             value={activeTab}
@@ -392,7 +392,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       {activeTab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
           {/* 顶栏：卡券过滤与新增操作 */}
-          <Card sx={{ borderRadius: 3, p: 2 }}>
+          <Card sx={{ p: 2 }}>
             <Stack
               direction={{ xs: 'column', md: 'row' }}
               spacing={2}
@@ -441,7 +441,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
 
           {/* 卡券空状态 */}
           {filteredVouchers.length === 0 ? (
-            <Card sx={{ borderRadius: 3, p: 4, textAlign: 'center' }}>
+            <Card sx={{ p: 4, textAlign: 'center' }}>
               <ConfirmationNumberRounded sx={{ fontSize: 56, color: 'text.secondary', mb: 1 }} />
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
                 当前卡包中没有符合条件的立减金或优惠券
@@ -484,7 +484,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                     <Card
                       sx={{
                         height: '100%',
-                        borderRadius: 3,
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
@@ -612,7 +611,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       {activeTab === 1 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
           {/* 顶栏：周期规则头部 */}
-          <Card sx={{ borderRadius: 3, p: 2 }}>
+          <Card sx={{ p: 2 }}>
             <Stack
               direction={{ xs: 'column', sm: 'row' }}
               spacing={2}
@@ -639,7 +638,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
 
           {/* 规则空状态 */}
           {engine.state.recurringRules.length === 0 ? (
-            <Card sx={{ borderRadius: 3, p: 4, textAlign: 'center' }}>
+            <Card sx={{ p: 4, textAlign: 'center' }}>
               <EventRepeatRounded sx={{ fontSize: 56, color: 'text.secondary', mb: 1 }} />
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
                 暂无任何周期性扣款规则
@@ -678,7 +677,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                     <Card
                       sx={{
                         height: '100%',
-                        borderRadius: 3,
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
@@ -752,7 +750,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                           color="primary"
                           startIcon={<BoltRounded />}
                           onClick={() => handleExecuteRule(rule)}
-                          sx={{ mt: 1.5, borderRadius: 2 }}
+                          sx={{ mt: 1.5 }}
                         >
                           ⚡ 立即执行记账
                         </Button>
@@ -798,7 +796,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
         onClose={() => setVoucherModalOpen(false)}
         maxWidth="sm"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
       >
         <DialogTitle sx={{ fontWeight: 700 }}>
           {voucherMode === 'BUY'
@@ -822,7 +819,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
           <Box
             sx={{
               p: 1.2,
-              borderRadius: 2,
+              borderRadius: '12px',
               bgcolor: (t) =>
                 t.palette.mode === 'light'
                   ? alpha(t.palette.primary.main, 0.08)
@@ -955,7 +952,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
         onClose={() => setRuleModalOpen(false)}
         maxWidth="sm"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
       >
         <DialogTitle sx={{ fontWeight: 700 }}>
           {ruleEditingId ? `编辑周期规则: ${ruleForm.title}` : '新增周期扣款规则'}
@@ -1071,7 +1067,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
         <Alert
           severity={toast.severity}
           onClose={() => setToast({ ...toast, open: false })}
-          sx={{ width: '100%', borderRadius: 2 }}
+          sx={{ width: '100%' }}
         >
           {toast.message}
         </Alert>

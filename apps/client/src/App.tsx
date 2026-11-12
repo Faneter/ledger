@@ -502,7 +502,7 @@ export const App: React.FC = () => {
             {/* Tab 5: 设置与同步 */}
             {currentTab === 'settings' && (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <Card sx={{ borderRadius: 3 }}>
+                <Card>
                   <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
                     <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
                       ⚙️ 系统设置与多端协同中心
@@ -670,7 +670,7 @@ export const App: React.FC = () => {
                         <Grid container spacing={2}>
                           {/* 选项 A: 恢复纯净初始账本 */}
                           <Grid size={{ xs: 12, md: 6 }}>
-                            <Card variant="outlined" sx={{ p: 2, borderRadius: 2, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                            <Card variant="outlined" sx={{ p: 2, borderRadius: '16px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                               <Box>
                                 <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'warning.main' }}>
                                   恢复为纯净初始账本 (推荐新用户)
@@ -692,7 +692,7 @@ export const App: React.FC = () => {
 
                           {/* 选项 B: 加载 PRD 演示测试数据 */}
                           <Grid size={{ xs: 12, md: 6 }}>
-                            <Card variant="outlined" sx={{ p: 2, borderRadius: 2, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                            <Card variant="outlined" sx={{ p: 2, borderRadius: '16px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                               <Box>
                                 <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'primary.main' }}>
                                   加载 PRD 演示测试数据 (体验样例)
@@ -831,13 +831,12 @@ export const App: React.FC = () => {
           onClose={() => setShowResetChoiceModal(false)}
           maxWidth="xs"
           fullWidth
-          slotProps={{ paper: { sx: { borderRadius: 3 } } }}
         >
           <DialogTitle sx={{ fontWeight: 700 }}>
             选择数据重置方式
           </DialogTitle>
           <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-            <Card variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+            <Card variant="outlined" sx={{ p: 2, borderRadius: '16px' }}>
               <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'warning.main' }}>
                 🧹 恢复为纯净初始账本
               </Typography>
@@ -856,7 +855,7 @@ export const App: React.FC = () => {
               </Button>
             </Card>
 
-            <Card variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+            <Card variant="outlined" sx={{ p: 2, borderRadius: '16px' }}>
               <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'primary.main' }}>
                 🚀 加载 PRD 演示测试数据
               </Typography>

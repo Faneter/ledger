@@ -429,7 +429,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* 顶部主选项卡切换 */}
-      <Card sx={{ borderRadius: 3 }}>
+      <Card>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2, pt: 1 }}>
           <Tabs
             value={activeTab}
@@ -459,7 +459,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       {activeTab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
           {/* 顶栏：月份选择器与新增资金池操作 */}
-          <Card sx={{ borderRadius: 3, p: 2 }}>
+          <Card sx={{ p: 2 }}>
             <Stack
               direction={{ xs: 'column', sm: 'row' }}
               spacing={2}
@@ -496,7 +496,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
               <Card
                 sx={{
                   height: '100%',
-                  borderRadius: 3,
                   bgcolor: (t) =>
                     t.palette.mode === 'dark'
                       ? alpha(t.palette.primary.main, 0.14)
@@ -547,7 +546,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                       color: 'text.secondary',
                       bgcolor: 'background.paper',
                       p: 1,
-                      borderRadius: 1.5,
+                      borderRadius: '12px',
                       mt: 1.5,
                       wordBreak: 'break-all',
                     }}
@@ -560,7 +559,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
 
             {/* 右侧：月度常规总水位看板 */}
             <Grid size={{ xs: 12, md: 6 }}>
-              <Card sx={{ height: '100%', borderRadius: 3 }}>
+              <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ p: 2.5 }}>
                   <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                     <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>
@@ -626,7 +625,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                     onClick={() => setSelectedPoolId(pool.pool_id)}
                     sx={{
                       height: '100%',
-                      borderRadius: 3,
                       display: 'flex',
                       flexDirection: 'column',
                       justifyContent: 'space-between',
@@ -773,7 +771,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
           {/* 专项预算概览汇总条 */}
           <Card
             sx={{
-              borderRadius: 3,
               p: 2.5,
               bgcolor: (t) =>
                 t.palette.mode === 'dark' ? 'grey.900' : 'background.paper',
@@ -839,7 +836,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 color="secondary"
                 startIcon={<AddRounded />}
                 onClick={() => handleOpenAddWish()}
-                sx={{ borderRadius: 2, height: 42, px: 3, whiteSpace: 'nowrap' }}
+                sx={{ height: 42, px: 3, whiteSpace: 'nowrap' }}
               >
                 新增专项预算
               </Button>
@@ -848,7 +845,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
 
           {/* 专项预算列表（仅展示进行中项目，已归档/已过期项目收纳到底部折叠区） */}
           {engine.state.projectTags.length === 0 ? (
-            <Card sx={{ borderRadius: 3, p: 4, textAlign: 'center' }}>
+            <Card sx={{ p: 4, textAlign: 'center' }}>
               <FlagRounded sx={{ fontSize: 56, color: 'text.secondary', mb: 1 }} />
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
                 当前尚未创建任何专项预算
@@ -911,7 +908,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                   <Card
                     sx={{
                       height: '100%',
-                      borderRadius: 3,
                       display: 'flex',
                       flexDirection: 'column',
                       justifyContent: 'space-between',
@@ -1062,7 +1058,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
             return (
               <>
                 {activeProjectTags.length === 0 ? (
-                  <Card sx={{ borderRadius: 3, p: 3, textAlign: 'center' }}>
+                  <Card sx={{ p: 3, textAlign: 'center' }}>
                     <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                       当前没有进行中的专项预算，已归档或到期项目已收纳至下方折叠区。
                     </Typography>
@@ -1077,7 +1073,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                   <Accordion
                     defaultExpanded={false}
                     sx={{
-                      borderRadius: '12px !important',
+                      borderRadius: '20px !important',
                       border: '1px solid',
                       borderColor: 'divider',
                       boxShadow: 'none',
@@ -1110,7 +1106,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
         onClose={() => setPoolModalOpen(false)}
         maxWidth="sm"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
       >
         <DialogTitle sx={{ fontWeight: 700 }}>
           {poolEditingId ? `编辑资金池: ${poolForm.name}` : '新增月度资金池'}
@@ -1179,7 +1174,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
         onClose={() => setWishModalOpen(false)}
         maxWidth="sm"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
       >
         <DialogTitle sx={{ fontWeight: 700 }}>
           {wishEditingId ? `编辑专项预算: ${wishForm.name}` : '新增专项预算'}
@@ -1253,7 +1247,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
         <Alert
           severity={toast.severity}
           onClose={() => setToast({ ...toast, open: false })}
-          sx={{ width: '100%', borderRadius: 2 }}
+          sx={{ width: '100%' }}
         >
           {toast.message}
         </Alert>
