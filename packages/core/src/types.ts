@@ -67,6 +67,14 @@ export interface AccountDashboardRow {
   is_folded: boolean;
 }
 
+/**
+ * 外币预授权与返现全局偏好配置
+ */
+export interface FxPreferenceConfig {
+  defaultHoldRatio: string;
+  defaultCashbackRate: string;
+}
+
 // ============================================================================
 // 2. 预算池与分类相关类型定义
 // ============================================================================

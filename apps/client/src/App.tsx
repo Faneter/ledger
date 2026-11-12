@@ -30,11 +30,14 @@ import {
   Divider,
   Grid,
   DialogActions,
+  TextField,
+  InputAdornment,
 } from '@mui/material';
 import SpaceDashboardRounded from '@mui/icons-material/SpaceDashboardRounded';
 import ReceiptLongRounded from '@mui/icons-material/ReceiptLongRounded';
 import SavingsRounded from '@mui/icons-material/SavingsRounded';
 import AccountBalanceWalletRounded from '@mui/icons-material/AccountBalanceWalletRounded';
+import ConfirmationNumberRounded from '@mui/icons-material/ConfirmationNumberRounded';
 import TuneRounded from '@mui/icons-material/TuneRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
 import LightModeRounded from '@mui/icons-material/LightModeRounded';
@@ -81,6 +84,20 @@ export const App: React.FC = () => {
   const engine = useMemo(() => new LocalLedgerEngine(), []);
   const [, setTick] = useState(0);
 
+  const [fxHoldPctInput, setFxHoldPctInput] = useState(() =>
+    String(Number((Number(engine.state.fxConfig?.defaultHoldRatio ?? 1.02) * 100).toFixed(1)))
+  );
+  const [fxCashbackPctInput, setFxCashbackPctInput] = useState(() =>
+    String(Number((Number(engine.state.fxConfig?.defaultCashbackRate ?? 0.01) * 100).toFixed(2)))
+  );
+
+  useEffect(() => {
+    if (engine.state.fxConfig) {
+      setFxHoldPctInput(String(Number((Number(engine.state.fxConfig.defaultHoldRatio) * 100).toFixed(1))));
+      setFxCashbackPctInput(String(Number((Number(engine.state.fxConfig.defaultCashbackRate) * 100).toFixed(2))));
+    }
+  }, [engine.state.fxConfig]);
+
   // 监听本地账本变动并触发响应式更新
   useEffect(() => {
     const unsubscribe = engine.subscribe(() => {
@@ -112,7 +129,7 @@ export const App: React.FC = () => {
   const handleResetToClean = () => {
     if (
       window.confirm(
-        '确定要恢复为【纯净初始账本】吗？\n将重置为 0 资产负债、0 优惠券、0 交易流水，仅保留标准的 4 大月度预算池与常用收支分类体系。'
+        '确定要恢复为【纯净初始账本】吗？\n将重置为 0 优惠券、0 交易流水，仅保留标准的 4 大月度预算池与常用收支分类体系。'
       )
     ) {
       engine.resetToCleanState();
@@ -123,7 +140,7 @@ export const App: React.FC = () => {
   const handleLoadDemo = () => {
     if (
       window.confirm(
-        '确定要载入【PRD 演示测试数据】吗？\n将加载标准示例账户余额、2 张立减金卡券与周期扣款规则，方便体验完整功能闭环。'
+        '确定要载入【PRD 演示测试数据】吗？\n将加载标准示例预算池、心愿单、测试优惠券与周期扣款规则，方便体验完整功能闭环。'
       )
     ) {
       engine.loadDemoData();
@@ -155,7 +172,7 @@ export const App: React.FC = () => {
     { key: 'overview', label: '概览', icon: <SpaceDashboardRounded /> },
     { key: 'transactions', label: '账单', icon: <ReceiptLongRounded /> },
     { key: 'budgets', label: '预算与心愿', icon: <SavingsRounded /> },
-    { key: 'accounts', label: '账户与卡包', icon: <AccountBalanceWalletRounded /> },
+    { key: 'accounts', label: '卡包与周期', icon: <ConfirmationNumberRounded /> },
     { key: 'settings', label: '设置与同步', icon: <TuneRounded /> },
   ];
 
@@ -551,7 +568,74 @@ export const App: React.FC = () => {
 
                       <Divider />
 
-                      {/* 3. 完整 JSON 数据备份与导出 */}
+                      {/* 3. 外币预授权与返现默认规则 */}
+                      <Stack spacing={2}>
+                        <Box>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                            外币预授权与返现默认规则
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            配置全账本外币交易的默认预授权冻结比例与返现比例，实时应用于记账预估与银行正式清算
+                          </Typography>
+                        </Box>
+
+                        <Grid container spacing={2}>
+                          <Grid size={{ xs: 12, sm: 6 }}>
+                            <TextField
+                              label="默认预授权冻结比例 (%)"
+                              type="number"
+                              fullWidth
+                              size="small"
+                              value={fxHoldPctInput}
+                              onChange={(e) => {
+                                setFxHoldPctInput(e.target.value);
+                                const val = e.target.value;
+                                if (val && !isNaN(Number(val))) {
+                                  engine.updateFxConfig({
+                                    defaultHoldRatio: (Number(val) / 100).toFixed(3),
+                                  });
+                                }
+                              }}
+                              slotProps={{
+                                htmlInput: { step: '0.1', min: '100' },
+                                input: {
+                                  endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                                },
+                              }}
+                              helperText="外币记账时默认按此比例预估冻结人民币金额（如 102% 或 100%）"
+                            />
+                          </Grid>
+                          <Grid size={{ xs: 12, sm: 6 }}>
+                            <TextField
+                              label="默认外币返现比例 (%)"
+                              type="number"
+                              fullWidth
+                              size="small"
+                              value={fxCashbackPctInput}
+                              onChange={(e) => {
+                                setFxCashbackPctInput(e.target.value);
+                                const val = e.target.value;
+                                if (val && !isNaN(Number(val))) {
+                                  engine.updateFxConfig({
+                                    defaultCashbackRate: (Number(val) / 100).toFixed(4),
+                                  });
+                                }
+                              }}
+                              slotProps={{
+                                htmlInput: { step: '0.01', min: '0' },
+                                input: {
+                                  endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                                },
+                              }}
+                              helperText="外币预授权与正式清算时默认核算的刷卡返现比例（如 1% 或 0%）"
+                            />
+                          </Grid>
+                        </Grid>
+                      </Stack>
+
+                      <Divider />
+
+                      {/* 4. 完整 JSON 数据备份与导出 */}
                       <Stack
                         direction={{ xs: 'column', sm: 'row' }}
                         spacing={2}
@@ -562,7 +646,7 @@ export const App: React.FC = () => {
                             数据导出与灾备备份
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            将当前账户、OpLogs 日志、优惠券及月度预算打包导出为标准 JSON 格式文件
+                            将当前预算池、心愿单、优惠券、周期扣款与账单流水打包导出为标准 JSON 格式文件
                           </Typography>
                         </Box>
                         <Button
@@ -577,7 +661,7 @@ export const App: React.FC = () => {
 
                       <Divider />
 
-                      {/* 4. 纯净初始化与演示数据恢复 */}
+                      {/* 5. 纯净初始化与演示数据恢复 */}
                       <Box>
                         <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5 }}>
                           账本数据初始化与演示载入
@@ -592,7 +676,7 @@ export const App: React.FC = () => {
                                   恢复为纯净初始账本 (推荐新用户)
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, mb: 2 }}>
-                                  0 资产负债、0 优惠券、0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，从零开始建立个人账本。
+                                  0 优惠券、0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，从零开始建立个人账本。
                                 </Typography>
                               </Box>
                               <Button
@@ -614,7 +698,7 @@ export const App: React.FC = () => {
                                   加载 PRD 演示测试数据 (体验样例)
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, mb: 2 }}>
-                                  载入 PRD 标杆测试样例，包含花呗/储蓄卡/外币卡初始余额、2 张测试优惠券、校园网与定投周期扣款规则，快速体验闭环。
+                                  载入 PRD 标杆测试样例，包含 4 大预算池、心愿单、测试优惠券、校园网与外币订阅周期扣款规则，快速体验闭环。
                                 </Typography>
                               </Box>
                               <Button

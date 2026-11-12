@@ -263,12 +263,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   };
 
   // 辅助查找
-  const getAccountName = (id?: string) => {
-    if (!id) return '-';
-    const a = engine.state.accounts.find((acc) => acc.id === id);
-    return a ? a.name : id;
-  };
-
   const getCategoryName = (id?: string) => {
     if (!id) return '-';
     const c = engine.state.categories.find((cat) => cat.id === id);
@@ -383,25 +377,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 <MenuItem value="ALL">全部类型</MenuItem>
                 <MenuItem value="EXPENSE">支出</MenuItem>
                 <MenuItem value="INCOME">收入</MenuItem>
-                <MenuItem value="TRANSFER">转账 / 还款</MenuItem>
                 <MenuItem value="VOUCHER_BUY">购券支出</MenuItem>
-              </TextField>
-
-              {/* 账户筛选 */}
-              <TextField
-                select
-                size="small"
-                label="扣款/交易账户"
-                value={accountFilter}
-                onChange={(e) => setAccountFilter(e.target.value)}
-                sx={{ minWidth: { xs: '100%', md: 180 } }}
-              >
-                <MenuItem value="ALL">全部账户</MenuItem>
-                {engine.state.accounts.map((acc) => (
-                  <MenuItem key={acc.id} value={acc.id}>
-                    {acc.name}
-                  </MenuItem>
-                ))}
               </TextField>
 
               {/* 归属资金池 / 专项筛选 */}
@@ -667,13 +643,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           }}
                         >
                           <span style={{ fontFamily: 'monospace' }}>{h.tx_date}</span>
-                          <span>·</span>
-                          <span style={{ fontWeight: 500 }}>
-                            {getAccountName(h.account_id)}
-                            {h.target_account_id
-                              ? ` ➜ ${getAccountName(h.target_account_id)}`
-                              : ''}
-                          </span>
                           {tx.items[0]?.project_tag_id && (
                             <>
                               <span>·</span>
@@ -954,50 +923,34 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               />
             </Stack>
 
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            {editingTx?.header.tx_type === 'EXPENSE' && (
               <TextField
                 select
-                label="扣款/交易账户"
+                label="支出归属（月度资金池 / 专项预算）"
                 fullWidth
-                value={editAccountId}
-                onChange={(e) => setEditAccountId(e.target.value)}
+                value={editTargetSelection}
+                onChange={(e) => setEditTargetSelection(e.target.value)}
               >
-                {engine.state.accounts.map((acc) => (
-                  <MenuItem key={acc.id} value={acc.id}>
-                    {acc.name} · 余额 ¥{acc.book_balance}
+                <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
+                  ── 月度预算资金池 ──
+                </MenuItem>
+                {engine.state.budgetPools
+                  .filter((p) => p.is_monthly_budget)
+                  .map((pool) => (
+                    <MenuItem key={pool.id} value={`POOL:${pool.id}`}>
+                      💰 {pool.name}
+                    </MenuItem>
+                  ))}
+                <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
+                  ── 专项预算与心愿单 ──
+                </MenuItem>
+                {engine.state.projectTags.map((tag) => (
+                  <MenuItem key={tag.id} value={`PROJECT:${tag.id}`}>
+                    🎯 {tag.name} (目标 ¥{tag.target_budget || '0.00'})
                   </MenuItem>
                 ))}
               </TextField>
-
-              {editingTx?.header.tx_type === 'EXPENSE' && (
-                <TextField
-                  select
-                  label="支出归属（月度资金池 / 专项预算）"
-                  fullWidth
-                  value={editTargetSelection}
-                  onChange={(e) => setEditTargetSelection(e.target.value)}
-                >
-                  <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
-                    ── 月度预算资金池 ──
-                  </MenuItem>
-                  {engine.state.budgetPools
-                    .filter((p) => p.is_monthly_budget)
-                    .map((pool) => (
-                      <MenuItem key={pool.id} value={`POOL:${pool.id}`}>
-                        💰 {pool.name}
-                      </MenuItem>
-                    ))}
-                  <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
-                    ── 专项预算与心愿单 ──
-                  </MenuItem>
-                  {engine.state.projectTags.map((tag) => (
-                    <MenuItem key={tag.id} value={`PROJECT:${tag.id}`}>
-                      🎯 {tag.name} (目标 ¥{tag.target_budget || '0.00'})
-                    </MenuItem>
-                  ))}
-                </TextField>
-              )}
-            </Stack>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>

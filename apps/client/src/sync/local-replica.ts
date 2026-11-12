@@ -36,6 +36,7 @@ import {
   DEFAULT_ACCOUNTS,
   DEFAULT_PROJECT_TAGS,
   generateVoucherTitle,
+  FxPreferenceConfig,
 } from '@ledger/core';
 
 export { generateVoucherTitle };
@@ -75,6 +76,7 @@ export interface LocalReplicaState {
   pendingSyncOps: SyncOpLogEntry[];
   conflicts: SyncConflict[];
   lastSyncAt: string | null;
+  fxConfig?: FxPreferenceConfig;
 }
 
 export interface DailyBudgetSummary {
@@ -827,6 +829,9 @@ export class LocalLedgerEngine {
       const parsed = JSON.parse(raw);
       if (parsed && (parsed.version === 2 || parsed.version === 1)) {
         parsed.version = 2;
+        if (!parsed.fxConfig) {
+          parsed.fxConfig = { defaultHoldRatio: '1.020', defaultCashbackRate: '0.0100' };
+        }
         return parsed;
       }
     } catch (e) {
@@ -905,6 +910,7 @@ export class LocalLedgerEngine {
       pendingSyncOps: [],
       conflicts: [],
       lastSyncAt: null,
+      fxConfig: { defaultHoldRatio: '1.020', defaultCashbackRate: '0.0100' },
       ...override,
     };
   }
@@ -931,8 +937,20 @@ export class LocalLedgerEngine {
       pendingSyncOps: [],
       conflicts: [],
       lastSyncAt: null,
+      fxConfig: { defaultHoldRatio: '1.020', defaultCashbackRate: '0.0100' },
       ...override,
     };
+  }
+
+  public updateFxConfig(config: Partial<FxPreferenceConfig>): FxPreferenceConfig {
+    const current = this.state.fxConfig ?? { defaultHoldRatio: '1.020', defaultCashbackRate: '0.0100' };
+    const updated: FxPreferenceConfig = {
+      defaultHoldRatio: config.defaultHoldRatio ?? current.defaultHoldRatio,
+      defaultCashbackRate: config.defaultCashbackRate ?? current.defaultCashbackRate,
+    };
+    this.state.fxConfig = updated;
+    this.saveToStorage();
+    return updated;
   }
 
   public buildInitialSeed(
@@ -1293,7 +1311,7 @@ export class LocalLedgerEngine {
   public recordManualTransaction(params: {
     tx_type: 'EXPENSE' | 'INCOME' | 'TRANSFER';
     tx_date?: string;
-    account_id: string;
+    account_id?: string;
     target_account_id?: string | null;
     amount: string; // gross amount (or transfer amount)
     discount?: string; // optional platform/payment discount
@@ -1304,11 +1322,15 @@ export class LocalLedgerEngine {
     applied_voucher_id?: number | null;
     currency?: string; // default 'CNY'; if 'USD' etc., support hold_amount_cny or 102% hold on DEBIT_FX
     hold_amount_cny?: string;
+    fx_hold_ratio?: string;
+    fx_cashback_rate?: string;
   }): TransactionAggregate {
-    const acc = this.state.accounts.find((a) => a.id === params.account_id);
-    if (!acc) {
-      throw new Error(`Account "${params.account_id}" not found`);
-    }
+    const accountId =
+      params.account_id ||
+      this.state.accounts.find((a) => a.is_default_pay)?.id ||
+      this.state.accounts[0]?.id ||
+      'ACC_UNION_MAIN';
+    const acc = this.state.accounts.find((a) => a.id === accountId) || this.state.accounts[0];
 
     const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nowIso = new Date().toISOString();
@@ -1435,8 +1457,16 @@ export class LocalLedgerEngine {
 
       if (isFx) {
         const fxRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
-        const holdRatio = acc.fx_hold_ratio || '1.020';
-        const cashbackRate = acc.fx_cashback_rate || '0.0100';
+        const holdRatio =
+          params.fx_hold_ratio ||
+          this.state.fxConfig?.defaultHoldRatio ||
+          acc?.fx_hold_ratio ||
+          '1.020';
+        const cashbackRate =
+          params.fx_cashback_rate ||
+          this.state.fxConfig?.defaultCashbackRate ||
+          acc?.fx_cashback_rate ||
+          '0.0100';
 
         if (params.hold_amount_cny && Number(params.hold_amount_cny) > 0) {
           holdAmountCny = formatCny(params.hold_amount_cny);
@@ -1484,7 +1514,7 @@ export class LocalLedgerEngine {
       tx_date: effectiveDate,
       tx_timestamp: nowIso,
       tx_type: params.tx_type,
-      account_id: params.account_id,
+      account_id: accountId,
       target_account_id: params.target_account_id ?? null,
       total_gross: totalGross,
       platform_discount: platformDiscount,
@@ -2006,14 +2036,14 @@ export class LocalLedgerEngine {
         params.acquire_cost
       );
 
-    if (!params.id && Number(params.acquire_cost) > 0 && params.accountId) {
+    if (!params.id && Number(params.acquire_cost) > 0) {
       return this.buyVoucher({
         title: finalTitle,
         voucher_type: params.voucher_type,
         face_value: params.face_value,
         acquire_cost: params.acquire_cost,
         min_spend: params.min_spend,
-        accountId: params.accountId,
+        accountId: params.accountId ?? 'ACC_UNION_MAIN',
         expire_date: params.expire_date,
       });
     }
@@ -2081,14 +2111,14 @@ export class LocalLedgerEngine {
   }
 
   public upsertRecurringRule(
-    rule: Partial<RecurringRule> & { title: string; amount: string; account_id: string }
+    rule: Partial<RecurringRule> & { title: string; amount: string; account_id?: string }
   ): RecurringRule {
     let target = this.state.recurringRules.find((r) => r.id === rule.id);
 
     if (target) {
       target.title = rule.title;
       target.amount = formatCny(rule.amount);
-      target.account_id = rule.account_id;
+      if (rule.account_id !== undefined) target.account_id = rule.account_id;
       if (rule.rule_type !== undefined) target.rule_type = rule.rule_type;
       if (rule.cron_cycle !== undefined) target.cron_cycle = rule.cron_cycle;
       if (rule.trigger_day !== undefined) target.trigger_day = rule.trigger_day;
@@ -2111,7 +2141,7 @@ export class LocalLedgerEngine {
         trigger_day: rule.trigger_day ?? 1,
         currency: rule.currency ?? 'CNY',
         amount: formatCny(rule.amount),
-        account_id: rule.account_id,
+        account_id: rule.account_id ?? 'ACC_UNION_MAIN',
         target_account_id: rule.target_account_id ?? null,
         category_id: rule.category_id ?? null,
         budget_pool_id: rule.budget_pool_id ?? null,
@@ -2189,7 +2219,8 @@ export class LocalLedgerEngine {
   // --------------------------------------------------------------------------
   public settleMastercardPending(
     txId: string,
-    settledAmountCny: string
+    settledAmountCny: string,
+    cashbackRate?: string
   ): TransactionAggregate {
     const tx = this.state.transactions.find((it) => it.header.id === txId);
     if (!tx) {
@@ -2206,6 +2237,10 @@ export class LocalLedgerEngine {
       foreignAmount: originalForeign,
       holdAmountCny: tx.header.hold_amount_cny,
       settledAmountCny,
+      cashbackRate:
+        cashbackRate ??
+        this.state.fxConfig?.defaultCashbackRate ??
+        '0.0100',
     });
 
     const nowIso = new Date().toISOString();
@@ -2254,7 +2289,7 @@ export class LocalLedgerEngine {
     face_value: string;
     acquire_cost: string;
     min_spend: string;
-    accountId: string;
+    accountId?: string;
     expire_date?: string | null;
   }): { voucher: Voucher; tx: TransactionAggregate } {
     const finalTitle =
@@ -2271,6 +2306,7 @@ export class LocalLedgerEngine {
     const today = nowIso.slice(0, 10);
     const txId = `tx_buy_voucher_${Date.now()}`;
     const hlc = this.hlc.now();
+    const accountId = params.accountId || 'ACC_UNION_MAIN';
 
     const newVoucher: Voucher = {
       id: nextId,
@@ -2290,7 +2326,7 @@ export class LocalLedgerEngine {
       tx_date: today,
       tx_timestamp: nowIso,
       tx_type: 'VOUCHER_BUY',
-      account_id: params.accountId,
+      account_id: accountId,
       target_account_id: null,
       total_gross: formatCny(params.acquire_cost),
       platform_discount: '0.00',

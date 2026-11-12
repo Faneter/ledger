@@ -73,33 +73,24 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       ? Math.min(100, Math.round((totalMonthlySpent / totalMonthlyBudget) * 100))
       : 0;
 
-  // 3. 净资产计算 (纳入净资产统计的账户)
-  const netWorthSummary = useMemo(() => {
-    const nwAccounts = engine.state.accounts.filter((a) => a.include_in_networth);
-    let totalAssets = 0;
-    let totalLiabilities = 0;
-
-    for (const acc of nwAccounts) {
-      if (acc.account_role === 'INVESTMENT' && acc.market_value != null) {
-        totalAssets += Number(acc.market_value);
-      } else {
-        const bal = Number(acc.book_balance);
-        if (acc.account_role === 'CREDIT') {
-          if (bal < 0) totalLiabilities += Math.abs(bal);
-          else totalAssets += bal;
-        } else {
-          if (bal >= 0) totalAssets += bal;
-          else totalLiabilities += Math.abs(bal);
+  // 3. 专项/心愿总支出计算
+  const projectTotalSpent = useMemo(() => {
+    const activeProjectTagIds = new Set(
+      engine.state.projectTags
+        .filter((t) => t.is_active !== false)
+        .map((t) => t.id)
+    );
+    let total = 0;
+    for (const tx of engine.state.transactions) {
+      if (tx.header.is_deleted) continue;
+      for (const it of tx.items) {
+        if (it.project_tag_id && activeProjectTagIds.has(it.project_tag_id)) {
+          total += Number(it.item_net || 0);
         }
       }
     }
-
-    return {
-      totalAssets,
-      totalLiabilities,
-      netWorth: totalAssets - totalLiabilities,
-    };
-  }, [engine.state.accounts]);
+    return total.toFixed(2);
+  }, [engine.state.projectTags, engine.state.transactions]);
 
   // 4. 待清算外币交易
   const pendingFxTxs: TransactionAggregate[] = engine.getPendingFxTransactions();
@@ -136,12 +127,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
     }
-  };
-
-  const getAccountName = (id?: string) => {
-    if (!id) return '-';
-    const a = engine.state.accounts.find((acc) => acc.id === id);
-    return a ? a.name : id;
   };
 
   const getCategoryName = (id?: string) => {
@@ -228,7 +213,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           </Card>
         </Grid>
 
-        {/* 卡片 2: 净资产总览 */}
+        {/* 卡片 2: 本月预算执行总览 */}
         <Grid size={{ xs: 12, md: 4 }}>
           <Card
             sx={{
@@ -257,15 +242,22 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 </Box>
                 <Box>
                   <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                    净资产总览
+                    本月预算执行总览
                   </Typography>
                   <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                    ¥{netWorthSummary.netWorth.toFixed(2)}
+                    ¥{(totalMonthlyBudget - totalMonthlySpent).toFixed(2)}
+                    <Typography
+                      component="span"
+                      variant="body2"
+                      sx={{ ml: 0.5, color: 'text.secondary', fontWeight: 500 }}
+                    >
+                      剩余可用
+                    </Typography>
                   </Typography>
                 </Box>
               </Stack>
 
-              {/* 资产与负债拆解 */}
+              {/* 常规已支 与 专项/心愿已支 拆解 */}
               <Stack
                 direction="row"
                 spacing={2}
@@ -279,19 +271,25 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               >
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                    总资产
+                    常规预算已支
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'success.main' }}>
-                    ¥{netWorthSummary.totalAssets.toFixed(2)}
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                    ¥{totalMonthlySpent.toFixed(2)}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+                    共 ¥{totalMonthlyBudget.toFixed(2)}
                   </Typography>
                 </Box>
                 <Divider orientation="vertical" flexItem />
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                    总负债
+                    专项/心愿已支
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'warning.main' }}>
-                    ¥{netWorthSummary.totalLiabilities.toFixed(2)}
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'secondary.main' }}>
+                    ¥{projectTotalSpent}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+                    跨期专项统计
                   </Typography>
                 </Box>
               </Stack>
@@ -616,13 +614,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             sx={{ color: 'text.secondary', display: 'flex', gap: 1, mt: 0.3 }}
                           >
                             <span>{h.tx_date}</span>
-                            <span>·</span>
-                            <span>
-                              {getAccountName(h.account_id)}
-                              {h.target_account_id
-                                ? ` ➜ ${getAccountName(h.target_account_id)}`
-                                : ''}
-                            </span>
                           </Typography>
                         }
                       />

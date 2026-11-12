@@ -672,7 +672,7 @@ export class LedgerRepository {
    * 购买有偿立减金或领取代金券入库
    */
   public buyVoucher(params: {
-    accountId: string;
+    accountId?: string;
     title?: string;
     voucherType?: VoucherType;
     faceValue: string;
@@ -689,13 +689,14 @@ export class LedgerRepository {
       generateVoucherTitle(voucherType, faceValue, minSpend, acquireCost);
     const discount = formatCny(toDecimal(faceValue).minus(toDecimal(acquireCost)));
     const txDate = params.txDate ?? new Date().toISOString().slice(0, 10);
+    const accountId = params.accountId || 'ACC_UNION_MAIN';
 
     // 生成 VOUCHER_BUY 流水
     const tx = this.recordTransaction({
       header: {
         tx_date: txDate,
         tx_type: 'VOUCHER_BUY',
-        account_id: params.accountId,
+        account_id: accountId,
         target_account_id: null,
         total_gross: acquireCost,
         platform_discount: '0.00',
@@ -1850,7 +1851,7 @@ export class LedgerRepository {
   public recordManualTransaction(params: {
     tx_type: 'EXPENSE' | 'INCOME' | 'TRANSFER';
     tx_date?: string;
-    account_id: string;
+    account_id?: string;
     target_account_id?: string | null;
     amount: string;
     discount?: string;
@@ -1861,12 +1862,15 @@ export class LedgerRepository {
     applied_voucher_id?: number | null;
     currency?: string;
     hold_amount_cny?: string;
+    fx_hold_ratio?: string;
+    fx_cashback_rate?: string;
   }): TransactionAggregate {
-    const account = this.db
+    const effectiveAccountId = params.account_id || 'ACC_UNION_MAIN';
+    let account = this.db
       .prepare('SELECT * FROM accounts WHERE id = ?')
-      .get(params.account_id) as any;
+      .get(effectiveAccountId) as any;
     if (!account) {
-      throw new Error(`Account "${params.account_id}" not found`);
+      account = this.db.prepare('SELECT * FROM accounts LIMIT 1').get() as any;
     }
 
     const effectiveDate = params.tx_date ?? new Date().toISOString().slice(0, 10);
@@ -1999,8 +2003,8 @@ export class LedgerRepository {
 
       if (isFx) {
         const refRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
-        const holdRatio = account.fx_hold_ratio || '1.020';
-        const cashbackRate = account.fx_cashback_rate || '0.0100';
+        const holdRatio = params.fx_hold_ratio || account?.fx_hold_ratio || '1.020';
+        const cashbackRate = params.fx_cashback_rate || account?.fx_cashback_rate || '0.0100';
         holdAmountCny =
           params.hold_amount_cny && Number(params.hold_amount_cny) > 0
             ? formatCny(params.hold_amount_cny)
@@ -2044,7 +2048,7 @@ export class LedgerRepository {
       header: {
         tx_date: effectiveDate,
         tx_type: params.tx_type,
-        account_id: params.account_id,
+        account_id: effectiveAccountId,
         target_account_id: params.target_account_id ?? null,
         total_gross: totalGross,
         platform_discount: platformDiscount,
@@ -2729,14 +2733,14 @@ export class LedgerRepository {
         params.acquire_cost
       );
 
-    if (!params.id && Number(params.acquire_cost) > 0 && params.accountId) {
+    if (!params.id && Number(params.acquire_cost) > 0) {
       const res = this.buyVoucher({
         title: finalTitle,
         voucherType: params.voucher_type,
         faceValue: params.face_value,
         acquireCost: params.acquire_cost,
         minSpend: params.min_spend,
-        accountId: params.accountId,
+        accountId: params.accountId ?? 'ACC_UNION_MAIN',
       });
       return { voucher: res.voucher, tx: res.transaction };
     }
@@ -2836,7 +2840,7 @@ export class LedgerRepository {
   }
 
   public upsertRecurringRule(
-    rule: Partial<RecurringRule> & { title: string; amount: string; account_id: string }
+    rule: Partial<RecurringRule> & { title: string; amount: string; account_id?: string }
   ): RecurringRule {
     const existing = rule.id != null
       ? (this.db.prepare('SELECT * FROM recurring_rules WHERE id = ?').get(rule.id) as any)
@@ -2844,6 +2848,7 @@ export class LedgerRepository {
 
     if (existing && rule.id != null) {
       const ruleId = rule.id;
+      const effectiveAccountId = rule.account_id ?? existing.account_id;
       this.db
         .prepare(`
           UPDATE recurring_rules SET
@@ -2859,7 +2864,7 @@ export class LedgerRepository {
           rule.trigger_day ?? existing.trigger_day,
           rule.currency ?? existing.currency,
           formatCny(rule.amount),
-          rule.account_id,
+          effectiveAccountId,
           rule.target_account_id !== undefined ? rule.target_account_id : existing.target_account_id,
           rule.category_id !== undefined ? rule.category_id : existing.category_id,
           rule.budget_pool_id !== undefined ? rule.budget_pool_id : existing.budget_pool_id,
@@ -2879,6 +2884,7 @@ export class LedgerRepository {
       });
       return { ...updated, auto_reserve_budget: Boolean(updated.auto_reserve_budget), is_active: Boolean(updated.is_active) };
     } else {
+      const effectiveAccountId = rule.account_id ?? 'ACC_UNION_MAIN';
       const info = this.db
         .prepare(`
           INSERT INTO recurring_rules (
@@ -2894,7 +2900,7 @@ export class LedgerRepository {
           rule.trigger_day ?? 1,
           rule.currency ?? 'CNY',
           formatCny(rule.amount),
-          rule.account_id,
+          effectiveAccountId,
           rule.target_account_id ?? null,
           rule.category_id ?? null,
           rule.budget_pool_id ?? null,

@@ -10,6 +10,7 @@ import {
   MenuItem,
   Button,
   Chip,
+  Grid,
   Stack,
   Alert,
   Snackbar,
@@ -70,19 +71,17 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   // --------------------------------------------------------------------------
   // Tab A: 可视化表单状态
   // --------------------------------------------------------------------------
-  const [txType, setTxType] = useState<'EXPENSE' | 'INCOME' | 'TRANSFER'>('EXPENSE');
+  const [txType, setTxType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [amount, setAmount] = useState('');
   const [discount, setDiscount] = useState('');
   const [currency, setCurrency] = useState('CNY');
   const [holdAmountCnyInput, setHoldAmountCnyInput] = useState('');
-  const [accountId, setAccountId] = useState(() => {
-    const defaultAcc = engine.state.accounts.find((a) => a.is_default_pay);
-    return defaultAcc?.id || engine.state.accounts[0]?.id || 'ACC_UNION_MAIN';
-  });
-  const [targetAccountId, setTargetAccountId] = useState(() => {
-    const candidate = engine.state.accounts.find((a) => a.account_role === 'CREDIT');
-    return candidate?.id || 'ACC_HUABEI';
-  });
+  const [fxHoldPct, setFxHoldPct] = useState(() =>
+    String(Number((Number(engine.state.fxConfig?.defaultHoldRatio ?? 1.02) * 100).toFixed(1)))
+  );
+  const [fxCashbackPct, setFxCashbackPct] = useState(() =>
+    String(Number((Number(engine.state.fxConfig?.defaultCashbackRate ?? 0.01) * 100).toFixed(2)))
+  );
   const [targetSelection, setTargetSelection] = useState<{
     type: 'POOL' | 'PROJECT';
     id: string;
@@ -114,8 +113,9 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
       return '';
     }
     const fxRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
-    return formatCny(roundCny(toDecimal(amount).times(fxRate).times('1.02')));
-  }, [currency, amount]);
+    const ratio = toDecimal(fxHoldPct || '100').dividedBy(100);
+    return formatCny(roundCny(toDecimal(amount).times(fxRate).times(ratio)));
+  }, [currency, amount, fxHoldPct]);
 
   // --------------------------------------------------------------------------
   // Tab B: DSL 极客算式状态
@@ -148,10 +148,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
       setErrorMsg('请输入有效的交易金额（大于 0）');
       return;
     }
-    if (txType === 'TRANSFER' && accountId === targetAccountId) {
-      setErrorMsg('转账转出与收款账户不能相同');
-      return;
-    }
 
     try {
       setErrorMsg(null);
@@ -166,26 +162,24 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
           ? targetSelection.type === 'PROJECT'
             ? engine.state.projectTags.find((t) => t.id === targetSelection.id)?.name || '专项支出'
             : engine.state.budgetPools.find((p) => p.id === targetSelection.id)?.name || '日常消费'
-          : txType === 'INCOME'
-          ? '日常收入'
-          : '内部资金互转');
+          : '日常收入');
 
       const tx = engine.recordManualTransaction({
         tx_type: txType,
         tx_date: txDate,
-        account_id: accountId,
-        target_account_id: txType === 'TRANSFER' ? targetAccountId : null,
         amount: amount.trim(),
         discount: txType === 'EXPENSE' && discount.trim() ? discount.trim() : '0.00',
         budget_pool_id: budgetPoolId,
         project_tag_id: projTagId,
         merchant_or_note: noteToSave,
         applied_voucher_id:
-          txType === 'EXPENSE' || txType === 'TRANSFER'
+          txType === 'EXPENSE'
             ? selectedVoucherIdVisual
             : null,
         currency,
         hold_amount_cny: holdAmountCnyInput.trim() || undefined,
+        fx_hold_ratio: (Number(fxHoldPct || 100) / 100).toFixed(3),
+        fx_cashback_rate: (Number(fxCashbackPct || 0) / 100).toFixed(4),
       });
 
       triggerSuccess(
@@ -230,12 +224,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
     if (!id) return '-';
     const p = engine.state.budgetPools.find((b) => b.id === id);
     return p ? p.name : id;
-  };
-
-  const getAccountName = (id?: string) => {
-    if (!id) return '-';
-    const a = engine.state.accounts.find((acc) => acc.id === id);
-    return a ? a.name : id;
   };
 
   return (
@@ -351,28 +339,13 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     <TrendingUpRounded fontSize="small" />
                     <span>收入</span>
                   </ToggleButton>
-                  <ToggleButton
-                    value="TRANSFER"
-                    sx={{
-                      px: 2.5,
-                      gap: 0.5,
-                      '&.Mui-selected': {
-                        color: 'secondary.main',
-                        bgcolor: (t) =>
-                          t.palette.mode === 'light' ? '#e0f7fa' : '#00363d',
-                      },
-                    }}
-                  >
-                    <SwapHorizRounded fontSize="small" />
-                    <span>转账 / 还款</span>
-                  </ToggleButton>
                 </ToggleButtonGroup>
               </Box>
 
               {/* 核心金额、立减与日期网格 */}
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
-                  label={txType === 'TRANSFER' ? '转账金额' : '交易金额'}
+                  label={txType === 'INCOME' ? '收入金额' : '交易金额'}
                   type="number"
                   required
                   fullWidth
@@ -443,86 +416,85 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                 )}
               </Stack>
 
-              {/* 外币预授权冻结人民币金额选填 */}
+              {/* 外币预授权与返现参数 */}
               {txType === 'EXPENSE' && currency !== 'CNY' && (
-                <TextField
-                  label="预授权冻结人民币金额 (CNY，选填)"
-                  type="number"
-                  fullWidth
-                  value={holdAmountCnyInput}
-                  onChange={(e) => setHoldAmountCnyInput(e.target.value)}
-                  placeholder={estimatedHoldAmount ? `预估约 ¥${estimatedHoldAmount}` : '0.00'}
-                  slotProps={{
-                    htmlInput: { step: '0.01', min: '0.01' },
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">¥</InputAdornment>
-                      ),
-                    },
-                  }}
-                  helperText={
-                    estimatedHoldAmount
-                      ? `未填则按参考汇率自动折算预估冻结约 ¥${estimatedHoldAmount}`
-                      : '未填则按参考汇率与102%比例自动折算预估冻结金额'
-                  }
-                />
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      label="预授权冻结人民币 (CNY，选填)"
+                      type="number"
+                      fullWidth
+                      value={holdAmountCnyInput}
+                      onChange={(e) => setHoldAmountCnyInput(e.target.value)}
+                      placeholder={estimatedHoldAmount ? `预估约 ¥${estimatedHoldAmount}` : '0.00'}
+                      slotProps={{
+                        htmlInput: { step: '0.01', min: '0.01' },
+                        input: {
+                          startAdornment: (
+                            <InputAdornment position="start">¥</InputAdornment>
+                          ),
+                        },
+                      }}
+                      helperText={
+                        estimatedHoldAmount
+                          ? `未填则按参考汇率自动折算预估冻结约 ¥${estimatedHoldAmount}`
+                          : '未填则按参考汇率与冻结比例自动折算'
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      label="预授权冻结比例 (%)"
+                      type="number"
+                      fullWidth
+                      value={fxHoldPct}
+                      onChange={(e) => setFxHoldPct(e.target.value)}
+                      placeholder="102"
+                      slotProps={{
+                        htmlInput: { step: '0.1', min: '100' },
+                        input: {
+                          endAdornment: (
+                            <InputAdornment position="end">%</InputAdornment>
+                          ),
+                        },
+                      }}
+                      helperText="预估折算冻结比例（如 102% 或 100%）"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 4 }}>
+                    <TextField
+                      label="外币返现比例 (%)"
+                      type="number"
+                      fullWidth
+                      value={fxCashbackPct}
+                      onChange={(e) => setFxCashbackPct(e.target.value)}
+                      placeholder="1"
+                      slotProps={{
+                        htmlInput: { step: '0.01', min: '0' },
+                        input: {
+                          endAdornment: (
+                            <InputAdornment position="end">%</InputAdornment>
+                          ),
+                        },
+                      }}
+                      helperText="预授权及清算时返现比例（如 1%）"
+                    />
+                  </Grid>
+                </Grid>
               )}
 
-              {/* 账户选择与备注 */}
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <TextField
-                  select
-                  fullWidth
-                  label={
-                    txType === 'INCOME'
-                      ? '收款账户'
-                      : txType === 'TRANSFER'
-                      ? '转出/扣款账户'
-                      : '支付/扣款账户'
-                  }
-                  value={accountId}
-                  onChange={(e) => setAccountId(e.target.value)}
-                >
-                  {engine.state.accounts.map((acc) => (
-                    <MenuItem key={acc.id} value={acc.id}>
-                      {acc.name} · 余额 ¥{acc.book_balance}
-                      {acc.account_role === 'CREDIT' ? '（信用卡）' : ''}
-                    </MenuItem>
-                  ))}
-                </TextField>
-
-                {txType === 'TRANSFER' && (
-                  <TextField
-                    select
-                    fullWidth
-                    label="转入/目标清偿账户"
-                    value={targetAccountId}
-                    onChange={(e) => setTargetAccountId(e.target.value)}
-                  >
-                    {engine.state.accounts
-                      .filter((acc) => acc.id !== accountId)
-                      .map((acc) => (
-                        <MenuItem key={acc.id} value={acc.id}>
-                          {acc.name} · 余额 ¥{acc.book_balance}
-                        </MenuItem>
-                      ))}
-                  </TextField>
-                )}
-
-                <TextField
-                  label="商户或消费备注"
-                  fullWidth
-                  value={merchantOrNote}
-                  onChange={(e) => setMerchantOrNote(e.target.value)}
-                  placeholder={
-                    txType === 'EXPENSE'
-                      ? '如：肯德基疯狂星期四 / 超市零食 / 打印费'
-                      : txType === 'INCOME'
-                      ? '如：生活费汇款 / 兼职收入 / 奖学金'
-                      : '如：微信转账到银行卡 / 还花呗'
-                  }
-                />
-              </Stack>
+              {/* 消费备注 */}
+              <TextField
+                label="商户或消费备注"
+                fullWidth
+                value={merchantOrNote}
+                onChange={(e) => setMerchantOrNote(e.target.value)}
+                placeholder={
+                  txType === 'EXPENSE'
+                    ? '如：肯德基疯狂星期四 / 超市零食 / 打印费'
+                    : '如：生活费汇款 / 兼职收入 / 奖学金'
+                }
+              />
 
               {/* 支出专属：支出归属（选择资金池或专项） */}
               {txType === 'EXPENSE' && (
@@ -628,46 +600,12 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                 </TextField>
               )}
 
-              {/* 转账/还款专属：使用还款券抵扣 */}
-              {txType === 'TRANSFER' && (
-                <TextField
-                  select
-                  fullWidth
-                  label="使用还款券抵扣 (可选)"
-                  value={selectedVoucherIdVisual ?? ''}
-                  onChange={(e) =>
-                    setSelectedVoucherIdVisual(
-                      e.target.value ? Number(e.target.value) : null
-                    )
-                  }
-                >
-                  <MenuItem value="">(不使用卡券 / 全额还款)</MenuItem>
-                  {availableVouchers
-                    .filter((v) => v.voucher_type === 'REPAY_COUPON')
-                    .map((v) => {
-                      const isUnderMinSpend =
-                        currentCnyGross > 0 &&
-                        currentCnyGross < Number(v.min_spend);
-                      return (
-                        <MenuItem
-                          key={v.id}
-                          value={v.id}
-                          disabled={isUnderMinSpend}
-                        >
-                          {v.title} · 面值 ¥{v.face_value} (门槛 ¥{v.min_spend})
-                          {isUnderMinSpend ? `（未满 ¥${v.min_spend} 门槛）` : ''}
-                        </MenuItem>
-                      );
-                    })}
-                </TextField>
-              )}
-
               {/* 外币提示 */}
-              {currency !== 'CNY' && (
+              {txType === 'EXPENSE' && currency !== 'CNY' && (
                 <Alert severity="info" sx={{ borderRadius: 3 }}>
                   <strong>外币预授权提示：</strong>已选择 {currency}{' '}
-                  币种。记账后将自动感知外币借记卡并执行 102%
-                  预授权冻结挂起，并在正式账单日前保持 PENDING_HOLD 清算锁定。
+                  币种。记账后将按 {fxHoldPct || 100}% 预授权冻结挂起（预估返现{' '}
+                  {fxCashbackPct || 0}%），待银行正式出账后输入最终人民币金额即可完成清算。
                 </Alert>
               )}
 
@@ -729,7 +667,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     handleDslSubmit();
                   }
                 }}
-                placeholder="输入记账算式，如：午饭 15+3 = 16 #日常饮食 @微信  或  Gemini会员 JPY 720"
+                placeholder="输入记账算式，如：午饭 15+3 = 16 #高频饮食  或  Gemini会员 JPY 720"
                 slotProps={{
                   input: {
                     startAdornment: (
@@ -762,8 +700,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
             {/* 外币符号自动置顶感知 */}
             {preview?.should_wake_fx_account && (
               <Alert severity="info" sx={{ borderRadius: 3 }}>
-                <strong>外币消费自动感知：</strong>已智能唤醒外币借记卡（102%
-                预授权冻结挂起 + 1% 返现自动核算）
+                <strong>外币消费自动感知：</strong>已识别外币消费（自动启用预授权冻结挂起与返现核算）
               </Alert>
             )}
 
@@ -836,8 +773,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     variant="subtitle2"
                     sx={{ fontWeight: 700, color: 'secondary.main' }}
                   >
-                    📊 拆单与满减分摊实时预览（分摊模式: {preview.parsed.allocation_mode === 'PROPORTIONAL' ? '等比分摊' : preview.parsed.allocation_mode === 'PRIMARY_ITEM' ? '主商品抵扣' : '单一分摊'} ·
-                    付款账户: {getAccountName(preview.parsed.account_id)}）
+                    📊 拆单与满减分摊实时预览（分摊模式: {preview.parsed.allocation_mode === 'PROPORTIONAL' ? '等比分摊' : preview.parsed.allocation_mode === 'PRIMARY_ITEM' ? '主商品抵扣' : '单一分摊'}）
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 2, fontSize: '0.85rem' }}>
                     <span>
