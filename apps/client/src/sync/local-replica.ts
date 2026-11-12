@@ -23,6 +23,7 @@ import {
   FixedAssetWithCost,
   RecurringRule,
   SyncOpLogEntry,
+  SyncEntityType,
   SyncConflict,
   HybridLogicalClock,
   mergeOpLogEntries,
@@ -35,7 +36,7 @@ import {
   DEFAULT_PROJECT_TAGS,
 } from '@ledger/core';
 
-export const LOCAL_STORAGE_KEY = 'geek_ledger_local_replica_v1';
+export const LOCAL_STORAGE_KEY = 'geek_ledger_local_replica_v2';
 
 export interface FullSyncBundle {
   nodeId: string;
@@ -364,6 +365,273 @@ export const SEED_MONTHLY_BUDGETS: MonthlyBudget[] = [
   },
 ];
 
+// ----------------------------------------------------------------------------
+// 纯净初始账本种子配置常量（Stage 8 纯净初始化规范）
+// ----------------------------------------------------------------------------
+
+export const CLEAN_SEED_ACCOUNTS: Account[] = [
+  {
+    id: 'ACC_HUABEI',
+    name: '支付宝花呗',
+    account_role: 'CREDIT',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: null,
+    credit_limit: '1500.00',
+    fx_hold_ratio: '1.000',
+    fx_cashback_rate: '0.0000',
+    fx_monthly_cap: null,
+    billing_day: 1,
+    repayment_day: 10,
+    is_default_pay: true,
+    is_folded: false,
+    include_in_networth: true,
+    sort_order: 10,
+  },
+  {
+    id: 'ACC_CC_MAIN',
+    name: '主力信用卡',
+    account_role: 'CREDIT',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: null,
+    credit_limit: '5000.00',
+    fx_hold_ratio: '1.000',
+    fx_cashback_rate: '0.0000',
+    fx_monthly_cap: null,
+    billing_day: 5,
+    repayment_day: 25,
+    is_default_pay: false,
+    is_folded: false,
+    include_in_networth: true,
+    sort_order: 20,
+  },
+  {
+    id: 'ACC_UNION_MAIN',
+    name: '主力银联借记卡',
+    account_role: 'DEBIT_MAIN',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: null,
+    credit_limit: null,
+    fx_hold_ratio: '1.000',
+    fx_cashback_rate: '0.0000',
+    fx_monthly_cap: null,
+    billing_day: null,
+    repayment_day: null,
+    is_default_pay: false,
+    is_folded: false,
+    include_in_networth: true,
+    sort_order: 30,
+  },
+  {
+    id: 'ACC_CAMPUS_CARD',
+    name: '校园饭卡(预充值)',
+    account_role: 'PREPAID',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: null,
+    credit_limit: null,
+    fx_hold_ratio: '1.000',
+    fx_cashback_rate: '0.0000',
+    fx_monthly_cap: null,
+    billing_day: null,
+    repayment_day: null,
+    is_default_pay: false,
+    is_folded: false,
+    include_in_networth: true,
+    sort_order: 40,
+  },
+  {
+    id: 'ACC_MC_DEBIT_A',
+    name: '万事网联借记卡 A',
+    account_role: 'DEBIT_FX',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: null,
+    credit_limit: null,
+    fx_hold_ratio: '1.020',
+    fx_cashback_rate: '0.0100',
+    fx_monthly_cap: '100.00',
+    billing_day: null,
+    repayment_day: null,
+    is_default_pay: false,
+    is_folded: false,
+    include_in_networth: true,
+    sort_order: 50,
+  },
+  {
+    id: 'ACC_MC_DEBIT_B',
+    name: '万事网联借记卡 B',
+    account_role: 'DEBIT_FX',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: null,
+    credit_limit: null,
+    fx_hold_ratio: '1.020',
+    fx_cashback_rate: '0.0100',
+    fx_monthly_cap: '100.00',
+    billing_day: null,
+    repayment_day: null,
+    is_default_pay: false,
+    is_folded: false,
+    include_in_networth: true,
+    sort_order: 60,
+  },
+  {
+    id: 'ACC_ALIPAY_ETF',
+    name: '支付宝指数基金定投',
+    account_role: 'INVESTMENT',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: '0.00',
+    credit_limit: null,
+    fx_hold_ratio: '1.000',
+    fx_cashback_rate: '0.0000',
+    fx_monthly_cap: null,
+    billing_day: null,
+    repayment_day: null,
+    is_default_pay: false,
+    is_folded: false,
+    include_in_networth: true,
+    sort_order: 70,
+  },
+  {
+    id: 'ACC_DORMANT_01',
+    name: '备用低频借记卡(折叠)',
+    account_role: 'DORMANT',
+    currency: 'CNY',
+    initial_balance: '0.00',
+    book_balance: '0.00',
+    frozen_amount: '0.00',
+    market_value: null,
+    credit_limit: null,
+    fx_hold_ratio: '1.000',
+    fx_cashback_rate: '0.0000',
+    fx_monthly_cap: null,
+    billing_day: null,
+    repayment_day: null,
+    is_default_pay: false,
+    is_folded: true,
+    include_in_networth: true,
+    sort_order: 99,
+  },
+];
+
+export const CLEAN_SEED_BUDGET_POOLS: BudgetPool[] = [
+  {
+    id: 'POOL_FIXED',
+    name: '固定刚需与定投池',
+    pool_type: 'FIXED',
+    is_monthly_budget: true,
+    rollover_strategy: 'RESET',
+    description: '房租、话费、游戏月卡、定期定投',
+    sort_order: 10,
+  },
+  {
+    id: 'POOL_DAILY',
+    name: '高频饮食与洗护池',
+    pool_type: 'DAILY',
+    is_monthly_budget: true,
+    rollover_strategy: 'SWEEP_TO_FUND',
+    description: '三餐、零食、水饮、日常洗护等高频动态管控池',
+    sort_order: 20,
+  },
+  {
+    id: 'POOL_FLEX',
+    name: '月度弹性发展池',
+    pool_type: 'FLEX',
+    is_monthly_budget: true,
+    rollover_strategy: 'ACCUMULATE',
+    description: '服饰、日用百货、单片机电路、软件外设、交通资料',
+    sort_order: 30,
+  },
+  {
+    id: 'POOL_EMERGENCY',
+    name: '医疗与突发应急池',
+    pool_type: 'EMERGENCY',
+    is_monthly_budget: true,
+    rollover_strategy: 'ACCUMULATE',
+    description: '纯粹看病买药、突发设备抢修',
+    sort_order: 40,
+  },
+  {
+    id: 'POOL_FUND',
+    name: '年度专项考证基金池',
+    pool_type: 'SINKING_FUND',
+    is_monthly_budget: false,
+    rollover_strategy: 'ACCUMULATE',
+    description: 'JLPT_N2考证、长途差旅跨期专项基金',
+    sort_order: 50,
+  },
+  {
+    id: 'POOL_ASSET',
+    name: '数码大件固定资产库',
+    pool_type: 'CAPITAL_ASSET',
+    is_monthly_budget: false,
+    rollover_strategy: 'ACCUMULATE',
+    description: '手机、机械硬盘等大额固定资产购置',
+    sort_order: 60,
+  },
+];
+
+export const CLEAN_SEED_MONTHLY_BUDGETS: MonthlyBudget[] = [
+  {
+    id: 1,
+    year_month: '2026-11',
+    pool_id: 'POOL_FIXED',
+    base_allocation: '0.00',
+    rollover_from_prev: '0.00',
+    reserved_fixed: '0.00',
+    swept_to_fund: '0.00',
+    note: null,
+  },
+  {
+    id: 2,
+    year_month: '2026-11',
+    pool_id: 'POOL_DAILY',
+    base_allocation: '0.00',
+    rollover_from_prev: '0.00',
+    reserved_fixed: '0.00',
+    swept_to_fund: '0.00',
+    note: null,
+  },
+  {
+    id: 3,
+    year_month: '2026-11',
+    pool_id: 'POOL_FLEX',
+    base_allocation: '0.00',
+    rollover_from_prev: '0.00',
+    reserved_fixed: '0.00',
+    swept_to_fund: '0.00',
+    note: null,
+  },
+  {
+    id: 4,
+    year_month: '2026-11',
+    pool_id: 'POOL_EMERGENCY',
+    base_allocation: '0.00',
+    rollover_from_prev: '0.00',
+    reserved_fixed: '0.00',
+    swept_to_fund: '0.00',
+    note: null,
+  },
+];
+
 export const SEED_VOUCHERS: Voucher[] = [
   {
     id: 1,
@@ -506,7 +774,7 @@ export class LocalLedgerEngine {
     if (loaded) {
       this.state = loaded;
     } else {
-      this.state = this.buildInitialSeed(nodeId, initialSeedOverride);
+      this.state = this.buildCleanInitialState(nodeId, initialSeedOverride);
       this.saveToStorage();
     }
 
@@ -540,14 +808,15 @@ export class LocalLedgerEngine {
   }
 
   // --------------------------------------------------------------------------
-  // 持久化存储
+  // 持久化存储与状态重置
   // --------------------------------------------------------------------------
   private loadFromStorage(): LocalReplicaState | null {
     try {
       const raw = getStorage().getItem(LOCAL_STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.version === 1) {
+      if (parsed && (parsed.version === 2 || parsed.version === 1)) {
+        parsed.version = 2;
         return parsed;
       }
     } catch (e) {
@@ -565,8 +834,11 @@ export class LocalLedgerEngine {
     this.notify();
   }
 
-  public resetToSeed(): void {
-    this.state = this.buildInitialSeed(this.state.nodeId);
+  /**
+   * 重置为纯净账本状态（Stage 8 核心规范：0 余额账户、无默认优惠券、无默认固定资产、无交易流水）
+   */
+  public resetToCleanState(): void {
+    this.state = this.buildCleanInitialState(this.state.nodeId);
     let maxHlc: string | undefined;
     for (const op of this.state.oplogs) {
       if (!maxHlc || HybridLogicalClock.compare(op.hlc, maxHlc) > 0) {
@@ -578,12 +850,61 @@ export class LocalLedgerEngine {
     this.saveToStorage();
   }
 
-  private buildInitialSeed(
+  /**
+   * 加载演示数据（包含花呗负债、主力银联卡、万事达外币卡、立减金与 iPhone 固定资产）
+   */
+  public loadDemoData(): void {
+    this.state = this.buildDemoInitialSeed(this.state.nodeId);
+    let maxHlc: string | undefined;
+    for (const op of this.state.oplogs) {
+      if (!maxHlc || HybridLogicalClock.compare(op.hlc, maxHlc) > 0) {
+        maxHlc = op.hlc;
+      }
+    }
+    this.hlc = new HybridLogicalClock(this.state.nodeId, maxHlc);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+  }
+
+  /**
+   * 别名保持向后兼容：所有旧单元测试调用 resetToSeed() 时继续加载演示数据
+   */
+  public resetToSeed(): void {
+    this.loadDemoData();
+  }
+
+  public buildCleanInitialState(
     nodeId: string,
     override?: Partial<LocalReplicaState>
   ): LocalReplicaState {
     return {
-      version: 1,
+      version: 2,
+      nodeId,
+      isOfflineMode: false,
+      serverEpochId: null,
+      accounts: JSON.parse(JSON.stringify(CLEAN_SEED_ACCOUNTS)),
+      budgetPools: JSON.parse(JSON.stringify(CLEAN_SEED_BUDGET_POOLS)),
+      categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
+      monthlyBudgets: JSON.parse(JSON.stringify(CLEAN_SEED_MONTHLY_BUDGETS)),
+      projectTags: [],
+      vouchers: [],
+      fixedAssets: [],
+      recurringRules: [],
+      transactions: [],
+      oplogs: [],
+      pendingSyncOps: [],
+      conflicts: [],
+      lastSyncAt: null,
+      ...override,
+    };
+  }
+
+  public buildDemoInitialSeed(
+    nodeId: string,
+    override?: Partial<LocalReplicaState>
+  ): LocalReplicaState {
+    return {
+      version: 2,
       nodeId,
       isOfflineMode: false,
       serverEpochId: null,
@@ -602,6 +923,34 @@ export class LocalLedgerEngine {
       lastSyncAt: null,
       ...override,
     };
+  }
+
+  public buildInitialSeed(
+    nodeId: string,
+    override?: Partial<LocalReplicaState>
+  ): LocalReplicaState {
+    return this.buildDemoInitialSeed(nodeId, override);
+  }
+
+  public appendOpLog(
+    entityType: SyncEntityType,
+    entityId: string,
+    opType: 'UPSERT' | 'DELETE',
+    payload: unknown
+  ): SyncOpLogEntry {
+    const hlc = this.hlc.now();
+    const op: SyncOpLogEntry = {
+      hlc,
+      node_id: this.state.nodeId,
+      entity_type: entityType,
+      entity_id: entityId,
+      op_type: opType,
+      payload_json: typeof payload === 'string' ? payload : JSON.stringify(payload),
+      created_at: new Date().toISOString(),
+    };
+    this.state.oplogs.push(op);
+    this.state.pendingSyncOps.push(op);
+    return op;
   }
 
   // --------------------------------------------------------------------------
@@ -866,6 +1215,828 @@ export class LocalLedgerEngine {
     this.saveToStorage();
 
     return txAggregate;
+  }
+
+  // --------------------------------------------------------------------------
+  // Stage 8: 可视化表单手工记账 (无需编写 DSL)
+  // --------------------------------------------------------------------------
+  public recordManualTransaction(params: {
+    tx_type: 'EXPENSE' | 'INCOME' | 'TRANSFER';
+    tx_date?: string;
+    account_id: string;
+    target_account_id?: string | null;
+    amount: string; // gross amount (or transfer amount)
+    discount?: string; // optional platform/payment discount
+    category_id?: string;
+    budget_pool_id?: string;
+    project_tag_id?: string | null;
+    merchant_or_note: string;
+    applied_voucher_id?: number | null;
+    currency?: string; // default 'CNY'; if 'USD' etc., support hold_amount_cny or 102% hold on DEBIT_FX
+    hold_amount_cny?: string;
+  }): TransactionAggregate {
+    const acc = this.state.accounts.find((a) => a.id === params.account_id);
+    if (!acc) {
+      throw new Error(`Account "${params.account_id}" not found`);
+    }
+
+    const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const nowIso = new Date().toISOString();
+    const effectiveDate = params.tx_date ?? nowIso.slice(0, 10);
+    const currency = params.currency ?? 'CNY';
+    const isFx = currency !== 'CNY';
+
+    let totalGross = formatCny(params.amount);
+    let paymentDiscount = formatCny(params.discount ?? '0.00');
+    let platformDiscount = '0.00';
+    let totalNet = formatCny(
+      Decimal.max(0, toDecimal(totalGross).minus(toDecimal(paymentDiscount)))
+    );
+    let items: TransactionItem[] = [];
+    let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
+    let holdAmountCny = '0.00';
+
+    if (params.tx_type === 'EXPENSE') {
+      const catId = params.category_id ?? (this.state.categories[0]?.id ?? 'CAT_FOOD');
+      const cat = this.state.categories.find((c) => c.id === catId);
+      const poolId = params.budget_pool_id ?? (cat?.default_pool_id ?? 'POOL_DAILY');
+
+      if (params.applied_voucher_id != null) {
+        const v = this.state.vouchers.find(
+          (it) => it.id === params.applied_voucher_id && it.status === 'AVAILABLE'
+        );
+        if (v) {
+          const cashPaid = Decimal.max(
+            0,
+            toDecimal(params.amount)
+              .minus(toDecimal(params.discount ?? 0))
+              .minus(toDecimal(v.face_value))
+          );
+          const splitInputs: SplitItemInput[] = [
+            {
+              name: params.merchant_or_note,
+              gross: totalGross,
+              category_id: catId,
+              budget_pool_id: poolId,
+              project_tag_id: params.project_tag_id ?? null,
+              is_primary: true,
+            },
+          ];
+          const alloc = computeOrderAllocation(
+            splitInputs,
+            cashPaid,
+            'SINGLE',
+            {
+              face_value: v.face_value,
+              acquire_cost: v.acquire_cost,
+              voucher_type: v.voucher_type,
+            }
+          );
+          totalGross = alloc.total_gross;
+          paymentDiscount = alloc.total_discount;
+          totalNet = alloc.total_net;
+          items = [
+            {
+              id: 1,
+              header_id: txId,
+              item_name: params.merchant_or_note,
+              category_id: catId,
+              budget_pool_id: poolId,
+              project_tag_id: params.project_tag_id ?? null,
+              item_gross: alloc.items[0].gross,
+              allocated_discount: alloc.items[0].allocated_discount,
+              item_net: alloc.items[0].net,
+              is_primary_item: true,
+              raw_formula_expr: null,
+            },
+          ];
+        }
+      }
+
+      if (items.length === 0) {
+        items = [
+          {
+            id: 1,
+            header_id: txId,
+            item_name: params.merchant_or_note,
+            category_id: catId,
+            budget_pool_id: poolId,
+            project_tag_id: params.project_tag_id ?? null,
+            item_gross: totalGross,
+            allocated_discount: paymentDiscount,
+            item_net: totalNet,
+            is_primary_item: true,
+            raw_formula_expr: null,
+          },
+        ];
+      }
+
+      if (isFx) {
+        holdAmountCny = params.hold_amount_cny
+          ? formatCny(params.hold_amount_cny)
+          : formatCny(
+              roundCny(
+                toDecimal(totalNet).times(toDecimal(acc.fx_hold_ratio || '1.020'))
+              )
+            );
+      }
+    } else if (params.tx_type === 'TRANSFER') {
+      let discountDec = toDecimal(params.discount ?? 0);
+      if (params.applied_voucher_id != null) {
+        const v = this.state.vouchers.find(
+          (it) => it.id === params.applied_voucher_id && it.status === 'AVAILABLE'
+        );
+        if (v) {
+          discountDec = discountDec.plus(toDecimal(v.face_value));
+        }
+      }
+      paymentDiscount = formatCny(discountDec);
+      totalNet = formatCny(
+        Decimal.max(0, toDecimal(totalGross).minus(discountDec))
+      );
+    } else if (params.tx_type === 'INCOME') {
+      paymentDiscount = '0.00';
+      totalNet = totalGross;
+    }
+
+    const hlc = this.hlc.now();
+    const header: TransactionHeader = {
+      id: txId,
+      tx_date: effectiveDate,
+      tx_timestamp: nowIso,
+      tx_type: params.tx_type,
+      account_id: params.account_id,
+      target_account_id: params.target_account_id ?? null,
+      total_gross: totalGross,
+      platform_discount: platformDiscount,
+      payment_discount: paymentDiscount,
+      total_net: totalNet,
+      allocation_mode: 'SINGLE',
+      original_currency: currency,
+      original_amount: isFx ? formatCny(params.amount) : null,
+      exchange_rate: isFx ? null : '1.000000',
+      settlement_status: settlementStatus,
+      hold_amount_cny: holdAmountCny,
+      settled_at: settlementStatus === 'SETTLED' ? nowIso : null,
+      raw_input_text: `手动录入：${params.merchant_or_note} ${params.amount}`,
+      merchant_or_note: params.merchant_or_note,
+      applied_voucher_id: params.applied_voucher_id ?? null,
+      is_deleted: false,
+      updated_hlc: hlc,
+      created_at: nowIso,
+    };
+
+    const txAggregate: TransactionAggregate = {
+      header,
+      items,
+      appliedVoucherId: params.applied_voucher_id ?? null,
+    };
+
+    this.state.transactions.unshift(txAggregate);
+
+    if (params.applied_voucher_id != null) {
+      const v = this.state.vouchers.find(
+        (it) => it.id === params.applied_voucher_id
+      );
+      if (v) {
+        v.status = 'USED';
+        v.used_tx_id = txId;
+        this.appendOpLog('VOUCHER', String(v.id), 'UPSERT', v);
+      }
+    }
+
+    this.appendOpLog('TRANSACTION', txId, 'UPSERT', txAggregate);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+
+    return txAggregate;
+  }
+
+  // --------------------------------------------------------------------------
+  // Stage 8: 交易编辑与删除 (支持优惠券自动回退与全账本重算)
+  // --------------------------------------------------------------------------
+  public updateTransaction(
+    txId: string,
+    patch: {
+      tx_date?: string;
+      account_id?: string;
+      target_account_id?: string | null;
+      total_gross?: string;
+      payment_discount?: string;
+      total_net?: string;
+      merchant_or_note?: string;
+      category_id?: string;
+      budget_pool_id?: string;
+      project_tag_id?: string | null;
+    }
+  ): TransactionAggregate {
+    const tx = this.state.transactions.find((t) => t.header.id === txId);
+    if (!tx) {
+      throw new Error(`Transaction "${txId}" not found`);
+    }
+
+    const h = tx.header;
+    if (patch.tx_date !== undefined) h.tx_date = patch.tx_date;
+    if (patch.account_id !== undefined) h.account_id = patch.account_id;
+    if (patch.target_account_id !== undefined) h.target_account_id = patch.target_account_id;
+    if (patch.merchant_or_note !== undefined) h.merchant_or_note = patch.merchant_or_note;
+
+    if (patch.total_gross !== undefined) {
+      h.total_gross = formatCny(patch.total_gross);
+    }
+    if (patch.payment_discount !== undefined) {
+      h.payment_discount = formatCny(patch.payment_discount);
+    }
+    if (patch.total_net !== undefined) {
+      h.total_net = formatCny(patch.total_net);
+    } else if (patch.total_gross !== undefined || patch.payment_discount !== undefined) {
+      h.total_net = formatCny(
+        Decimal.max(0, toDecimal(h.total_gross).minus(toDecimal(h.payment_discount)))
+      );
+    }
+
+    if (tx.items.length > 0) {
+      const primaryItem = tx.items.find((it) => it.is_primary_item) ?? tx.items[0];
+      if (patch.merchant_or_note !== undefined) {
+        primaryItem.item_name = patch.merchant_or_note;
+      }
+      if (patch.total_gross !== undefined) {
+        primaryItem.item_gross = h.total_gross;
+      }
+      if (patch.payment_discount !== undefined) {
+        primaryItem.allocated_discount = h.payment_discount;
+      }
+      primaryItem.item_net = h.total_net;
+      if (patch.category_id !== undefined) {
+        primaryItem.category_id = patch.category_id;
+      }
+      if (patch.budget_pool_id !== undefined) {
+        primaryItem.budget_pool_id = patch.budget_pool_id;
+      }
+      if (patch.project_tag_id !== undefined) {
+        primaryItem.project_tag_id = patch.project_tag_id;
+      }
+    }
+
+    const hlc = this.hlc.now();
+    h.updated_hlc = hlc;
+
+    this.appendOpLog('TRANSACTION', txId, 'UPSERT', tx);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+
+    return tx;
+  }
+
+  public deleteTransaction(txId: string): TransactionAggregate {
+    const tx = this.state.transactions.find((t) => t.header.id === txId);
+    if (!tx) {
+      throw new Error(`Transaction "${txId}" not found`);
+    }
+
+    tx.header.is_deleted = true;
+    const hlc = this.hlc.now();
+    tx.header.updated_hlc = hlc;
+
+    if (tx.header.applied_voucher_id != null) {
+      const v = this.state.vouchers.find((it) => it.id === tx.header.applied_voucher_id);
+      if (v) {
+        v.status = 'AVAILABLE';
+        v.used_tx_id = null;
+        this.appendOpLog('VOUCHER', String(v.id), 'UPSERT', v);
+      }
+    }
+
+    this.appendOpLog('TRANSACTION', txId, 'UPSERT', tx);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+
+    return tx;
+  }
+
+  // --------------------------------------------------------------------------
+  // Stage 8: 账户矩阵 CRUD 与余额校准
+  // --------------------------------------------------------------------------
+  public upsertAccount(
+    account: Partial<Account> & { name: string; account_role: AccountRole }
+  ): Account {
+    let target = this.state.accounts.find((a) => a.id === account.id);
+
+    if (target) {
+      target.name = account.name;
+      target.account_role = account.account_role;
+      if (account.currency !== undefined) target.currency = account.currency;
+      if (account.credit_limit !== undefined) {
+        target.credit_limit = account.credit_limit ? formatCny(account.credit_limit) : null;
+      }
+      if (account.billing_day !== undefined) target.billing_day = account.billing_day;
+      if (account.repayment_day !== undefined) target.repayment_day = account.repayment_day;
+      if (account.fx_hold_ratio !== undefined) target.fx_hold_ratio = account.fx_hold_ratio;
+      if (account.fx_cashback_rate !== undefined) target.fx_cashback_rate = account.fx_cashback_rate;
+      if (account.fx_monthly_cap !== undefined) {
+        target.fx_monthly_cap = account.fx_monthly_cap ? formatCny(account.fx_monthly_cap) : null;
+      }
+      if (account.is_default_pay !== undefined) target.is_default_pay = Boolean(account.is_default_pay);
+      if (account.is_folded !== undefined) target.is_folded = Boolean(account.is_folded);
+      if (account.include_in_networth !== undefined) {
+        target.include_in_networth = Boolean(account.include_in_networth);
+      }
+      if (account.initial_balance !== undefined) {
+        target.initial_balance = formatCny(account.initial_balance);
+      }
+      if (account.market_value !== undefined) {
+        target.market_value = account.market_value ? formatCny(account.market_value) : null;
+      }
+      if (account.sort_order !== undefined) target.sort_order = account.sort_order;
+    } else {
+      const id = account.id || `ACC_CUSTOM_${Date.now()}`;
+      const initBal = formatCny(account.initial_balance ?? '0.00');
+      target = {
+        id,
+        name: account.name,
+        account_role: account.account_role,
+        currency: account.currency ?? 'CNY',
+        initial_balance: initBal,
+        book_balance: initBal,
+        frozen_amount: '0.00',
+        market_value: account.market_value
+          ? formatCny(account.market_value)
+          : account.account_role === 'INVESTMENT'
+            ? '0.00'
+            : null,
+        credit_limit: account.credit_limit ? formatCny(account.credit_limit) : null,
+        fx_hold_ratio: account.fx_hold_ratio ?? (account.account_role === 'DEBIT_FX' ? '1.020' : '1.000'),
+        fx_cashback_rate: account.fx_cashback_rate ?? (account.account_role === 'DEBIT_FX' ? '0.0100' : '0.0000'),
+        fx_monthly_cap: account.fx_monthly_cap ? formatCny(account.fx_monthly_cap) : null,
+        billing_day: account.billing_day ?? null,
+        repayment_day: account.repayment_day ?? null,
+        is_default_pay: Boolean(account.is_default_pay),
+        is_folded: Boolean(account.is_folded),
+        include_in_networth: account.include_in_networth ?? true,
+        sort_order: account.sort_order ?? 100,
+      };
+      this.state.accounts.push(target);
+    }
+
+    if (account.is_default_pay) {
+      for (const a of this.state.accounts) {
+        if (a.id !== target.id) {
+          a.is_default_pay = false;
+        }
+      }
+    }
+
+    target.updated_hlc = this.hlc.now();
+    this.appendOpLog('ACCOUNT', target.id, 'UPSERT', target);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+
+    return target;
+  }
+
+  public calibrateAccountBalance(
+    accountId: string,
+    targetBookBalance: string
+  ): Account {
+    const acc = this.state.accounts.find((a) => a.id === accountId);
+    if (!acc) {
+      throw new Error(`Account "${accountId}" not found`);
+    }
+
+    const delta = toDecimal(targetBookBalance).minus(toDecimal(acc.book_balance));
+    acc.initial_balance = formatCny(toDecimal(acc.initial_balance ?? 0).plus(delta));
+    acc.updated_hlc = this.hlc.now();
+
+    this.appendOpLog('ACCOUNT', acc.id, 'UPSERT', acc);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+
+    return acc;
+  }
+
+  public deleteAccount(accountId: string): void {
+    const hasActiveTx = this.state.transactions.some(
+      (tx) =>
+        !tx.header.is_deleted &&
+        (tx.header.account_id === accountId || tx.header.target_account_id === accountId)
+    );
+
+    if (hasActiveTx) {
+      throw new Error('账户存在关联交易流水，无法直接删除。请先清理或归档相关交易！');
+    }
+
+    const idx = this.state.accounts.findIndex((a) => a.id === accountId);
+    if (idx !== -1) {
+      this.state.accounts.splice(idx, 1);
+      this.appendOpLog('ACCOUNT', accountId, 'DELETE', { id: accountId });
+      this.saveToStorage();
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Stage 8: 预算池与月度分配 CRUD
+  // --------------------------------------------------------------------------
+  public upsertBudgetPool(
+    pool: Partial<BudgetPool> & { name: string; base_allocation?: string }
+  ): BudgetPool {
+    let target = this.state.budgetPools.find((p) => p.id === pool.id);
+
+    if (target) {
+      target.name = pool.name;
+      if (pool.pool_type !== undefined) target.pool_type = pool.pool_type;
+      if (pool.is_monthly_budget !== undefined) target.is_monthly_budget = pool.is_monthly_budget;
+      if (pool.rollover_strategy !== undefined) target.rollover_strategy = pool.rollover_strategy;
+      if (pool.description !== undefined) target.description = pool.description;
+      if (pool.sort_order !== undefined) target.sort_order = pool.sort_order;
+    } else {
+      const id = pool.id || `POOL_CUSTOM_${Date.now()}`;
+      target = {
+        id,
+        name: pool.name,
+        pool_type: pool.pool_type ?? 'FLEX',
+        is_monthly_budget: pool.is_monthly_budget ?? true,
+        rollover_strategy: pool.rollover_strategy ?? 'ACCUMULATE',
+        description: pool.description ?? null,
+        sort_order: pool.sort_order ?? 100,
+      };
+      this.state.budgetPools.push(target);
+    }
+
+    if (target.is_monthly_budget && pool.base_allocation !== undefined) {
+      this.upsertMonthlyBudget({
+        year_month: '2026-11',
+        pool_id: target.id,
+        base_allocation: pool.base_allocation,
+      });
+    }
+
+    this.appendOpLog('BUDGET_POOL', target.id, 'UPSERT', target);
+    this.saveToStorage();
+
+    return target;
+  }
+
+  public deleteBudgetPool(poolId: string): void {
+    const inCategories = this.state.categories.some((c) => c.default_pool_id === poolId);
+    const inItems = this.state.transactions.some(
+      (tx) => !tx.header.is_deleted && tx.items.some((it) => it.budget_pool_id === poolId)
+    );
+
+    if (inCategories || inItems) {
+      throw new Error('预算池正在被分类或交易使用，无法直接删除！请先重新分配相关分类或交易。');
+    }
+
+    const idx = this.state.budgetPools.findIndex((p) => p.id === poolId);
+    if (idx !== -1) {
+      this.state.budgetPools.splice(idx, 1);
+      this.state.monthlyBudgets = this.state.monthlyBudgets.filter((b) => b.pool_id !== poolId);
+      this.appendOpLog('BUDGET_POOL', poolId, 'DELETE', { id: poolId });
+      this.saveToStorage();
+    }
+  }
+
+  public upsertMonthlyBudget(params: {
+    year_month: string;
+    pool_id: string;
+    base_allocation: string;
+    rollover_from_prev?: string;
+    note?: string | null;
+  }): MonthlyBudget {
+    let target = this.state.monthlyBudgets.find(
+      (b) => b.year_month === params.year_month && b.pool_id === params.pool_id
+    );
+
+    if (target) {
+      target.base_allocation = formatCny(params.base_allocation);
+      if (params.rollover_from_prev !== undefined) {
+        target.rollover_from_prev = formatCny(params.rollover_from_prev);
+      }
+      if (params.note !== undefined) {
+        target.note = params.note;
+      }
+    } else {
+      const nextId =
+        this.state.monthlyBudgets.reduce((max, b) => Math.max(max, b.id), 0) + 1;
+      target = {
+        id: nextId,
+        year_month: params.year_month,
+        pool_id: params.pool_id,
+        base_allocation: formatCny(params.base_allocation),
+        rollover_from_prev: formatCny(params.rollover_from_prev ?? '0.00'),
+        reserved_fixed: '0.00',
+        swept_to_fund: '0.00',
+        note: params.note ?? null,
+      };
+      this.state.monthlyBudgets.push(target);
+    }
+
+    this.appendOpLog('MONTHLY_BUDGET', `${params.year_month}:${params.pool_id}`, 'UPSERT', target);
+    this.saveToStorage();
+
+    return target;
+  }
+
+  // --------------------------------------------------------------------------
+  // Stage 8: 商品分类 CRUD
+  // --------------------------------------------------------------------------
+  public upsertCategory(
+    cat: Partial<Category> & { name: string; default_pool_id: string; icon?: string }
+  ): Category {
+    let target = this.state.categories.find((c) => c.id === cat.id);
+
+    if (target) {
+      target.name = cat.name;
+      target.default_pool_id = cat.default_pool_id;
+      if (cat.parent_id !== undefined) target.parent_id = cat.parent_id;
+      if (cat.icon_name !== undefined || cat.icon !== undefined) {
+        target.icon_name = cat.icon_name ?? cat.icon ?? null;
+      }
+      if (cat.keywords !== undefined) target.keywords = cat.keywords;
+      if (cat.sort_order !== undefined) target.sort_order = cat.sort_order;
+    } else {
+      const id = cat.id || `CAT_CUSTOM_${Date.now()}`;
+      target = {
+        id,
+        name: cat.name,
+        default_pool_id: cat.default_pool_id,
+        parent_id: cat.parent_id ?? null,
+        icon_name: cat.icon_name ?? cat.icon ?? 'tag',
+        keywords: cat.keywords ?? null,
+        sort_order: cat.sort_order ?? 100,
+      };
+      this.state.categories.push(target);
+    }
+
+    this.appendOpLog('CATEGORY', target.id, 'UPSERT', target);
+    this.saveToStorage();
+
+    return target;
+  }
+
+  public deleteCategory(categoryId: string): void {
+    const inUse = this.state.transactions.some(
+      (tx) => !tx.header.is_deleted && tx.items.some((it) => it.category_id === categoryId)
+    );
+
+    if (inUse) {
+      throw new Error('分类已被交易流水引用，无法直接删除！');
+    }
+
+    const idx = this.state.categories.findIndex((c) => c.id === categoryId);
+    if (idx !== -1) {
+      this.state.categories.splice(idx, 1);
+      this.appendOpLog('CATEGORY', categoryId, 'DELETE', { id: categoryId });
+      this.saveToStorage();
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Stage 8: 心愿目标 / 跨期专项立项 CRUD
+  // --------------------------------------------------------------------------
+  public upsertProjectTag(tag: Partial<ProjectTag> & { name: string }): ProjectTag {
+    let target = this.state.projectTags.find(
+      (t) => (tag.id && t.id === tag.id) || t.name === tag.name
+    );
+
+    if (target) {
+      target.name = tag.name;
+      if (tag.tag_type !== undefined) target.tag_type = tag.tag_type;
+      if (tag.target_budget !== undefined) {
+        target.target_budget = tag.target_budget ? formatCny(tag.target_budget) : null;
+      }
+      if (tag.linked_pool_id !== undefined) target.linked_pool_id = tag.linked_pool_id;
+      if (tag.is_active !== undefined) target.is_active = Boolean(tag.is_active);
+      if (tag.start_date !== undefined) target.start_date = tag.start_date;
+      if (tag.end_date !== undefined) target.end_date = tag.end_date;
+    } else {
+      const id = tag.id || `TAG_CUSTOM_${Date.now()}`;
+      target = {
+        id,
+        name: tag.name,
+        tag_type: tag.tag_type ?? 'PROJECT',
+        target_budget: tag.target_budget ? formatCny(tag.target_budget) : null,
+        linked_pool_id: tag.linked_pool_id ?? null,
+        is_active: tag.is_active ?? true,
+        start_date: tag.start_date ?? null,
+        end_date: tag.end_date ?? null,
+        created_at: new Date().toISOString(),
+      };
+      this.state.projectTags.push(target);
+    }
+
+    this.appendOpLog('PROJECT_TAG', target.id, 'UPSERT', target);
+    this.saveToStorage();
+
+    return target;
+  }
+
+  public deleteProjectTag(tagId: string): void {
+    const inUse = this.state.transactions.some(
+      (tx) => !tx.header.is_deleted && tx.items.some((it) => it.project_tag_id === tagId)
+    );
+
+    if (inUse) {
+      throw new Error('专项标签/心愿已被交易流水引用，无法直接删除！');
+    }
+
+    const idx = this.state.projectTags.findIndex((t) => t.id === tagId);
+    if (idx !== -1) {
+      this.state.projectTags.splice(idx, 1);
+      this.appendOpLog('PROJECT_TAG', tagId, 'DELETE', { id: tagId });
+      this.saveToStorage();
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Stage 8: 虚拟卡包 (免费/有偿) 与周期性规则 CRUD
+  // --------------------------------------------------------------------------
+  public upsertVoucher(params: {
+    id?: number;
+    title: string;
+    voucher_type: VoucherType;
+    face_value: string;
+    acquire_cost: string;
+    min_spend: string;
+    expire_date?: string | null;
+    status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
+    accountId?: string;
+  }): { voucher: Voucher; tx?: TransactionAggregate } {
+    if (!params.id && Number(params.acquire_cost) > 0 && params.accountId) {
+      return this.buyVoucher({
+        title: params.title,
+        voucher_type: params.voucher_type,
+        face_value: params.face_value,
+        acquire_cost: params.acquire_cost,
+        min_spend: params.min_spend,
+        accountId: params.accountId,
+        expire_date: params.expire_date,
+      });
+    }
+
+    if (params.id) {
+      const v = this.state.vouchers.find((it) => it.id === params.id);
+      if (!v) {
+        throw new Error(`Voucher "${params.id}" not found`);
+      }
+      v.title = params.title;
+      v.voucher_type = params.voucher_type;
+      v.face_value = formatCny(params.face_value);
+      v.acquire_cost = formatCny(params.acquire_cost ?? '0.00');
+      v.min_spend = formatCny(params.min_spend ?? '0.00');
+      if (params.expire_date !== undefined) v.expire_date = params.expire_date;
+      if (params.status !== undefined) v.status = params.status;
+
+      this.appendOpLog('VOUCHER', String(v.id), 'UPSERT', v);
+      this.recalculateAllBalances();
+      this.saveToStorage();
+      return { voucher: v };
+    }
+
+    const nextId =
+      this.state.vouchers.reduce((max, it) => Math.max(max, it.id), 0) + 1;
+    const newV: Voucher = {
+      id: nextId,
+      title: params.title,
+      voucher_type: params.voucher_type,
+      face_value: formatCny(params.face_value),
+      acquire_cost: formatCny(params.acquire_cost ?? '0.00'),
+      min_spend: formatCny(params.min_spend ?? '0.00'),
+      status: params.status ?? 'AVAILABLE',
+      purchase_tx_id: null,
+      used_tx_id: null,
+      expire_date: params.expire_date ?? '2026-12-31',
+      created_at: new Date().toISOString(),
+    };
+    this.state.vouchers.unshift(newV);
+
+    this.appendOpLog('VOUCHER', String(newV.id), 'UPSERT', newV);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+
+    return { voucher: newV };
+  }
+
+  public deleteVoucher(id: number): void {
+    const idx = this.state.vouchers.findIndex((v) => v.id === id);
+    if (idx !== -1) {
+      const v = this.state.vouchers[idx];
+      if (v.purchase_tx_id) {
+        const pTx = this.state.transactions.find((t) => t.header.id === v.purchase_tx_id);
+        if (pTx) {
+          pTx.header.is_deleted = true;
+          pTx.header.updated_hlc = this.hlc.now();
+          this.appendOpLog('TRANSACTION', pTx.header.id, 'UPSERT', pTx);
+        }
+      }
+      this.state.vouchers.splice(idx, 1);
+      this.appendOpLog('VOUCHER', String(id), 'DELETE', { id });
+      this.recalculateAllBalances();
+      this.saveToStorage();
+    }
+  }
+
+  public upsertRecurringRule(
+    rule: Partial<RecurringRule> & { title: string; amount: string; account_id: string }
+  ): RecurringRule {
+    let target = this.state.recurringRules.find((r) => r.id === rule.id);
+
+    if (target) {
+      target.title = rule.title;
+      target.amount = formatCny(rule.amount);
+      target.account_id = rule.account_id;
+      if (rule.rule_type !== undefined) target.rule_type = rule.rule_type;
+      if (rule.cron_cycle !== undefined) target.cron_cycle = rule.cron_cycle;
+      if (rule.trigger_day !== undefined) target.trigger_day = rule.trigger_day;
+      if (rule.currency !== undefined) target.currency = rule.currency;
+      if (rule.target_account_id !== undefined) target.target_account_id = rule.target_account_id;
+      if (rule.category_id !== undefined) target.category_id = rule.category_id;
+      if (rule.budget_pool_id !== undefined) target.budget_pool_id = rule.budget_pool_id;
+      if (rule.auto_reserve_budget !== undefined) {
+        target.auto_reserve_budget = Boolean(rule.auto_reserve_budget);
+      }
+      if (rule.is_active !== undefined) target.is_active = Boolean(rule.is_active);
+    } else {
+      const nextId =
+        this.state.recurringRules.reduce((max, r) => Math.max(max, r.id), 0) + 1;
+      target = {
+        id: nextId,
+        title: rule.title,
+        rule_type: rule.rule_type ?? 'FIXED_EXPENSE',
+        cron_cycle: rule.cron_cycle ?? 'MONTHLY',
+        trigger_day: rule.trigger_day ?? 1,
+        currency: rule.currency ?? 'CNY',
+        amount: formatCny(rule.amount),
+        account_id: rule.account_id,
+        target_account_id: rule.target_account_id ?? null,
+        category_id: rule.category_id ?? null,
+        budget_pool_id: rule.budget_pool_id ?? null,
+        auto_reserve_budget: rule.auto_reserve_budget ?? true,
+        is_active: rule.is_active ?? true,
+      };
+      this.state.recurringRules.push(target);
+    }
+
+    this.appendOpLog('RECURRING_RULE', String(target.id), 'UPSERT', target);
+    this.saveToStorage();
+
+    return target;
+  }
+
+  public deleteRecurringRule(id: number): void {
+    const idx = this.state.recurringRules.findIndex((r) => r.id === id);
+    if (idx !== -1) {
+      this.state.recurringRules.splice(idx, 1);
+      this.appendOpLog('RECURRING_RULE', String(id), 'DELETE', { id });
+      this.saveToStorage();
+    }
+  }
+
+  public executeRecurringRule(
+    id: number,
+    txDate?: string
+  ): TransactionAggregate {
+    const rule = this.state.recurringRules.find((r) => r.id === id);
+    if (!rule) {
+      throw new Error(`Recurring rule "${id}" not found`);
+    }
+
+    if (rule.rule_type === 'AUTO_INVEST') {
+      return this.recordManualTransaction({
+        tx_type: 'TRANSFER',
+        tx_date: txDate,
+        account_id: rule.account_id,
+        target_account_id: rule.target_account_id,
+        amount: rule.amount,
+        category_id: rule.category_id ?? undefined,
+        budget_pool_id: rule.budget_pool_id ?? 'POOL_FIXED',
+        merchant_or_note: rule.title,
+        currency: rule.currency,
+      });
+    }
+
+    if (rule.rule_type === 'FX_SUBSCRIPTION') {
+      return this.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: txDate,
+        account_id: rule.account_id,
+        amount: rule.amount,
+        category_id: rule.category_id ?? 'CAT_DIGITAL_SUB',
+        budget_pool_id: rule.budget_pool_id ?? 'POOL_FLEX',
+        merchant_or_note: rule.title,
+        currency: rule.currency,
+      });
+    }
+
+    return this.recordManualTransaction({
+      tx_type: 'EXPENSE',
+      tx_date: txDate,
+      account_id: rule.account_id,
+      amount: rule.amount,
+      category_id: rule.category_id ?? 'CAT_TELECOM',
+      budget_pool_id: rule.budget_pool_id ?? 'POOL_FIXED',
+      merchant_or_note: rule.title,
+      currency: rule.currency,
+    });
   }
 
   // --------------------------------------------------------------------------
@@ -1456,6 +2627,24 @@ export class LocalLedgerEngine {
         if (entityType === 'TRANSACTION') {
           const t = this.state.transactions.find((tx) => tx.header.id === entityId);
           if (t) t.header.is_deleted = true;
+        } else if (entityType === 'ACCOUNT') {
+          this.state.accounts = this.state.accounts.filter((a) => a.id !== entityId);
+        } else if (entityType === 'VOUCHER') {
+          this.state.vouchers = this.state.vouchers.filter((v) => String(v.id) !== entityId);
+        } else if (entityType === 'BUDGET_POOL') {
+          this.state.budgetPools = this.state.budgetPools.filter((b) => b.id !== entityId);
+        } else if (entityType === 'MONTHLY_BUDGET' || entityType === 'BUDGET') {
+          this.state.monthlyBudgets = this.state.monthlyBudgets.filter(
+            (b) => `${b.year_month}:${b.pool_id}` !== entityId && String(b.id) !== entityId
+          );
+        } else if (entityType === 'CATEGORY') {
+          this.state.categories = this.state.categories.filter((c) => c.id !== entityId);
+        } else if (entityType === 'PROJECT_TAG') {
+          this.state.projectTags = this.state.projectTags.filter((p) => p.id !== entityId);
+        } else if (entityType === 'RECURRING_RULE') {
+          this.state.recurringRules = this.state.recurringRules.filter((r) => String(r.id) !== entityId);
+        } else if (entityType === 'FIXED_ASSET') {
+          this.state.fixedAssets = this.state.fixedAssets.filter((f) => String(f.id) !== entityId);
         }
         continue;
       }
@@ -1478,13 +2667,65 @@ export class LocalLedgerEngine {
           if (idx !== -1) {
             this.state.vouchers[idx] = v;
           } else {
-            this.state.vouchers.push(v);
+            this.state.vouchers.unshift(v);
           }
         } else if (entityType === 'ACCOUNT') {
           const acc = payload as Account;
           const idx = this.state.accounts.findIndex((it) => it.id === acc.id);
           if (idx !== -1) {
             this.state.accounts[idx] = { ...this.state.accounts[idx], ...acc };
+          } else {
+            this.state.accounts.push(acc);
+          }
+        } else if (entityType === 'BUDGET_POOL') {
+          const pool = payload as BudgetPool;
+          const idx = this.state.budgetPools.findIndex((p) => p.id === pool.id);
+          if (idx !== -1) {
+            this.state.budgetPools[idx] = { ...this.state.budgetPools[idx], ...pool };
+          } else {
+            this.state.budgetPools.push(pool);
+          }
+        } else if (entityType === 'MONTHLY_BUDGET' || entityType === 'BUDGET') {
+          const mb = payload as MonthlyBudget;
+          const idx = this.state.monthlyBudgets.findIndex(
+            (b) => b.year_month === mb.year_month && b.pool_id === mb.pool_id
+          );
+          if (idx !== -1) {
+            this.state.monthlyBudgets[idx] = { ...this.state.monthlyBudgets[idx], ...mb };
+          } else {
+            this.state.monthlyBudgets.push(mb);
+          }
+        } else if (entityType === 'CATEGORY') {
+          const cat = payload as Category;
+          const idx = this.state.categories.findIndex((c) => c.id === cat.id);
+          if (idx !== -1) {
+            this.state.categories[idx] = { ...this.state.categories[idx], ...cat };
+          } else {
+            this.state.categories.push(cat);
+          }
+        } else if (entityType === 'PROJECT_TAG') {
+          const tag = payload as ProjectTag;
+          const idx = this.state.projectTags.findIndex((t) => t.id === tag.id);
+          if (idx !== -1) {
+            this.state.projectTags[idx] = { ...this.state.projectTags[idx], ...tag };
+          } else {
+            this.state.projectTags.push(tag);
+          }
+        } else if (entityType === 'RECURRING_RULE') {
+          const rule = payload as RecurringRule;
+          const idx = this.state.recurringRules.findIndex((r) => r.id === rule.id);
+          if (idx !== -1) {
+            this.state.recurringRules[idx] = { ...this.state.recurringRules[idx], ...rule };
+          } else {
+            this.state.recurringRules.push(rule);
+          }
+        } else if (entityType === 'FIXED_ASSET') {
+          const asset = payload as FixedAsset;
+          const idx = this.state.fixedAssets.findIndex((a) => a.id === asset.id);
+          if (idx !== -1) {
+            this.state.fixedAssets[idx] = { ...this.state.fixedAssets[idx], ...asset };
+          } else {
+            this.state.fixedAssets.push(asset);
           }
         }
       } catch (e) {

@@ -862,4 +862,165 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       }
     });
   });
+
+  // ==========================================================================
+  // 测试 7：Stage 8 全生命周期 CRUD REST Endpoints 综合闭环测试
+  // ==========================================================================
+  describe('7. Stage 8 Full-Lifecycle CRUD REST Endpoints Integration', () => {
+    it('should support manual transaction recording, update, and soft delete via REST API', async () => {
+      // 1. POST /api/transactions/manual
+      const createRes = await server.inject({
+        method: 'POST',
+        url: '/api/transactions/manual',
+        body: {
+          tx_type: 'EXPENSE',
+          tx_date: '2026-11-12',
+          account_id: 'ACC_UNION_MAIN',
+          amount: '88.00',
+          discount: '8.00',
+          category_id: 'CAT_FOOD',
+          merchant_or_note: '老北京炸酱面',
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const tx = createRes.body.transaction;
+      expect(tx.header.total_gross).toBe('88.00');
+      expect(tx.header.payment_discount).toBe('8.00');
+      expect(tx.header.total_net).toBe('80.00');
+
+      // 2. PUT /api/transactions/:id
+      const updateRes = await server.inject({
+        method: 'PUT',
+        url: `/api/transactions/${tx.header.id}`,
+        body: {
+          total_gross: '98.00',
+          merchant_or_note: '老北京炸酱面+北冰洋',
+        },
+      });
+      expect(updateRes.statusCode).toBe(200);
+      expect(updateRes.body.transaction.header.total_gross).toBe('98.00');
+      expect(updateRes.body.transaction.header.total_net).toBe('90.00');
+      expect(updateRes.body.transaction.header.merchant_or_note).toBe('老北京炸酱面+北冰洋');
+
+      // 3. DELETE /api/transactions/:id
+      const deleteRes = await server.inject({
+        method: 'DELETE',
+        url: `/api/transactions/${tx.header.id}`,
+      });
+      expect(deleteRes.statusCode).toBe(200);
+      expect(deleteRes.body.deleted).toBe(true);
+    });
+
+    it('should support account upsert, balance calibration, and safe delete', async () => {
+      // 1. POST /api/accounts
+      const accRes = await server.inject({
+        method: 'POST',
+        url: '/api/accounts',
+        body: {
+          id: 'ACC_TEST_WALLET',
+          name: '测试数字钱包',
+          account_role: 'DEBIT_MAIN',
+          initial_balance: '100.00',
+          is_default_pay: true,
+        },
+      });
+      expect(accRes.statusCode).toBe(200);
+      expect(accRes.body.account.name).toBe('测试数字钱包');
+
+      // 2. POST /api/accounts/:id/calibrate
+      const calibRes = await server.inject({
+        method: 'POST',
+        url: '/api/accounts/ACC_TEST_WALLET/calibrate',
+        body: { targetBookBalance: '250.00' },
+      });
+      expect(calibRes.statusCode).toBe(200);
+      expect(calibRes.body.account.book_balance).toBe('250.00');
+
+      // 3. DELETE /api/accounts/:id
+      const delRes = await server.inject({
+        method: 'DELETE',
+        url: '/api/accounts/ACC_TEST_WALLET',
+      });
+      expect(delRes.statusCode).toBe(200);
+      expect(delRes.body.success).toBe(true);
+    });
+
+    it('should support budget pools, categories, project tags, vouchers, and recurring rules CRUD', async () => {
+      // 1. Budget Pool & Monthly Budget
+      const poolRes = await server.inject({
+        method: 'POST',
+        url: '/api/budget-pools',
+        body: {
+          id: 'POOL_SERVER_TEST',
+          name: '服务端测试专项池',
+          pool_type: 'FLEX',
+          is_monthly_budget: true,
+          base_allocation: '200.00',
+        },
+      });
+      expect(poolRes.statusCode).toBe(200);
+
+      // 2. Category
+      const catRes = await server.inject({
+        method: 'POST',
+        url: '/api/categories',
+        body: {
+          id: 'CAT_SERVER_TEST',
+          name: '服务端测试分类',
+          default_pool_id: 'POOL_SERVER_TEST',
+        },
+      });
+      expect(catRes.statusCode).toBe(200);
+
+      // 3. Project Tag
+      const tagRes = await server.inject({
+        method: 'POST',
+        url: '/api/project-tags',
+        body: {
+          id: 'TAG_SERVER_TEST',
+          name: '心愿单：测试立项',
+          target_budget: '500.00',
+          linked_pool_id: 'POOL_SERVER_TEST',
+        },
+      });
+      expect(tagRes.statusCode).toBe(200);
+
+      // 4. Voucher (free voucher)
+      const voucherRes = await server.inject({
+        method: 'POST',
+        url: '/api/vouchers',
+        body: {
+          title: '服务端免费领券',
+          voucher_type: 'FREE_COUPON',
+          face_value: '5.00',
+          acquire_cost: '0.00',
+          min_spend: '20.00',
+        },
+      });
+      expect(voucherRes.statusCode).toBe(200);
+
+      // 5. Recurring Rule & Execute
+      const ruleRes = await server.inject({
+        method: 'POST',
+        url: '/api/recurring-rules',
+        body: {
+          title: '服务器托管月付',
+          rule_type: 'FIXED_EXPENSE',
+          amount: '99.00',
+          account_id: 'ACC_UNION_MAIN',
+          budget_pool_id: 'POOL_FIXED',
+        },
+      });
+      expect(ruleRes.statusCode).toBe(200);
+      const ruleId = ruleRes.body.rule.id;
+
+      const execRes = await server.inject({
+        method: 'POST',
+        url: `/api/recurring-rules/${ruleId}/execute`,
+        body: { txDate: '2026-11-12' },
+      });
+      expect(execRes.statusCode).toBe(200);
+      expect(execRes.body.transaction.header.total_gross).toBe('99.00');
+    });
+  });
 });

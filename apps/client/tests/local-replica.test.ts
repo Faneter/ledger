@@ -255,4 +255,300 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(Array.isArray(bundle.oplogs)).toBe(true);
     });
   });
+
+  describe('6. 二期 Stage 8：纯净账本与全生命周期 CRUD 管理测试', () => {
+    it('resetToCleanState() 应产生全 0 余额账户、0 卡券、0 固定资产与 0 交易流水', () => {
+      engine.resetToCleanState();
+
+      // 验证账户数量为 8，且初始余额、账面余额、冻结金额全为 0.00
+      expect(engine.state.accounts.length).toBe(8);
+      for (const acc of engine.state.accounts) {
+        expect(acc.initial_balance).toBe('0.00');
+        expect(acc.book_balance).toBe('0.00');
+        expect(acc.frozen_amount).toBe('0.00');
+        if (acc.account_role === 'INVESTMENT') {
+          expect(acc.market_value).toBe('0.00');
+        }
+      }
+
+      // 花呗账户没有默认的 -120.00 负债
+      const huabei = engine.state.accounts.find((a) => a.id === 'ACC_HUABEI');
+      expect(huabei?.book_balance).toBe('0.00');
+
+      // 验证卡券、固定资产、专项项目与交易流水全部为空数组
+      expect(engine.state.vouchers).toEqual([]);
+      expect(engine.state.fixedAssets).toEqual([]);
+      expect(engine.state.projectTags).toEqual([]);
+      expect(engine.state.transactions).toEqual([]);
+      expect(engine.state.recurringRules).toEqual([]);
+
+      // 验证仅 4 个月度常规预算池 is_monthly_budget 为 true
+      const monthlyPools = engine.state.budgetPools.filter((p) => p.is_monthly_budget);
+      expect(monthlyPools.length).toBe(4);
+      expect(monthlyPools.map((p) => p.id)).toEqual([
+        'POOL_FIXED',
+        'POOL_DAILY',
+        'POOL_FLEX',
+        'POOL_EMERGENCY',
+      ]);
+      const sinkingFund = engine.state.budgetPools.find((p) => p.id === 'POOL_FUND');
+      expect(sinkingFund?.is_monthly_budget).toBe(false);
+    });
+
+    it('recordManualTransaction() 能在无 DSL 情况下准确录入支出、收入与转账', () => {
+      engine.resetToCleanState();
+      // 初始化借记卡本金为 1000 元
+      engine.calibrateAccountBalance('ACC_UNION_MAIN', '1000.00');
+
+      // 1. 录入支出 EXPENSE
+      const expenseTx = engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: '2026-11-12',
+        account_id: 'ACC_UNION_MAIN',
+        amount: '45.00',
+        discount: '5.00',
+        category_id: 'CAT_FOOD',
+        merchant_or_note: '老乡鸡午餐',
+      });
+
+      expect(expenseTx.header.total_gross).toBe('45.00');
+      expect(expenseTx.header.payment_discount).toBe('5.00');
+      expect(expenseTx.header.total_net).toBe('40.00');
+      expect(expenseTx.items.length).toBe(1);
+      expect(expenseTx.items[0].item_gross).toBe('45.00');
+      expect(expenseTx.items[0].item_net).toBe('40.00');
+
+      // 验证扣款账户余额：1000 - 40 = 960.00
+      const unionAfterExpense = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      expect(unionAfterExpense?.book_balance).toBe('960.00');
+
+      // 验证 POOL_DAILY 预算消耗
+      const status1 = engine.getMonthlyBudgetStatus('2026-11');
+      const dailyRow = status1.find((s) => s.pool_id === 'POOL_DAILY');
+      expect(dailyRow?.spent_net).toBe('40.00');
+
+      // 2. 录入收入 INCOME
+      const incomeTx = engine.recordManualTransaction({
+        tx_type: 'INCOME',
+        tx_date: '2026-11-12',
+        account_id: 'ACC_UNION_MAIN',
+        amount: '2000.00',
+        merchant_or_note: '兼职家教课酬',
+      });
+      expect(incomeTx.header.total_net).toBe('2000.00');
+
+      // 验证账户余额：960 + 2000 = 2960.00
+      const unionAfterIncome = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      expect(unionAfterIncome?.book_balance).toBe('2960.00');
+
+      // 3. 录入内部转账 TRANSFER (充值饭卡)
+      const transferTx = engine.recordManualTransaction({
+        tx_type: 'TRANSFER',
+        tx_date: '2026-11-12',
+        account_id: 'ACC_UNION_MAIN',
+        target_account_id: 'ACC_CAMPUS_CARD',
+        amount: '100.00',
+        merchant_or_note: '银联转账充值校园饭卡',
+      });
+      expect(transferTx.header.total_gross).toBe('100.00');
+      expect(transferTx.header.total_net).toBe('100.00');
+
+      // 验证银联卡扣减 100，饭卡增加 100
+      const unionAfterTransfer = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      const campusCard = engine.state.accounts.find((a) => a.id === 'ACC_CAMPUS_CARD');
+      expect(unionAfterTransfer?.book_balance).toBe('2860.00');
+      expect(campusCard?.book_balance).toBe('100.00');
+    });
+
+    it('updateTransaction() 与 deleteTransaction() 能精确重算余额并自动回退已核销优惠券', () => {
+      engine.resetToCleanState();
+      engine.calibrateAccountBalance('ACC_UNION_MAIN', '500.00');
+
+      // 1. 创建一张立减金
+      const { voucher } = engine.upsertVoucher({
+        title: '外卖专享立减金',
+        voucher_type: 'FREE_COUPON',
+        face_value: '10.00',
+        acquire_cost: '0.00',
+        min_spend: '30.00',
+      });
+      expect(voucher.status).toBe('AVAILABLE');
+
+      // 2. 录入交易并核销立减金
+      const tx = engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: '2026-11-12',
+        account_id: 'ACC_UNION_MAIN',
+        amount: '35.00',
+        category_id: 'CAT_FOOD',
+        merchant_or_note: '达美乐比萨',
+        applied_voucher_id: voucher.id,
+      });
+
+      expect(tx.header.total_gross).toBe('35.00');
+      expect(tx.header.payment_discount).toBe('10.00');
+      expect(tx.header.total_net).toBe('25.00');
+
+      // 卡券状态变为 USED
+      const usedVoucher = engine.state.vouchers.find((v) => v.id === voucher.id);
+      expect(usedVoucher?.status).toBe('USED');
+      expect(usedVoucher?.used_tx_id).toBe(tx.header.id);
+
+      // 银联卡扣减实付 25.00: 500 - 25 = 475.00
+      let union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      expect(union?.book_balance).toBe('475.00');
+
+      // 3. 编辑交易：修改原价为 40.00，实付变为 30.00
+      const updated = engine.updateTransaction(tx.header.id, {
+        total_gross: '40.00',
+        merchant_or_note: '达美乐大比萨+可乐',
+      });
+      expect(updated.header.total_gross).toBe('40.00');
+      expect(updated.header.total_net).toBe('30.00');
+      expect(updated.header.merchant_or_note).toBe('达美乐大比萨+可乐');
+
+      union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      expect(union?.book_balance).toBe('470.00'); // 500 - 30 = 470.00
+
+      // 4. 删除交易 deleteTransaction()
+      const deleted = engine.deleteTransaction(tx.header.id);
+      expect(deleted.header.is_deleted).toBe(true);
+
+      // 验证余额恢复为 500.00
+      union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      expect(union?.book_balance).toBe('500.00');
+
+      // 验证卡券自动恢复为 AVAILABLE，且 used_tx_id 清空
+      const restoredVoucher = engine.state.vouchers.find((v) => v.id === voucher.id);
+      expect(restoredVoucher?.status).toBe('AVAILABLE');
+      expect(restoredVoucher?.used_tx_id).toBeNull();
+    });
+
+    it('upsertAccount() 与 calibrateAccountBalance() 能精准校准账面余额与默认支付卡', () => {
+      engine.resetToCleanState();
+
+      // 1. 创建新自定义账户
+      const customAcc = engine.upsertAccount({
+        name: '招商银行储蓄卡(新卡)',
+        account_role: 'DEBIT_MAIN',
+        initial_balance: '123.45',
+        is_default_pay: true,
+      });
+
+      expect(customAcc.id).toBeDefined();
+      expect(customAcc.book_balance).toBe('123.45');
+      expect(customAcc.is_default_pay).toBe(true);
+
+      // 验证原默认卡花呗的 is_default_pay 被排他性清空
+      const huabei = engine.state.accounts.find((a) => a.id === 'ACC_HUABEI');
+      expect(huabei?.is_default_pay).toBe(false);
+
+      // 2. 模拟真实世界账户平账校准 calibrateAccountBalance
+      const calibrated = engine.calibrateAccountBalance(customAcc.id, '1000.00');
+      expect(calibrated.book_balance).toBe('1000.00');
+      expect(calibrated.initial_balance).toBe('1000.00');
+
+      // 产生一笔支出 50.00，余额变为 950.00
+      engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        account_id: customAcc.id,
+        amount: '50.00',
+        merchant_or_note: '超市购物',
+      });
+      expect(engine.state.accounts.find((a) => a.id === customAcc.id)?.book_balance).toBe('950.00');
+
+      // 再次平账校准至 1200.00（初始本金应自动吸收增量 250.00 变为 1250.00，重算后恰好等于 1200.00）
+      engine.calibrateAccountBalance(customAcc.id, '1200.00');
+      expect(engine.state.accounts.find((a) => a.id === customAcc.id)?.book_balance).toBe('1200.00');
+
+      // 3. 验证删除有关联流水的账户会抛出友好的中文错误
+      expect(() => engine.deleteAccount(customAcc.id)).toThrow(
+        '账户存在关联交易流水，无法直接删除。请先清理或归档相关交易！'
+      );
+
+      // 4. 清理流水后再删除
+      engine.deleteTransaction(engine.state.transactions[0].header.id);
+      engine.deleteAccount(customAcc.id);
+      expect(engine.state.accounts.find((a) => a.id === customAcc.id)).toBeUndefined();
+    });
+
+    it('upsertBudgetPool()、upsertMonthlyBudget()、upsertCategory()、upsertProjectTag()、upsertVoucher()与 executeRecurringRule() 全功能正常', () => {
+      engine.resetToCleanState();
+      engine.calibrateAccountBalance('ACC_UNION_MAIN', '3000.00');
+
+      // 1. upsertBudgetPool() & upsertMonthlyBudget()
+      const newPool = engine.upsertBudgetPool({
+        name: '数码极客折腾池',
+        pool_type: 'FLEX',
+        is_monthly_budget: true,
+        base_allocation: '350.00',
+        description: '单片机、树莓派与传感器',
+      });
+      expect(newPool.id).toBeDefined();
+      const mb = engine.state.monthlyBudgets.find(
+        (b) => b.pool_id === newPool.id && b.year_month === '2026-11'
+      );
+      expect(mb?.base_allocation).toBe('350.00');
+
+      // 2. upsertCategory()
+      const newCat = engine.upsertCategory({
+        name: '嵌入式开发套件',
+        default_pool_id: newPool.id,
+      });
+      expect(newCat.id).toBeDefined();
+      expect(newCat.default_pool_id).toBe(newPool.id);
+
+      // 3. upsertProjectTag() 心愿目标
+      const wishGoal = engine.upsertProjectTag({
+        name: '心愿单：树莓派5代集群搭建',
+        tag_type: 'PROJECT',
+        target_budget: '1500.00',
+        linked_pool_id: newPool.id,
+      });
+      expect(wishGoal.id).toBeDefined();
+      expect(wishGoal.target_budget).toBe('1500.00');
+
+      // 4. upsertVoucher() (有偿与免费)
+      // 有偿购券 (5.00 买 10.00)
+      const paidRes = engine.upsertVoucher({
+        title: '某团外卖10元立减券',
+        voucher_type: 'PREPAID_COUPON',
+        face_value: '10.00',
+        acquire_cost: '5.00',
+        min_spend: '10.01',
+        accountId: 'ACC_UNION_MAIN',
+      });
+      expect(paidRes.voucher.acquire_cost).toBe('5.00');
+      expect(paidRes.tx).toBeDefined();
+      expect(paidRes.tx?.header.tx_type).toBe('VOUCHER_BUY');
+      // 银联卡扣减 5.00: 3000 - 5 = 2995.00
+      expect(engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN')?.book_balance).toBe('2995.00');
+
+      // 免费领券 (0 元领券)
+      const freeRes = engine.upsertVoucher({
+        title: '免费领立减3元',
+        voucher_type: 'FREE_COUPON',
+        face_value: '3.00',
+        acquire_cost: '0.00',
+        min_spend: '20.00',
+      });
+      expect(freeRes.voucher.acquire_cost).toBe('0.00');
+      expect(freeRes.tx).toBeUndefined();
+
+      // 5. upsertRecurringRule() 与 executeRecurringRule()
+      const rule = engine.upsertRecurringRule({
+        title: '每月固网宽带费',
+        rule_type: 'FIXED_EXPENSE',
+        amount: '60.00',
+        account_id: 'ACC_UNION_MAIN',
+        budget_pool_id: 'POOL_FIXED',
+      });
+      expect(rule.id).toBeDefined();
+
+      const executedTx = engine.executeRecurringRule(rule.id, '2026-11-12');
+      expect(executedTx.header.total_gross).toBe('60.00');
+      expect(executedTx.header.merchant_or_note).toBe('每月固网宽带费');
+      expect(engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN')?.book_balance).toBe('2935.00');
+    });
+  });
 });

@@ -27,6 +27,7 @@ import {
   FixedAssetWithCost,
   RecurringRule,
   SyncOpLogEntry,
+  SyncEntityType,
   SyncConflict,
   HybridLogicalClock,
   mergeOpLogEntries,
@@ -1452,6 +1453,1051 @@ export class LedgerRepository {
       ...conflict,
       status: 'RESOLVED',
     };
+  }
+
+  // ==========================================================================
+  // Stage 8: 全生命周期 CRUD 管理方法 (Repository 层)
+  // ==========================================================================
+
+  public recordManualTransaction(params: {
+    tx_type: 'EXPENSE' | 'INCOME' | 'TRANSFER';
+    tx_date?: string;
+    account_id: string;
+    target_account_id?: string | null;
+    amount: string;
+    discount?: string;
+    category_id?: string;
+    budget_pool_id?: string;
+    project_tag_id?: string | null;
+    merchant_or_note: string;
+    applied_voucher_id?: number | null;
+    currency?: string;
+    hold_amount_cny?: string;
+  }): TransactionAggregate {
+    const account = this.db
+      .prepare('SELECT * FROM accounts WHERE id = ?')
+      .get(params.account_id) as any;
+    if (!account) {
+      throw new Error(`Account "${params.account_id}" not found`);
+    }
+
+    const effectiveDate = params.tx_date ?? new Date().toISOString().slice(0, 10);
+    const currency = params.currency ?? 'CNY';
+    const isFx = currency !== 'CNY';
+
+    let totalGross = formatCny(params.amount);
+    let paymentDiscount = formatCny(params.discount ?? '0.00');
+    let platformDiscount = '0.00';
+    let totalNet = formatCny(
+      Decimal.max(0, toDecimal(totalGross).minus(toDecimal(paymentDiscount)))
+    );
+    let items: Array<{
+      item_name: string;
+      category_id: string;
+      budget_pool_id: string;
+      project_tag_id: string | null;
+      item_gross: string;
+      allocated_discount: string;
+      item_net: string;
+      is_primary_item: boolean;
+      raw_formula_expr?: string | null;
+    }> = [];
+    let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
+    let holdAmountCny = '0.00';
+
+    if (params.tx_type === 'EXPENSE') {
+      const catId = params.category_id ?? 'CAT_FOOD';
+      const cat = this.db
+        .prepare('SELECT * FROM categories WHERE id = ?')
+        .get(catId) as any;
+      const poolId = params.budget_pool_id ?? (cat?.default_pool_id ?? 'POOL_DAILY');
+
+      if (params.applied_voucher_id != null) {
+        const v = this.db
+          .prepare("SELECT * FROM vouchers WHERE id = ? AND status = 'AVAILABLE'")
+          .get(params.applied_voucher_id) as any;
+        if (v) {
+          const cashPaid = Decimal.max(
+            0,
+            toDecimal(params.amount)
+              .minus(toDecimal(params.discount ?? 0))
+              .minus(toDecimal(v.face_value))
+          );
+          const splitInputs: SplitItemInput[] = [
+            {
+              name: params.merchant_or_note,
+              gross: totalGross,
+              category_id: catId,
+              budget_pool_id: poolId,
+              project_tag_id: params.project_tag_id ?? null,
+              is_primary: true,
+            },
+          ];
+          const alloc = computeOrderAllocation(
+            splitInputs,
+            cashPaid,
+            'SINGLE',
+            {
+              face_value: v.face_value,
+              acquire_cost: v.acquire_cost,
+              voucher_type: v.voucher_type,
+            }
+          );
+          totalGross = alloc.total_gross;
+          paymentDiscount = alloc.total_discount;
+          totalNet = alloc.total_net;
+          items = [
+            {
+              item_name: params.merchant_or_note,
+              category_id: catId,
+              budget_pool_id: poolId,
+              project_tag_id: params.project_tag_id ?? null,
+              item_gross: alloc.items[0].gross,
+              allocated_discount: alloc.items[0].allocated_discount,
+              item_net: alloc.items[0].net,
+              is_primary_item: true,
+              raw_formula_expr: null,
+            },
+          ];
+        }
+      }
+
+      if (items.length === 0) {
+        items = [
+          {
+            item_name: params.merchant_or_note,
+            category_id: catId,
+            budget_pool_id: poolId,
+            project_tag_id: params.project_tag_id ?? null,
+            item_gross: totalGross,
+            allocated_discount: paymentDiscount,
+            item_net: totalNet,
+            is_primary_item: true,
+            raw_formula_expr: null,
+          },
+        ];
+      }
+
+      if (isFx) {
+        holdAmountCny = params.hold_amount_cny
+          ? formatCny(params.hold_amount_cny)
+          : formatCny(
+              roundCny(
+                toDecimal(totalNet).times(toDecimal(account.fx_hold_ratio || '1.020'))
+              )
+            );
+      }
+    } else if (params.tx_type === 'TRANSFER') {
+      let discountDec = toDecimal(params.discount ?? 0);
+      if (params.applied_voucher_id != null) {
+        const v = this.db
+          .prepare("SELECT * FROM vouchers WHERE id = ? AND status = 'AVAILABLE'")
+          .get(params.applied_voucher_id) as any;
+        if (v) {
+          discountDec = discountDec.plus(toDecimal(v.face_value));
+        }
+      }
+      paymentDiscount = formatCny(discountDec);
+      totalNet = formatCny(
+        Decimal.max(0, toDecimal(totalGross).minus(discountDec))
+      );
+    } else if (params.tx_type === 'INCOME') {
+      paymentDiscount = '0.00';
+      totalNet = totalGross;
+    }
+
+    return this.recordTransaction({
+      header: {
+        tx_date: effectiveDate,
+        tx_type: params.tx_type,
+        account_id: params.account_id,
+        target_account_id: params.target_account_id ?? null,
+        total_gross: totalGross,
+        platform_discount: platformDiscount,
+        payment_discount: paymentDiscount,
+        total_net: totalNet,
+        allocation_mode: 'SINGLE',
+        original_currency: currency,
+        original_amount: isFx ? formatCny(params.amount) : null,
+        exchange_rate: isFx ? null : '1.000000',
+        settlement_status: settlementStatus,
+        hold_amount_cny: holdAmountCny,
+        settled_at: settlementStatus === 'SETTLED' ? new Date().toISOString() : null,
+        raw_input_text: `手动录入：${params.merchant_or_note} ${params.amount}`,
+        merchant_or_note: params.merchant_or_note,
+        applied_voucher_id: params.applied_voucher_id ?? null,
+      },
+      items: items.map((it) => ({
+        id: 0,
+        header_id: '',
+        ...it,
+        raw_formula_expr: it.raw_formula_expr ?? null,
+      })),
+      appliedVoucherId: params.applied_voucher_id ?? null,
+    });
+  }
+
+  public updateTransaction(
+    txId: string,
+    patch: {
+      tx_date?: string;
+      account_id?: string;
+      target_account_id?: string | null;
+      total_gross?: string;
+      payment_discount?: string;
+      total_net?: string;
+      merchant_or_note?: string;
+      category_id?: string;
+      budget_pool_id?: string;
+      project_tag_id?: string | null;
+    }
+  ): TransactionAggregate {
+    const existing = this.getRecentTransactions(1000).find((t) => t.header.id === txId);
+    if (!existing) {
+      throw new Error(`Transaction "${txId}" not found`);
+    }
+
+    const h = existing.header;
+    if (patch.tx_date !== undefined) h.tx_date = patch.tx_date;
+    if (patch.account_id !== undefined) h.account_id = patch.account_id;
+    if (patch.target_account_id !== undefined) h.target_account_id = patch.target_account_id;
+    if (patch.merchant_or_note !== undefined) h.merchant_or_note = patch.merchant_or_note;
+
+    if (patch.total_gross !== undefined) {
+      h.total_gross = formatCny(patch.total_gross);
+    }
+    if (patch.payment_discount !== undefined) {
+      h.payment_discount = formatCny(patch.payment_discount);
+    }
+    if (patch.total_net !== undefined) {
+      h.total_net = formatCny(patch.total_net);
+    } else if (patch.total_gross !== undefined || patch.payment_discount !== undefined) {
+      h.total_net = formatCny(
+        Decimal.max(0, toDecimal(h.total_gross).minus(toDecimal(h.payment_discount)))
+      );
+    }
+
+    const hlc = this.hlc.now();
+    h.updated_hlc = hlc;
+
+    this.db
+      .prepare(`
+        UPDATE transaction_headers SET
+          tx_date = ?, account_id = ?, target_account_id = ?, total_gross = ?,
+          payment_discount = ?, total_net = ?, merchant_or_note = ?, updated_hlc = ?
+        WHERE id = ?
+      `)
+      .run(
+        h.tx_date,
+        h.account_id,
+        h.target_account_id ?? null,
+        h.total_gross,
+        h.payment_discount,
+        h.total_net,
+        h.merchant_or_note,
+        hlc,
+        txId
+      );
+
+    if (existing.items.length > 0) {
+      const primary = existing.items.find((it) => it.is_primary_item) ?? existing.items[0];
+      if (patch.merchant_or_note !== undefined) primary.item_name = patch.merchant_or_note;
+      if (patch.total_gross !== undefined) primary.item_gross = h.total_gross;
+      if (patch.payment_discount !== undefined) primary.allocated_discount = h.payment_discount;
+      primary.item_net = h.total_net;
+      if (patch.category_id !== undefined) primary.category_id = patch.category_id;
+      if (patch.budget_pool_id !== undefined) primary.budget_pool_id = patch.budget_pool_id;
+      if (patch.project_tag_id !== undefined) primary.project_tag_id = patch.project_tag_id;
+
+      this.db
+        .prepare(`
+          UPDATE transaction_items SET
+            item_name = ?, item_gross = ?, allocated_discount = ?, item_net = ?,
+            category_id = ?, budget_pool_id = ?, project_tag_id = ?
+          WHERE id = ?
+        `)
+        .run(
+          primary.item_name,
+          primary.item_gross,
+          primary.allocated_discount,
+          primary.item_net,
+          primary.category_id,
+          primary.budget_pool_id,
+          primary.project_tag_id ?? null,
+          primary.id
+        );
+    }
+
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'TRANSACTION',
+      entity_id: txId,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(existing),
+      created_at: new Date().toISOString(),
+    });
+
+    recalculateAllAccounts(this.db);
+    return existing;
+  }
+
+  public deleteTransaction(txId: string): TransactionAggregate {
+    const existing = this.getRecentTransactions(1000).find((t) => t.header.id === txId);
+    if (!existing) {
+      throw new Error(`Transaction "${txId}" not found`);
+    }
+
+    const hlc = this.hlc.now();
+    existing.header.is_deleted = true;
+    existing.header.updated_hlc = hlc;
+
+    this.db
+      .prepare('UPDATE transaction_headers SET is_deleted = 1, updated_hlc = ? WHERE id = ?')
+      .run(hlc, txId);
+
+    if (existing.header.applied_voucher_id != null) {
+      this.db
+        .prepare("UPDATE vouchers SET status = 'AVAILABLE', used_tx_id = NULL WHERE id = ?")
+        .run(existing.header.applied_voucher_id);
+    }
+
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'TRANSACTION',
+      entity_id: txId,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(existing),
+      created_at: new Date().toISOString(),
+    });
+
+    recalculateAllAccounts(this.db);
+    return existing;
+  }
+
+  public upsertAccount(
+    account: Partial<Account> & { name: string; account_role: AccountRole }
+  ): Account {
+    const id = account.id || `ACC_CUSTOM_${Date.now()}`;
+    const hlc = this.hlc.now();
+    const existing = this.db
+      .prepare('SELECT * FROM accounts WHERE id = ?')
+      .get(id) as any;
+
+    if (existing) {
+      this.db
+        .prepare(`
+          UPDATE accounts SET
+            name = ?, account_role = ?, currency = ?, credit_limit = ?,
+            billing_day = ?, repayment_day = ?, fx_hold_ratio = ?, fx_cashback_rate = ?,
+            fx_monthly_cap = ?, is_default_pay = ?, is_folded = ?, include_in_networth = ?,
+            initial_balance = ?, market_value = ?, sort_order = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .run(
+          account.name,
+          account.account_role,
+          account.currency ?? existing.currency,
+          account.credit_limit ? formatCny(account.credit_limit) : existing.credit_limit,
+          account.billing_day !== undefined ? account.billing_day : existing.billing_day,
+          account.repayment_day !== undefined ? account.repayment_day : existing.repayment_day,
+          account.fx_hold_ratio ?? existing.fx_hold_ratio,
+          account.fx_cashback_rate ?? existing.fx_cashback_rate,
+          account.fx_monthly_cap ? formatCny(account.fx_monthly_cap) : existing.fx_monthly_cap,
+          account.is_default_pay !== undefined ? (account.is_default_pay ? 1 : 0) : existing.is_default_pay,
+          account.is_folded !== undefined ? (account.is_folded ? 1 : 0) : existing.is_folded,
+          account.include_in_networth !== undefined ? (account.include_in_networth ? 1 : 0) : existing.include_in_networth,
+          account.initial_balance !== undefined ? formatCny(account.initial_balance) : existing.initial_balance,
+          account.market_value !== undefined ? (account.market_value ? formatCny(account.market_value) : null) : existing.market_value,
+          account.sort_order ?? existing.sort_order,
+          hlc,
+          id
+        );
+    } else {
+      const initBal = formatCny(account.initial_balance ?? '0.00');
+      this.db
+        .prepare(`
+          INSERT INTO accounts (
+            id, name, account_role, currency, initial_balance, book_balance, frozen_amount,
+            market_value, credit_limit, fx_hold_ratio, fx_cashback_rate, fx_monthly_cap,
+            billing_day, repayment_day, is_default_pay, is_folded, include_in_networth, sort_order, updated_hlc
+          ) VALUES (?, ?, ?, ?, ?, ?, '0.00', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          id,
+          account.name,
+          account.account_role,
+          account.currency ?? 'CNY',
+          initBal,
+          initBal,
+          account.market_value ? formatCny(account.market_value) : (account.account_role === 'INVESTMENT' ? '0.00' : null),
+          account.credit_limit ? formatCny(account.credit_limit) : null,
+          account.fx_hold_ratio ?? (account.account_role === 'DEBIT_FX' ? '1.020' : '1.000'),
+          account.fx_cashback_rate ?? (account.account_role === 'DEBIT_FX' ? '0.0100' : '0.0000'),
+          account.fx_monthly_cap ? formatCny(account.fx_monthly_cap) : null,
+          account.billing_day ?? null,
+          account.repayment_day ?? null,
+          account.is_default_pay ? 1 : 0,
+          account.is_folded ? 1 : 0,
+          account.include_in_networth !== false ? 1 : 0,
+          account.sort_order ?? 100,
+          hlc
+        );
+    }
+
+    if (account.is_default_pay) {
+      this.db
+        .prepare('UPDATE accounts SET is_default_pay = 0 WHERE id != ?')
+        .run(id);
+    }
+
+    const saved = this.db
+      .prepare('SELECT * FROM accounts WHERE id = ?')
+      .get(id) as any;
+
+    const mappedSaved: Account = {
+      ...saved,
+      initial_balance: formatCny(saved.initial_balance),
+      book_balance: formatCny(saved.book_balance),
+      frozen_amount: formatCny(saved.frozen_amount),
+      market_value: saved.market_value != null ? formatCny(saved.market_value) : null,
+      credit_limit: saved.credit_limit != null ? formatCny(saved.credit_limit) : null,
+      is_default_pay: Boolean(saved.is_default_pay),
+      is_folded: Boolean(saved.is_folded),
+      include_in_networth: Boolean(saved.include_in_networth),
+    };
+
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'ACCOUNT',
+      entity_id: id,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(mappedSaved),
+      created_at: new Date().toISOString(),
+    });
+
+    recalculateAllAccounts(this.db);
+    return mappedSaved;
+  }
+
+  public calibrateAccountBalance(
+    accountId: string,
+    targetBookBalance: string
+  ): Account {
+    const acc = this.db
+      .prepare('SELECT * FROM accounts WHERE id = ?')
+      .get(accountId) as any;
+    if (!acc) {
+      throw new Error(`Account "${accountId}" not found`);
+    }
+
+    const delta = toDecimal(targetBookBalance).minus(toDecimal(acc.book_balance));
+    const newInitial = formatCny(toDecimal(acc.initial_balance ?? 0).plus(delta));
+    const hlc = this.hlc.now();
+
+    this.db
+      .prepare('UPDATE accounts SET initial_balance = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(newInitial, hlc, accountId);
+
+    recalculateAllAccounts(this.db);
+
+    const updated = this.db
+      .prepare('SELECT * FROM accounts WHERE id = ?')
+      .get(accountId) as any;
+
+    const mappedUpdated: Account = {
+      ...updated,
+      initial_balance: formatCny(updated.initial_balance),
+      book_balance: formatCny(updated.book_balance),
+      frozen_amount: formatCny(updated.frozen_amount),
+      market_value: updated.market_value != null ? formatCny(updated.market_value) : null,
+      credit_limit: updated.credit_limit != null ? formatCny(updated.credit_limit) : null,
+      is_default_pay: Boolean(updated.is_default_pay),
+      is_folded: Boolean(updated.is_folded),
+      include_in_networth: Boolean(updated.include_in_networth),
+    };
+
+    this.recordOpLog({
+      hlc,
+      node_id: this.nodeId,
+      entity_type: 'ACCOUNT',
+      entity_id: accountId,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(mappedUpdated),
+      created_at: new Date().toISOString(),
+    });
+
+    return mappedUpdated;
+  }
+
+  public deleteAccount(accountId: string): void {
+    const hasActiveTx = this.db
+      .prepare('SELECT COUNT(*) as count FROM transaction_headers WHERE is_deleted = 0 AND (account_id = ? OR target_account_id = ?)')
+      .get(accountId, accountId) as any;
+
+    if (hasActiveTx?.count > 0) {
+      throw new Error('账户存在关联交易流水，无法直接删除。请先清理或归档相关交易！');
+    }
+
+    this.db.prepare('DELETE FROM accounts WHERE id = ?').run(accountId);
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'ACCOUNT',
+      entity_id: accountId,
+      op_type: 'DELETE',
+      payload_json: JSON.stringify({ id: accountId }),
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  public upsertBudgetPool(
+    pool: Partial<BudgetPool> & { name: string; base_allocation?: string }
+  ): BudgetPool {
+    const id = pool.id || `POOL_CUSTOM_${Date.now()}`;
+    const existing = this.db.prepare('SELECT * FROM budget_pools WHERE id = ?').get(id) as any;
+
+    if (existing) {
+      this.db
+        .prepare(`
+          UPDATE budget_pools SET
+            name = ?, pool_type = ?, is_monthly_budget = ?, rollover_strategy = ?, description = ?, sort_order = ?
+          WHERE id = ?
+        `)
+        .run(
+          pool.name,
+          pool.pool_type ?? existing.pool_type,
+          pool.is_monthly_budget !== undefined ? (pool.is_monthly_budget ? 1 : 0) : existing.is_monthly_budget,
+          pool.rollover_strategy ?? existing.rollover_strategy,
+          pool.description !== undefined ? pool.description : existing.description,
+          pool.sort_order ?? existing.sort_order,
+          id
+        );
+    } else {
+      this.db
+        .prepare(`
+          INSERT INTO budget_pools (id, name, pool_type, is_monthly_budget, rollover_strategy, description, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          id,
+          pool.name,
+          pool.pool_type ?? 'FLEX',
+          pool.is_monthly_budget !== false ? 1 : 0,
+          pool.rollover_strategy ?? 'ACCUMULATE',
+          pool.description ?? null,
+          pool.sort_order ?? 100
+        );
+    }
+
+    if ((pool.is_monthly_budget !== false) && pool.base_allocation !== undefined) {
+      this.upsertMonthlyBudget({
+        year_month: '2026-11',
+        pool_id: id,
+        base_allocation: pool.base_allocation,
+      });
+    }
+
+    const saved = this.db.prepare('SELECT * FROM budget_pools WHERE id = ?').get(id) as any;
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'BUDGET_POOL',
+      entity_id: id,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(saved),
+      created_at: new Date().toISOString(),
+    });
+
+    return {
+      ...saved,
+      is_monthly_budget: Boolean(saved.is_monthly_budget),
+    } as BudgetPool;
+  }
+
+  public deleteBudgetPool(poolId: string): void {
+    const inCategories = this.db
+      .prepare('SELECT COUNT(*) as count FROM categories WHERE default_pool_id = ?')
+      .get(poolId) as any;
+    const inItems = this.db
+      .prepare('SELECT COUNT(*) as count FROM transaction_items ti JOIN transaction_headers th ON ti.header_id = th.id WHERE th.is_deleted = 0 AND ti.budget_pool_id = ?')
+      .get(poolId) as any;
+
+    if (inCategories?.count > 0 || inItems?.count > 0) {
+      throw new Error('预算池正在被分类或交易使用，无法直接删除！请先重新分配相关分类或交易。');
+    }
+
+    this.db.prepare('DELETE FROM monthly_budgets WHERE pool_id = ?').run(poolId);
+    this.db.prepare('DELETE FROM budget_pools WHERE id = ?').run(poolId);
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'BUDGET_POOL',
+      entity_id: poolId,
+      op_type: 'DELETE',
+      payload_json: JSON.stringify({ id: poolId }),
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  public upsertMonthlyBudget(params: {
+    year_month: string;
+    pool_id: string;
+    base_allocation: string;
+    rollover_from_prev?: string;
+    note?: string | null;
+  }): MonthlyBudget {
+    const existing = this.db
+      .prepare('SELECT * FROM monthly_budgets WHERE year_month = ? AND pool_id = ?')
+      .get(params.year_month, params.pool_id) as any;
+
+    if (existing) {
+      this.db
+        .prepare(`
+          UPDATE monthly_budgets SET
+            base_allocation = ?,
+            rollover_from_prev = ?,
+            note = ?
+          WHERE year_month = ? AND pool_id = ?
+        `)
+        .run(
+          formatCny(params.base_allocation),
+          params.rollover_from_prev !== undefined ? formatCny(params.rollover_from_prev) : existing.rollover_from_prev,
+          params.note !== undefined ? params.note : existing.note,
+          params.year_month,
+          params.pool_id
+        );
+    } else {
+      this.db
+        .prepare(`
+          INSERT INTO monthly_budgets (year_month, pool_id, base_allocation, rollover_from_prev, reserved_fixed, swept_to_fund, note)
+          VALUES (?, ?, ?, ?, '0.00', '0.00', ?)
+        `)
+        .run(
+          params.year_month,
+          params.pool_id,
+          formatCny(params.base_allocation),
+          formatCny(params.rollover_from_prev ?? '0.00'),
+          params.note ?? null
+        );
+    }
+
+    const saved = this.db
+      .prepare('SELECT * FROM monthly_budgets WHERE year_month = ? AND pool_id = ?')
+      .get(params.year_month, params.pool_id) as any;
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'MONTHLY_BUDGET',
+      entity_id: `${params.year_month}:${params.pool_id}`,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(saved),
+      created_at: new Date().toISOString(),
+    });
+
+    return saved as MonthlyBudget;
+  }
+
+  public upsertCategory(
+    cat: Partial<Category> & { name: string; default_pool_id: string; icon?: string }
+  ): Category {
+    const id = cat.id || `CAT_CUSTOM_${Date.now()}`;
+    const existing = this.db.prepare('SELECT * FROM categories WHERE id = ?').get(id) as any;
+
+    if (existing) {
+      this.db
+        .prepare(`
+          UPDATE categories SET
+            name = ?, default_pool_id = ?, parent_id = ?, icon_name = ?, keywords = ?, sort_order = ?
+          WHERE id = ?
+        `)
+        .run(
+          cat.name,
+          cat.default_pool_id,
+          cat.parent_id !== undefined ? cat.parent_id : existing.parent_id,
+          cat.icon_name ?? cat.icon ?? existing.icon_name,
+          cat.keywords !== undefined ? cat.keywords : existing.keywords,
+          cat.sort_order ?? existing.sort_order,
+          id
+        );
+    } else {
+      this.db
+        .prepare(`
+          INSERT INTO categories (id, name, default_pool_id, parent_id, icon_name, keywords, sort_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          id,
+          cat.name,
+          cat.default_pool_id,
+          cat.parent_id ?? null,
+          cat.icon_name ?? cat.icon ?? 'tag',
+          cat.keywords ?? null,
+          cat.sort_order ?? 100
+        );
+    }
+
+    const saved = this.db.prepare('SELECT * FROM categories WHERE id = ?').get(id) as any;
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'CATEGORY',
+      entity_id: id,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(saved),
+      created_at: new Date().toISOString(),
+    });
+
+    return saved as Category;
+  }
+
+  public deleteCategory(categoryId: string): void {
+    const inUse = this.db
+      .prepare('SELECT COUNT(*) as count FROM transaction_items ti JOIN transaction_headers th ON ti.header_id = th.id WHERE th.is_deleted = 0 AND ti.category_id = ?')
+      .get(categoryId) as any;
+
+    if (inUse?.count > 0) {
+      throw new Error('分类已被交易流水引用，无法直接删除！');
+    }
+
+    this.db.prepare('DELETE FROM categories WHERE id = ?').run(categoryId);
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'CATEGORY',
+      entity_id: categoryId,
+      op_type: 'DELETE',
+      payload_json: JSON.stringify({ id: categoryId }),
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  public upsertProjectTag(tag: Partial<ProjectTag> & { name: string }): ProjectTag {
+    const id = tag.id || `TAG_CUSTOM_${Date.now()}`;
+    const existing = this.db.prepare('SELECT * FROM projects_and_tags WHERE id = ? OR name = ?').get(id, tag.name) as any;
+
+    if (existing) {
+      this.db
+        .prepare(`
+          UPDATE projects_and_tags SET
+            name = ?, tag_type = ?, target_budget = ?, linked_pool_id = ?, is_active = ?
+          WHERE id = ?
+        `)
+        .run(
+          tag.name,
+          tag.tag_type ?? existing.tag_type,
+          tag.target_budget ? formatCny(tag.target_budget) : existing.target_budget,
+          tag.linked_pool_id !== undefined ? tag.linked_pool_id : existing.linked_pool_id,
+          tag.is_active !== undefined ? (tag.is_active ? 1 : 0) : existing.is_active,
+          existing.id
+        );
+    } else {
+      this.db
+        .prepare(`
+          INSERT INTO projects_and_tags (id, name, tag_type, target_budget, linked_pool_id, is_active)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          id,
+          tag.name,
+          tag.tag_type ?? 'PROJECT',
+          tag.target_budget ? formatCny(tag.target_budget) : null,
+          tag.linked_pool_id ?? null,
+          tag.is_active !== false ? 1 : 0
+        );
+    }
+
+    const saved = this.db.prepare('SELECT * FROM projects_and_tags WHERE id = ? OR name = ?').get(id, tag.name) as any;
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'PROJECT_TAG',
+      entity_id: saved.id,
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(saved),
+      created_at: new Date().toISOString(),
+    });
+
+    return {
+      ...saved,
+      is_active: Boolean(saved.is_active),
+    } as ProjectTag;
+  }
+
+  public deleteProjectTag(tagId: string): void {
+    const inUse = this.db
+      .prepare('SELECT COUNT(*) as count FROM transaction_items ti JOIN transaction_headers th ON ti.header_id = th.id WHERE th.is_deleted = 0 AND ti.project_tag_id = ?')
+      .get(tagId) as any;
+
+    if (inUse?.count > 0) {
+      throw new Error('专项标签/心愿已被交易流水引用，无法直接删除！');
+    }
+
+    this.db.prepare('DELETE FROM projects_and_tags WHERE id = ?').run(tagId);
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'PROJECT_TAG',
+      entity_id: tagId,
+      op_type: 'DELETE',
+      payload_json: JSON.stringify({ id: tagId }),
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  public upsertVoucher(params: {
+    id?: number;
+    title: string;
+    voucher_type: VoucherType;
+    face_value: string;
+    acquire_cost: string;
+    min_spend: string;
+    expire_date?: string | null;
+    status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
+    accountId?: string;
+  }): { voucher: Voucher; tx?: TransactionAggregate } {
+    if (!params.id && Number(params.acquire_cost) > 0 && params.accountId) {
+      const res = this.buyVoucher({
+        title: params.title,
+        voucherType: params.voucher_type,
+        faceValue: params.face_value,
+        acquireCost: params.acquire_cost,
+        minSpend: params.min_spend,
+        accountId: params.accountId,
+      });
+      return { voucher: res.voucher, tx: res.transaction };
+    }
+
+    if (params.id) {
+      this.db
+        .prepare(`
+          UPDATE vouchers SET
+            title = ?, voucher_type = ?, face_value = ?, acquire_cost = ?, min_spend = ?, status = ?, expire_date = ?
+          WHERE id = ?
+        `)
+        .run(
+          params.title,
+          params.voucher_type,
+          formatCny(params.face_value),
+          formatCny(params.acquire_cost ?? '0.00'),
+          formatCny(params.min_spend ?? '0.00'),
+          params.status ?? 'AVAILABLE',
+          params.expire_date ?? null,
+          params.id
+        );
+      const updated = this.db.prepare('SELECT * FROM vouchers WHERE id = ?').get(params.id) as any;
+      this.recordOpLog({
+        hlc: this.hlc.now(),
+        node_id: this.nodeId,
+        entity_type: 'VOUCHER',
+        entity_id: String(params.id),
+        op_type: 'UPSERT',
+        payload_json: JSON.stringify(updated),
+        created_at: new Date().toISOString(),
+      });
+      return { voucher: updated as Voucher };
+    }
+
+    const info = this.db
+      .prepare(`
+        INSERT INTO vouchers (title, voucher_type, face_value, acquire_cost, min_spend, status, purchase_tx_id, used_tx_id, expire_date)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+      `)
+      .run(
+        params.title,
+        params.voucher_type,
+        formatCny(params.face_value),
+        formatCny(params.acquire_cost ?? '0.00'),
+        formatCny(params.min_spend ?? '0.00'),
+        params.status ?? 'AVAILABLE',
+        params.expire_date ?? '2026-12-31'
+      );
+
+    const inserted = this.db.prepare('SELECT * FROM vouchers WHERE id = ?').get(info.lastInsertRowid) as any;
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'VOUCHER',
+      entity_id: String(inserted.id),
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(inserted),
+      created_at: new Date().toISOString(),
+    });
+
+    return { voucher: inserted as Voucher };
+  }
+
+  public deleteVoucher(id: number): void {
+    const v = this.db.prepare('SELECT * FROM vouchers WHERE id = ?').get(id) as any;
+    if (v?.purchase_tx_id) {
+      this.db
+        .prepare('UPDATE transaction_headers SET is_deleted = 1 WHERE id = ?')
+        .run(v.purchase_tx_id);
+    }
+    this.db.prepare('DELETE FROM vouchers WHERE id = ?').run(id);
+
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'VOUCHER',
+      entity_id: String(id),
+      op_type: 'DELETE',
+      payload_json: JSON.stringify({ id }),
+      created_at: new Date().toISOString(),
+    });
+
+    recalculateAllAccounts(this.db);
+  }
+
+  public upsertRecurringRule(
+    rule: Partial<RecurringRule> & { title: string; amount: string; account_id: string }
+  ): RecurringRule {
+    const existing = rule.id != null
+      ? (this.db.prepare('SELECT * FROM recurring_rules WHERE id = ?').get(rule.id) as any)
+      : null;
+
+    if (existing && rule.id != null) {
+      const ruleId = rule.id;
+      this.db
+        .prepare(`
+          UPDATE recurring_rules SET
+            title = ?, rule_type = ?, cron_cycle = ?, trigger_day = ?, currency = ?, amount = ?,
+            account_id = ?, target_account_id = ?, category_id = ?, budget_pool_id = ?,
+            auto_reserve_budget = ?, is_active = ?
+          WHERE id = ?
+        `)
+        .run(
+          rule.title,
+          rule.rule_type ?? existing.rule_type,
+          rule.cron_cycle ?? existing.cron_cycle,
+          rule.trigger_day ?? existing.trigger_day,
+          rule.currency ?? existing.currency,
+          formatCny(rule.amount),
+          rule.account_id,
+          rule.target_account_id !== undefined ? rule.target_account_id : existing.target_account_id,
+          rule.category_id !== undefined ? rule.category_id : existing.category_id,
+          rule.budget_pool_id !== undefined ? rule.budget_pool_id : existing.budget_pool_id,
+          rule.auto_reserve_budget !== undefined ? (rule.auto_reserve_budget ? 1 : 0) : existing.auto_reserve_budget,
+          rule.is_active !== undefined ? (rule.is_active ? 1 : 0) : existing.is_active,
+          ruleId
+        );
+      const updated = this.db.prepare('SELECT * FROM recurring_rules WHERE id = ?').get(ruleId) as any;
+      this.recordOpLog({
+        hlc: this.hlc.now(),
+        node_id: this.nodeId,
+        entity_type: 'RECURRING_RULE',
+        entity_id: String(ruleId),
+        op_type: 'UPSERT',
+        payload_json: JSON.stringify(updated),
+        created_at: new Date().toISOString(),
+      });
+      return { ...updated, auto_reserve_budget: Boolean(updated.auto_reserve_budget), is_active: Boolean(updated.is_active) };
+    } else {
+      const info = this.db
+        .prepare(`
+          INSERT INTO recurring_rules (
+            title, rule_type, cron_cycle, trigger_day, currency, amount,
+            account_id, target_account_id, category_id, budget_pool_id,
+            auto_reserve_budget, is_active
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          rule.title,
+          rule.rule_type ?? 'FIXED_EXPENSE',
+          rule.cron_cycle ?? 'MONTHLY',
+          rule.trigger_day ?? 1,
+          rule.currency ?? 'CNY',
+          formatCny(rule.amount),
+          rule.account_id,
+          rule.target_account_id ?? null,
+          rule.category_id ?? null,
+          rule.budget_pool_id ?? null,
+          rule.auto_reserve_budget !== false ? 1 : 0,
+          rule.is_active !== false ? 1 : 0
+        );
+      const inserted = this.db.prepare('SELECT * FROM recurring_rules WHERE id = ?').get(info.lastInsertRowid) as any;
+      this.recordOpLog({
+        hlc: this.hlc.now(),
+        node_id: this.nodeId,
+        entity_type: 'RECURRING_RULE',
+        entity_id: String(inserted.id),
+        op_type: 'UPSERT',
+        payload_json: JSON.stringify(inserted),
+        created_at: new Date().toISOString(),
+      });
+      return { ...inserted, auto_reserve_budget: Boolean(inserted.auto_reserve_budget), is_active: Boolean(inserted.is_active) };
+    }
+  }
+
+  public deleteRecurringRule(id: number): void {
+    this.db.prepare('DELETE FROM recurring_rules WHERE id = ?').run(id);
+    this.recordOpLog({
+      hlc: this.hlc.now(),
+      node_id: this.nodeId,
+      entity_type: 'RECURRING_RULE',
+      entity_id: String(id),
+      op_type: 'DELETE',
+      payload_json: JSON.stringify({ id }),
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  public executeRecurringRule(
+    id: number,
+    txDate?: string
+  ): TransactionAggregate {
+    const rule = this.db.prepare('SELECT * FROM recurring_rules WHERE id = ?').get(id) as any;
+    if (!rule) {
+      throw new Error(`Recurring rule "${id}" not found`);
+    }
+
+    if (rule.rule_type === 'AUTO_INVEST') {
+      return this.recordManualTransaction({
+        tx_type: 'TRANSFER',
+        tx_date: txDate,
+        account_id: rule.account_id,
+        target_account_id: rule.target_account_id,
+        amount: formatCny(rule.amount),
+        category_id: rule.category_id ?? undefined,
+        budget_pool_id: rule.budget_pool_id ?? 'POOL_FIXED',
+        merchant_or_note: rule.title,
+        currency: rule.currency,
+      });
+    }
+
+    if (rule.rule_type === 'FX_SUBSCRIPTION') {
+      return this.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: txDate,
+        account_id: rule.account_id,
+        amount: formatCny(rule.amount),
+        category_id: rule.category_id ?? 'CAT_DIGITAL_SUB',
+        budget_pool_id: rule.budget_pool_id ?? 'POOL_FLEX',
+        merchant_or_note: rule.title,
+        currency: rule.currency,
+      });
+    }
+
+    return this.recordManualTransaction({
+      tx_type: 'EXPENSE',
+      tx_date: txDate,
+      account_id: rule.account_id,
+      amount: formatCny(rule.amount),
+      category_id: rule.category_id ?? 'CAT_TELECOM',
+      budget_pool_id: rule.budget_pool_id ?? 'POOL_FIXED',
+      merchant_or_note: rule.title,
+      currency: rule.currency,
+    });
   }
 
   /**

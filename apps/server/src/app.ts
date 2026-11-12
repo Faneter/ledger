@@ -593,6 +593,214 @@ export function createLedgerServer(
       return { statusCode: 200, body: repo.getAccountDashboard() };
     }
 
+    // ========================================================================
+    // Stage 8: 全生命周期 CRUD REST Endpoints
+    // ========================================================================
+
+    // 18. POST /api/transactions/manual
+    if (method === 'POST' && pathname === '/api/transactions/manual') {
+      try {
+        const tx = repo.recordManualTransaction(body as any);
+        return { statusCode: 200, body: { transaction: tx } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 19. PUT /api/transactions/:id
+    let txMatch = pathname.match(/^\/api\/transactions\/([^/]+)$/);
+    if (method === 'PUT' && txMatch) {
+      const id = decodeURIComponent(txMatch[1]);
+      try {
+        const tx = repo.updateTransaction(id, body as any);
+        return { statusCode: 200, body: { transaction: tx } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 20. DELETE /api/transactions/:id
+    if (method === 'DELETE' && txMatch) {
+      const id = decodeURIComponent(txMatch[1]);
+      try {
+        const tx = repo.deleteTransaction(id);
+        return { statusCode: 200, body: { transaction: tx, deleted: true } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 21. POST /api/accounts
+    if (method === 'POST' && pathname === '/api/accounts') {
+      try {
+        const account = repo.upsertAccount(body as any);
+        return { statusCode: 200, body: { account, accounts: repo.getAccountDashboard() } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 22. POST /api/accounts/:id/calibrate
+    let accCalibMatch = pathname.match(/^\/api\/accounts\/([^/]+)\/calibrate$/);
+    if (method === 'POST' && accCalibMatch) {
+      const id = decodeURIComponent(accCalibMatch[1]);
+      const { targetBookBalance } = (body as any) || {};
+      if (targetBookBalance === undefined || targetBookBalance === null) {
+        return { statusCode: 400, body: { error: 'targetBookBalance is required' } };
+      }
+      try {
+        const account = repo.calibrateAccountBalance(id, String(targetBookBalance));
+        return { statusCode: 200, body: { account, accounts: repo.getAccountDashboard() } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 23. DELETE /api/accounts/:id
+    let accMatch = pathname.match(/^\/api\/accounts\/([^/]+)$/);
+    if (method === 'DELETE' && accMatch) {
+      const id = decodeURIComponent(accMatch[1]);
+      try {
+        repo.deleteAccount(id);
+        return { statusCode: 200, body: { success: true, accounts: repo.getAccountDashboard() } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 24. POST /api/budget-pools
+    if (method === 'POST' && pathname === '/api/budget-pools') {
+      try {
+        const pool = repo.upsertBudgetPool(body as any);
+        return { statusCode: 200, body: { pool } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 25. DELETE /api/budget-pools/:id
+    let poolMatch = pathname.match(/^\/api\/budget-pools\/([^/]+)$/);
+    if (method === 'DELETE' && poolMatch) {
+      const id = decodeURIComponent(poolMatch[1]);
+      try {
+        repo.deleteBudgetPool(id);
+        return { statusCode: 200, body: { success: true } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 26. POST /api/budgets/monthly
+    if (method === 'POST' && pathname === '/api/budgets/monthly') {
+      try {
+        const budget = repo.upsertMonthlyBudget(body as any);
+        return { statusCode: 200, body: { budget } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 27. POST /api/categories
+    if (method === 'POST' && pathname === '/api/categories') {
+      try {
+        const category = repo.upsertCategory(body as any);
+        return { statusCode: 200, body: { category } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 28. DELETE /api/categories/:id
+    let catMatch = pathname.match(/^\/api\/categories\/([^/]+)$/);
+    if (method === 'DELETE' && catMatch) {
+      const id = decodeURIComponent(catMatch[1]);
+      try {
+        repo.deleteCategory(id);
+        return { statusCode: 200, body: { success: true } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 29. POST /api/project-tags
+    if (method === 'POST' && pathname === '/api/project-tags') {
+      try {
+        const tag = repo.upsertProjectTag(body as any);
+        return { statusCode: 200, body: { tag } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 30. DELETE /api/project-tags/:id
+    let tagMatch = pathname.match(/^\/api\/project-tags\/([^/]+)$/);
+    if (method === 'DELETE' && tagMatch) {
+      const id = decodeURIComponent(tagMatch[1]);
+      try {
+        repo.deleteProjectTag(id);
+        return { statusCode: 200, body: { success: true } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 31. POST /api/vouchers
+    if (method === 'POST' && pathname === '/api/vouchers') {
+      try {
+        const res = repo.upsertVoucher(body as any);
+        return { statusCode: 200, body: res };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 32. DELETE /api/vouchers/:id
+    let vMatch = pathname.match(/^\/api\/vouchers\/([^/]+)$/);
+    if (method === 'DELETE' && vMatch) {
+      const id = Number(decodeURIComponent(vMatch[1]));
+      try {
+        repo.deleteVoucher(id);
+        return { statusCode: 200, body: { success: true } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 33. POST /api/recurring-rules
+    if (method === 'POST' && pathname === '/api/recurring-rules') {
+      try {
+        const rule = repo.upsertRecurringRule(body as any);
+        return { statusCode: 200, body: { rule } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 34. DELETE /api/recurring-rules/:id
+    let ruleMatch = pathname.match(/^\/api\/recurring-rules\/([^/]+)$/);
+    if (method === 'DELETE' && ruleMatch) {
+      const id = Number(decodeURIComponent(ruleMatch[1]));
+      try {
+        repo.deleteRecurringRule(id);
+        return { statusCode: 200, body: { success: true } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
+    // 35. POST /api/recurring-rules/:id/execute
+    let ruleExecMatch = pathname.match(/^\/api\/recurring-rules\/([^/]+)\/execute$/);
+    if (method === 'POST' && ruleExecMatch) {
+      const id = Number(decodeURIComponent(ruleExecMatch[1]));
+      const { txDate } = (body as any) || {};
+      try {
+        const tx = repo.executeRecurringRule(id, txDate);
+        return { statusCode: 200, body: { transaction: tx } };
+      } catch (err) {
+        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
+      }
+    }
+
     // 未知 API 路由返回 404
     if (pathname.startsWith('/api')) {
       return {

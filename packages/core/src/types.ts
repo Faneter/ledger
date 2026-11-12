@@ -164,7 +164,7 @@ export interface MonthlyBudgetStatusRow {
  * - SCENE: 消费场景标签
  * - STOCK_CONSUME: 零元消耗打卡标记（刷存货/饭卡）
  */
-export type TagType = 'PROJECT' | 'SCENE' | 'STOCK_CONSUME';
+export type TagType = 'PROJECT' | 'SCENE' | 'STOCK_CONSUME' | 'OFFSET';
 
 /**
  * 跨期专项立项与场景标签 (projects_and_tags)
@@ -176,6 +176,8 @@ export interface ProjectTag {
   target_budget: string | null;
   linked_pool_id: string | null;
   is_active: boolean;
+  start_date?: string | null;
+  end_date?: string | null;
   created_at?: string;
 }
 
@@ -384,10 +386,14 @@ export interface RecurringRule {
 export type SyncEntityType =
   | 'TRANSACTION'
   | 'ACCOUNT'
+  | 'BUDGET'
+  | 'BUDGET_POOL'
+  | 'CATEGORY'
   | 'VOUCHER'
   | 'MONTHLY_BUDGET'
   | 'FIXED_ASSET'
-  | 'PROJECT_TAG';
+  | 'PROJECT_TAG'
+  | 'RECURRING_RULE';
 
 /**
  * 同步操作类型
