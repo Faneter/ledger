@@ -11,3 +11,19 @@ if (rootElement) {
     </React.StrictMode>
   );
 }
+
+// Register offline-first service worker in browser environments
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        if (import.meta.env?.DEV) {
+          console.debug('[GeekLedger] Service Worker registered scope:', registration.scope);
+        }
+      })
+      .catch((err) => {
+        console.warn('[GeekLedger] Service Worker registration failed:', err);
+      });
+  });
+}
