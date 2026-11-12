@@ -1029,11 +1029,13 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               label="绑定资金池"
               onChange={(e) => setRuleForm({ ...ruleForm, budget_pool_id: e.target.value })}
             >
-              {engine.state.budgetPools.map((p) => (
-                <MenuItem key={p.id} value={p.id}>
-                  {p.name}
-                </MenuItem>
-              ))}
+              {engine.state.budgetPools
+                .filter((p) => p.is_monthly_budget)
+                .map((p) => (
+                  <MenuItem key={p.id} value={p.id}>
+                    {p.name}
+                  </MenuItem>
+                ))}
             </Select>
           </FormControl>
 
