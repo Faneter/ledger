@@ -28,6 +28,8 @@ import {
   CardContent,
   Stack,
   Divider,
+  Grid,
+  DialogActions,
 } from '@mui/material';
 import SpaceDashboardRounded from '@mui/icons-material/SpaceDashboardRounded';
 import ReceiptLongRounded from '@mui/icons-material/ReceiptLongRounded';
@@ -43,6 +45,9 @@ import CloudOffRounded from '@mui/icons-material/CloudOffRounded';
 import RestartAltRounded from '@mui/icons-material/RestartAltRounded';
 import CloseRounded from '@mui/icons-material/CloseRounded';
 import SyncRounded from '@mui/icons-material/SyncRounded';
+import FileDownloadRounded from '@mui/icons-material/FileDownloadRounded';
+import AutoAwesomeRounded from '@mui/icons-material/AutoAwesomeRounded';
+import CleaningServicesRounded from '@mui/icons-material/CleaningServicesRounded';
 
 import { createMd3Theme } from './theme/md3-theme';
 import { LocalLedgerEngine } from './sync/local-replica';
@@ -51,7 +56,6 @@ import { OverviewPage } from './components/OverviewPage';
 import { TransactionsView } from './components/TransactionsView';
 import { BudgetPoolsDashboard } from './components/BudgetPoolsDashboard';
 import { AccountMatrixPanel } from './components/AccountMatrixPanel';
-import { AssetAndProjectTracker } from './components/AssetAndProjectTracker';
 import { SyncAndConflictModal } from './components/SyncAndConflictModal';
 
 type NavTab = 'overview' | 'transactions' | 'budgets' | 'accounts' | 'settings';
@@ -71,6 +75,7 @@ export const App: React.FC = () => {
   // 3. 弹窗状态
   const [showQuickRecordModal, setShowQuickRecordModal] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
+  const [showResetChoiceModal, setShowResetChoiceModal] = useState(false);
 
   // 4. 单例本地账本引擎
   const engine = useMemo(() => new LocalLedgerEngine(), []);
@@ -104,9 +109,45 @@ export const App: React.FC = () => {
     setThemeMode((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
-  const handleResetSeed = () => {
-    if (confirm('确定要将本地数据重置回 PRD 初始种子快照吗？')) {
-      engine.resetToSeed();
+  const handleResetToClean = () => {
+    if (
+      window.confirm(
+        '确定要恢复为【纯净初始账本】吗？\n将重置为 0 资产负债、0 优惠券、0 交易流水，仅保留标准的 4 大月度预算池与常用收支分类体系。'
+      )
+    ) {
+      engine.resetToCleanState();
+      setShowResetChoiceModal(false);
+    }
+  };
+
+  const handleLoadDemo = () => {
+    if (
+      window.confirm(
+        '确定要载入【PRD 演示测试数据】吗？\n将加载标准示例账户余额、2 张立减金卡券与周期扣款规则，方便体验完整功能闭环。'
+      )
+    ) {
+      engine.loadDemoData();
+      setShowResetChoiceModal(false);
+    }
+  };
+
+  const handleExportBackup = () => {
+    try {
+      const bundle = engine.exportFullSyncBundle();
+      const dataStr =
+        'data:text/json;charset=utf-8,' +
+        encodeURIComponent(JSON.stringify(bundle, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', dataStr);
+      downloadAnchor.setAttribute(
+        'download',
+        `geek_ledger_backup_${new Date().toISOString().slice(0, 10)}.json`
+      );
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -296,11 +337,11 @@ export const App: React.FC = () => {
                   size="small"
                   variant="text"
                   color="inherit"
-                  onClick={handleResetSeed}
+                  onClick={() => setShowResetChoiceModal(true)}
                   startIcon={<RestartAltRounded fontSize="small" />}
                   sx={{ fontSize: '0.75rem', color: 'text.secondary' }}
                 >
-                  重置种子
+                  数据重置
                 </Button>
               </Stack>
             </Box>
@@ -433,10 +474,7 @@ export const App: React.FC = () => {
 
             {/* Tab 3: 预算与心愿 */}
             {currentTab === 'budgets' && (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <BudgetPoolsDashboard engine={engine} />
-                <AssetAndProjectTracker engine={engine} />
-              </Box>
+              <BudgetPoolsDashboard engine={engine} />
             )}
 
             {/* Tab 4: 账户与卡包 */}
@@ -447,19 +485,19 @@ export const App: React.FC = () => {
             {/* Tab 5: 设置与同步 */}
             {currentTab === 'settings' && (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <Card>
+                <Card sx={{ borderRadius: 3 }}>
                   <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
                     <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-                      ⚙️ 系统设置与多端协同同步
+                      ⚙️ 系统设置与多端协同中心
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>
-                      基于混合逻辑时钟 (HLC) 与 OpLogs 增量日志的本地优先离线账本
+                      基于混合逻辑时钟 (HLC) 与 OpLogs 增量日志的本地优先离线账本引擎
                     </Typography>
 
                     <Divider sx={{ mb: 3 }} />
 
                     <Stack spacing={2.5}>
-                      {/* 同步状态 */}
+                      {/* 1. 分布式多端同步与防炸机中心 */}
                       <Stack
                         direction={{ xs: 'column', sm: 'row' }}
                         spacing={2}
@@ -467,10 +505,10 @@ export const App: React.FC = () => {
                       >
                         <Box>
                           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                            分布式同步状态
+                            分布式协同与防炸机中心
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            当前本地待同步 OpLogs: {pendingCount} 条 · 未决冲突:{' '}
+                            当前本地待同步 OpLogs: {pendingCount} 条 · 未决并发冲突:{' '}
                             {pendingConflictCount} 项
                           </Typography>
                         </Box>
@@ -480,13 +518,13 @@ export const App: React.FC = () => {
                           startIcon={<ShieldRounded />}
                           onClick={() => setShowSyncModal(true)}
                         >
-                          打开分布式协同中心
+                          分布式协同与防炸机中心
                         </Button>
                       </Stack>
 
                       <Divider />
 
-                      {/* 网络离线切换 */}
+                      {/* 2. 网络离线切换 */}
                       <Stack
                         direction={{ xs: 'column', sm: 'row' }}
                         spacing={2}
@@ -494,7 +532,7 @@ export const App: React.FC = () => {
                       >
                         <Box>
                           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                            网络连接模式
+                            本地网络连接状态
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                             {isOffline
@@ -513,29 +551,84 @@ export const App: React.FC = () => {
 
                       <Divider />
 
-                      {/* 重置演示数据 */}
+                      {/* 3. 完整 JSON 数据备份与导出 */}
                       <Stack
                         direction={{ xs: 'column', sm: 'row' }}
                         spacing={2}
                         sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
                       >
                         <Box>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'error.main' }}>
-                            数据恢复与重置
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                            数据导出与灾备备份
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            一键清空本地草稿与脏数据，恢复至 PRD 规范标准演示种子快照
+                            将当前账户、OpLogs 日志、优惠券及月度预算打包导出为标准 JSON 格式文件
                           </Typography>
                         </Box>
                         <Button
                           variant="outlined"
-                          color="error"
-                          startIcon={<RestartAltRounded />}
-                          onClick={handleResetSeed}
+                          color="info"
+                          startIcon={<FileDownloadRounded />}
+                          onClick={handleExportBackup}
                         >
-                          恢复初始 PRD 种子
+                          导出完整 JSON 备份
                         </Button>
                       </Stack>
+
+                      <Divider />
+
+                      {/* 4. 纯净初始化与演示数据恢复 */}
+                      <Box>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5 }}>
+                          账本数据初始化与演示载入
+                        </Typography>
+
+                        <Grid container spacing={2}>
+                          {/* 选项 A: 恢复纯净初始账本 */}
+                          <Grid size={{ xs: 12, md: 6 }}>
+                            <Card variant="outlined" sx={{ p: 2, borderRadius: 2, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                              <Box>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'warning.main' }}>
+                                  恢复为纯净初始账本 (推荐新用户)
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, mb: 2 }}>
+                                  0 资产负债、0 优惠券、0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，从零开始建立个人账本。
+                                </Typography>
+                              </Box>
+                              <Button
+                                variant="contained"
+                                color="warning"
+                                startIcon={<CleaningServicesRounded />}
+                                onClick={handleResetToClean}
+                              >
+                                恢复为纯净初始账本
+                              </Button>
+                            </Card>
+                          </Grid>
+
+                          {/* 选项 B: 加载 PRD 演示测试数据 */}
+                          <Grid size={{ xs: 12, md: 6 }}>
+                            <Card variant="outlined" sx={{ p: 2, borderRadius: 2, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                              <Box>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                                  加载 PRD 演示测试数据 (体验样例)
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, mb: 2 }}>
+                                  载入 PRD 标杆测试样例，包含花呗/储蓄卡/外币卡初始余额、2 张测试优惠券、校园网与定投周期扣款规则，快速体验闭环。
+                                </Typography>
+                              </Box>
+                              <Button
+                                variant="outlined"
+                                color="primary"
+                                startIcon={<AutoAwesomeRounded />}
+                                onClick={handleLoadDemo}
+                              >
+                                加载 PRD 演示测试数据
+                              </Button>
+                            </Card>
+                          </Grid>
+                        </Grid>
+                      </Box>
                     </Stack>
                   </CardContent>
                 </Card>
@@ -645,6 +738,63 @@ export const App: React.FC = () => {
           isOpen={showSyncModal}
           onClose={() => setShowSyncModal(false)}
         />
+
+        {/* ================================================================= */}
+        {/* 6. 数据重置模式选择弹窗 */}
+        {/* ================================================================= */}
+        <Dialog
+          open={showResetChoiceModal}
+          onClose={() => setShowResetChoiceModal(false)}
+          maxWidth="xs"
+          fullWidth
+          slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+        >
+          <DialogTitle sx={{ fontWeight: 700 }}>
+            选择数据重置方式
+          </DialogTitle>
+          <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+            <Card variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'warning.main' }}>
+                🧹 恢复为纯净初始账本
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', my: 1 }}>
+                重置为 0 资产负债、0 优惠券、0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，推荐新用户。
+              </Typography>
+              <Button
+                variant="contained"
+                color="warning"
+                fullWidth
+                size="small"
+                startIcon={<CleaningServicesRounded />}
+                onClick={handleResetToClean}
+              >
+                恢复纯净账本 (0 数据)
+              </Button>
+            </Card>
+
+            <Card variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                🚀 加载 PRD 演示测试数据
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', my: 1 }}>
+                载入完整演示数据，包含花呗/借记卡初始余额、2 张测试优惠券、校园网与定投周期扣款规则，体验系统闭环。
+              </Typography>
+              <Button
+                variant="outlined"
+                color="primary"
+                fullWidth
+                size="small"
+                startIcon={<AutoAwesomeRounded />}
+                onClick={handleLoadDemo}
+              >
+                加载 PRD 演示数据 (体验样例)
+              </Button>
+            </Card>
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setShowResetChoiceModal(false)}>取消</Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     </ThemeProvider>
   );
