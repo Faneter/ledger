@@ -85,7 +85,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       }
     });
     return Array.from(set).sort().reverse();
-  }, [engine.state.transactions]);
+  }, [engine.stateVersion]);
 
   // 筛选过滤
   const filteredTransactions = useMemo(() => {
@@ -141,7 +141,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       return true;
     });
   }, [
-    engine.state.transactions,
+    engine.stateVersion,
     keyword,
     monthFilter,
     typeFilter,
@@ -450,22 +450,22 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         <Stack direction="row" spacing={3} sx={{ alignItems: 'center', fontSize: '0.875rem' }}>
           <Typography variant="body2">
             总支出:{' '}
-            <strong style={{ color: '#ba1a1a', fontFamily: 'monospace' }}>
+            <Box component="strong" sx={{ color: 'error.main', fontVariantNumeric: 'tabular-nums' }}>
               ¥{summaryStrip.totalExpense.toFixed(2)}
-            </strong>
+            </Box>
           </Typography>
           <Typography variant="body2">
             总收入:{' '}
-            <strong style={{ color: '#146c2e', fontFamily: 'monospace' }}>
+            <Box component="strong" sx={{ color: 'success.main', fontVariantNumeric: 'tabular-nums' }}>
               +¥{summaryStrip.totalIncome.toFixed(2)}
-            </strong>
+            </Box>
           </Typography>
           {summaryStrip.totalDiscount > 0 && (
             <Typography variant="body2">
               分摊省钱:{' '}
-              <strong style={{ color: '#0b57d0', fontFamily: 'monospace' }}>
+              <Box component="strong" sx={{ color: 'primary.main', fontVariantNumeric: 'tabular-nums' }}>
                 ¥{summaryStrip.totalDiscount.toFixed(2)}
-              </strong>
+              </Box>
             </Typography>
           )}
         </Stack>
@@ -642,7 +642,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             flexWrap: 'wrap',
                           }}
                         >
-                          <span style={{ fontFamily: 'monospace' }}>{h.tx_date}</span>
+                          <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums' }}>{h.tx_date}</Box>
                           {tx.items[0]?.project_tag_id && (
                             <>
                               <span>·</span>
@@ -660,7 +660,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                               variant="caption"
                               sx={{
                                 color: 'text.secondary',
-                                fontFamily: 'monospace',
+                                fontFamily: 'Consolas, "Cascadia Code", "Microsoft YaHei", monospace',
                                 display: 'block',
                                 mt: 0.3,
                                 bgcolor: (t) =>
@@ -695,7 +695,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           variant="h6"
                           sx={{
                             fontWeight: 800,
-                            fontFamily: 'monospace',
+                            fontVariantNumeric: 'tabular-nums',
                             lineHeight: 1.1,
                             color: isExpenseLike
                               ? 'text.primary'
@@ -826,12 +826,12 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                                 )}
                               </Box>
 
-                              <Box sx={{ textAlign: 'right', fontFamily: 'monospace' }}>
+                              <Box sx={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                                 <span>原价 ¥{it.item_gross}</span>
                                 {Number(it.allocated_discount) > 0 && (
-                                  <span style={{ color: '#146c2e', marginLeft: 8 }}>
+                                  <Box component="span" sx={{ color: 'success.main', ml: 1 }}>
                                     -¥{it.allocated_discount}
-                                  </span>
+                                  </Box>
                                 )}
                                 <strong style={{ marginLeft: 8 }}>
                                   实付 ¥{it.item_net}
@@ -942,7 +942,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     </MenuItem>
                   ))}
                 <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
-                  ── 专项预算与心愿单 ──
+                  ── 专项预算 ──
                 </MenuItem>
                 {engine.state.projectTags.map((tag) => (
                   <MenuItem key={tag.id} value={`PROJECT:${tag.id}`}>

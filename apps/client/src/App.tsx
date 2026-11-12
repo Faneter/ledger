@@ -140,7 +140,7 @@ export const App: React.FC = () => {
   const handleLoadDemo = () => {
     if (
       window.confirm(
-        '确定要载入【PRD 演示测试数据】吗？\n将加载标准示例预算池、心愿单、测试优惠券与周期扣款规则，方便体验完整功能闭环。'
+        '确定要载入【PRD 演示测试数据】吗？\n将加载标准示例预算池、专项预算、测试优惠券与周期扣款规则，方便体验完整功能闭环。'
       )
     ) {
       engine.loadDemoData();
@@ -171,7 +171,7 @@ export const App: React.FC = () => {
   const NAV_ITEMS: { key: NavTab; label: string; icon: React.ReactElement }[] = [
     { key: 'overview', label: '概览', icon: <SpaceDashboardRounded /> },
     { key: 'transactions', label: '账单', icon: <ReceiptLongRounded /> },
-    { key: 'budgets', label: '预算与心愿', icon: <SavingsRounded /> },
+    { key: 'budgets', label: '预算与专项', icon: <SavingsRounded /> },
     { key: 'accounts', label: '卡包与周期', icon: <ConfirmationNumberRounded /> },
     { key: 'settings', label: '设置与同步', icon: <TuneRounded /> },
   ];
@@ -646,7 +646,7 @@ export const App: React.FC = () => {
                             数据导出与灾备备份
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            将当前预算池、心愿单、优惠券、周期扣款与账单流水打包导出为标准 JSON 格式文件
+                            将当前预算池、专项预算、优惠券、周期扣款与账单流水打包导出为标准 JSON 格式文件
                           </Typography>
                         </Box>
                         <Button
@@ -698,7 +698,7 @@ export const App: React.FC = () => {
                                   加载 PRD 演示测试数据 (体验样例)
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, mb: 2 }}>
-                                  载入 PRD 标杆测试样例，包含 4 大预算池、心愿单、测试优惠券、校园网与外币订阅周期扣款规则，快速体验闭环。
+                                  载入 PRD 标杆测试样例，包含 4 大预算池、专项预算、测试优惠券、校园网与外币订阅周期扣款规则，快速体验闭环。
                                 </Typography>
                               </Box>
                               <Button

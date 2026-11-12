@@ -777,6 +777,7 @@ function getStorage(): { getItem(k: string): string | null; setItem(k: string, v
  */
 export class LocalLedgerEngine {
   public state: LocalReplicaState;
+  public stateVersion = 0;
   public hlc: HybridLogicalClock;
   public serverResetDetected = false;
   private listeners = new Set<() => void>();
@@ -841,6 +842,7 @@ export class LocalLedgerEngine {
   }
 
   public saveToStorage(): void {
+    this.stateVersion += 1;
     try {
       getStorage().setItem(LOCAL_STORAGE_KEY, JSON.stringify(this.state));
     } catch (e) {

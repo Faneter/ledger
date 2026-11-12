@@ -674,7 +674,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                       <InputAdornment position="start">
                         <Typography
                           sx={{
-                            fontFamily: 'monospace',
+                            fontFamily: 'Consolas, "Cascadia Code", "Microsoft YaHei", monospace',
                             fontWeight: 700,
                             color: 'primary.main',
                           }}
@@ -826,7 +826,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                                   variant="caption"
                                   sx={{
                                     color: 'text.secondary',
-                                    fontFamily: 'monospace',
+                                    fontFamily: 'Consolas, "Cascadia Code", "Microsoft YaHei", monospace',
                                   }}
                                 >
                                   ({item.raw_formula_expr})

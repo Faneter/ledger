@@ -112,7 +112,7 @@ export function createMd3Theme(mode: 'light' | 'dark'): Theme {
             borderRadius: 10,
             fontWeight: 500,
           },
-          filled: {
+          colorDefault: {
             backgroundColor: isLight ? '#eef2fd' : '#222938',
           },
         },

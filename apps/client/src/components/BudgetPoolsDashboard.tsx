@@ -27,7 +27,12 @@ import {
   Tooltip,
   Switch,
   FormControlLabel,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import ExpandMoreRounded from '@mui/icons-material/ExpandMoreRounded';
 import SavingsRounded from '@mui/icons-material/SavingsRounded';
 import FlagRounded from '@mui/icons-material/FlagRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
@@ -58,15 +63,18 @@ export interface BudgetPoolsDashboardProps {
 
 export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   engine,
-  currentYearMonth = '2026-11',
-  currentDate = '2026-11-12',
+  currentYearMonth = new Date().toISOString().slice(0, 7),
+  currentDate,
   onRefresh,
 }) => {
-  // 1. 标签页控制 (0: 月度预算资金池, 1: 专项预算与心愿单)
+  const effectiveToday = currentDate || new Date().toISOString().slice(0, 10);
+
+  // 1. 标签页控制 (0: 月度预算资金池, 1: 专项预算)
   const [activeTab, setActiveTab] = useState(0);
 
-  // 2. 年月选择器状态
+  // 2. 年月选择器与当前选中月度预算池
   const [yearMonth, setYearMonth] = useState(currentYearMonth);
+  const [selectedPoolId, setSelectedPoolId] = useState<string>('POOL_DAILY');
 
   // 3. 全局反馈提示 Toast
   const [toast, setToast] = useState<{
@@ -88,12 +96,12 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
 
   // 4. 数据获取
   const budgetStatuses: MonthlyBudgetStatusRow[] = engine.getMonthlyBudgetStatus(yearMonth);
-  const dailySummary: DailyBudgetSummary = engine.getDailyBudgetSummary(yearMonth, currentDate);
+  const dailySummary: DailyBudgetSummary = engine.getDailyBudgetSummary(yearMonth, effectiveToday);
 
   // 资金池定义映射
   const poolDefMap = useMemo(() => {
     return new Map(engine.state.budgetPools.map((p) => [p.id, p]));
-  }, [engine.state.budgetPools]);
+  }, [engine.stateVersion]);
 
   // 过滤只展示属于月度预算的资金池 (is_monthly_budget === true)
   const monthlyPoolStatuses = useMemo(() => {
@@ -102,6 +110,31 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       return def ? def.is_monthly_budget : ['POOL_FIXED', 'POOL_DAILY', 'POOL_FLEX', 'POOL_EMERGENCY'].includes(bs.pool_id);
     });
   }, [budgetStatuses, poolDefMap]);
+
+  const selectedPool = useMemo(() => {
+    return (
+      monthlyPoolStatuses.find((p) => p.pool_id === selectedPoolId) ||
+      monthlyPoolStatuses[0] ||
+      null
+    );
+  }, [monthlyPoolStatuses, selectedPoolId]);
+
+  const selectedDailyView = useMemo(() => {
+    if (!selectedPool || selectedPool.pool_id === 'POOL_DAILY') {
+      return {
+        poolName: selectedPool?.pool_name || '高频饮食与洗护池',
+        dailyAvailable: dailySummary.dailyAvailableAmount,
+        formula: dailySummary.formula,
+      };
+    }
+    const remainingNum = Math.max(0, Number(selectedPool.remaining_budget));
+    const days = Math.max(1, dailySummary.remainingDays || 1);
+    return {
+      poolName: selectedPool.pool_name,
+      dailyAvailable: (remainingNum / days).toFixed(2),
+      formula: `剩余 ¥${selectedPool.remaining_budget} ÷ ${days} 剩余天数`,
+    };
+  }, [selectedPool, dailySummary]);
 
   // 计算常规月度资金池整体水位
   const totalMonthlyBudget = monthlyPoolStatuses.reduce(
@@ -121,13 +154,26 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       ? Math.min(100, Math.round((totalMonthlySpent / totalMonthlyBudget) * 100))
       : 0;
 
-  // 计算心愿单 / 专项预算统计数据
-  const projectStats = useMemo(() => {
-    const activeTags = engine.state.projectTags.filter((t) => t.is_active !== false);
+  const isTagEffectiveActive = (tag: ProjectTag): boolean => {
+    if (tag.is_active === false) return false;
+    if (tag.end_date && effectiveToday > tag.end_date) return false;
+    return true;
+  };
+
+  // 计算专项预算统计数据
+  const { activeProjectTags, archivedProjectTags, projectStats } = useMemo(() => {
+    const activeTags: ProjectTag[] = [];
+    const archivedTags: ProjectTag[] = [];
     let totalTargetDec = toDecimal(0);
     let totalSpentDec = toDecimal(0);
 
     for (const tag of engine.state.projectTags) {
+      const active = isTagEffectiveActive(tag);
+      if (active) {
+        activeTags.push(tag);
+      } else {
+        archivedTags.push(tag);
+      }
       totalTargetDec = totalTargetDec.plus(toDecimal(tag.target_budget || '0'));
       const relatedTxs = engine.state.transactions.filter(
         (tx) =>
@@ -144,12 +190,16 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     const totalRemainingDec = totalTargetDec.minus(totalSpentDec);
 
     return {
-      activeCount: activeTags.length,
-      totalTarget: formatCny(totalTargetDec),
-      totalSpent: formatCny(totalSpentDec),
-      totalRemaining: formatCny(totalRemainingDec),
+      activeProjectTags: activeTags,
+      archivedProjectTags: archivedTags,
+      projectStats: {
+        activeCount: activeTags.length,
+        totalTarget: formatCny(totalTargetDec),
+        totalSpent: formatCny(totalSpentDec),
+        totalRemaining: formatCny(totalRemainingDec),
+      },
     };
-  }, [engine.state.projectTags, engine.state.transactions]);
+  }, [engine.stateVersion, effectiveToday]);
 
   // ===========================================================================
   // 弹窗状态与表单模型
@@ -288,7 +338,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   };
 
   // ===========================================================================
-  // Tab 1: 专项储蓄与心愿单处理逻辑
+  // Tab 1: 专项预算处理逻辑
   // ===========================================================================
 
   const handleOpenAddWish = (initialName?: string, initialBudget?: string) => {
@@ -296,7 +346,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     setWishForm({
       id: `TAG_${Date.now()}`,
       name: initialName || '',
-      target_budget: initialBudget || '500.00',
+      target_budget: initialBudget || '',
       tag_type: 'PROJECT',
       start_date: `${yearMonth}-01`,
       end_date: `${yearMonth}-30`,
@@ -323,24 +373,24 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
 
   const handleSaveWish = () => {
     if (!wishForm.name.trim()) {
-      showToast('请输入心愿/专项名称', 'warning');
+      showToast('请输入专项预算名称', 'warning');
       return;
     }
     try {
       engine.upsertProjectTag({
         id: wishEditingId || wishForm.id,
         name: wishForm.name.trim(),
-        target_budget: wishForm.target_budget,
-        tag_type: wishForm.tag_type,
+        target_budget: wishForm.target_budget || '0.00',
+        tag_type: 'PROJECT',
         start_date: wishForm.start_date || null,
         end_date: wishForm.end_date || null,
-        linked_pool_id: wishForm.linked_pool_id || null,
+        linked_pool_id: null,
         is_active: wishForm.is_active,
       });
       showToast(
         wishEditingId
-          ? `心愿专项【${wishForm.name}】已更新`
-          : `已新增心愿专项【${wishForm.name}】`,
+          ? `专项预算【${wishForm.name}】已更新`
+          : `已新增专项预算【${wishForm.name}】`,
         'success'
       );
       setWishModalOpen(false);
@@ -351,10 +401,10 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   };
 
   const handleDeleteWish = (tagId: string, tagName: string) => {
-    if (!window.confirm(`确定要删除心愿专项【${tagName}】吗？`)) return;
+    if (!window.confirm(`确定要删除专项预算【${tagName}】吗？`)) return;
     try {
       engine.deleteProjectTag(tagId);
-      showToast(`心愿专项【${tagName}】已删除`, 'success');
+      showToast(`专项预算【${tagName}】已删除`, 'success');
       onRefresh?.();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), 'error');
@@ -396,7 +446,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
             <Tab
               icon={<FlagRounded fontSize="small" />}
               iconPosition="start"
-              label="专项预算与心愿单"
+              label="专项预算"
               sx={{ fontWeight: 700 }}
             />
           </Tabs>
@@ -447,7 +497,10 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 sx={{
                   height: '100%',
                   borderRadius: 3,
-                  bgcolor: (t) => (t.palette.mode === 'dark' ? 'grey.900' : 'primary.50'),
+                  bgcolor: (t) =>
+                    t.palette.mode === 'dark'
+                      ? alpha(t.palette.primary.main, 0.14)
+                      : alpha(t.palette.primary.main, 0.08),
                   border: '1px solid',
                   borderColor: 'primary.main',
                 }}
@@ -461,7 +514,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                       icon={<AutoAwesomeRounded />}
                     />
                     <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                      高频生活池 · 今日剩余日均可用
+                      {selectedDailyView.poolName} · 今日剩余日均可用
                     </Typography>
                   </Stack>
 
@@ -476,9 +529,10 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                         color: 'primary.main',
                         letterSpacing: '-1px',
                         lineHeight: 1,
+                        fontVariantNumeric: 'tabular-nums',
                       }}
                     >
-                      {dailySummary.dailyAvailableAmount}
+                      {selectedDailyView.dailyAvailable}
                     </Typography>
                     <Typography variant="subtitle1" sx={{ color: 'text.secondary', fontWeight: 600 }}>
                       / 天
@@ -489,7 +543,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                     variant="caption"
                     sx={{
                       display: 'block',
-                      fontFamily: 'monospace',
+                      fontFamily: 'Consolas, "Cascadia Code", "Microsoft YaHei", monospace',
                       color: 'text.secondary',
                       bgcolor: 'background.paper',
                       p: 1,
@@ -498,7 +552,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                       wordBreak: 'break-all',
                     }}
                   >
-                    计算公式: {dailySummary.formula}
+                    计算公式: {selectedDailyView.formula}
                   </Typography>
                 </CardContent>
               </Card>
@@ -564,20 +618,22 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 totalAvail > 0 ? Math.min(100, Math.round((spent / totalAvail) * 100)) : 0;
               const isOverspent = remaining < 0;
               const poolDef = poolDefMap.get(pool.pool_id);
-              const isDailyPool = pool.pool_id === 'POOL_DAILY';
+              const isSelected = pool.pool_id === (selectedPool?.pool_id || 'POOL_DAILY');
 
               return (
                 <Grid size={{ xs: 12, sm: 6, md: 4 }} key={pool.pool_id}>
                   <Card
+                    onClick={() => setSelectedPoolId(pool.pool_id)}
                     sx={{
                       height: '100%',
                       borderRadius: 3,
                       display: 'flex',
                       flexDirection: 'column',
                       justifyContent: 'space-between',
-                      border: isDailyPool ? '2px solid' : '1px solid',
-                      borderColor: isDailyPool ? 'primary.main' : 'divider',
-                      transition: 'transform 0.15s ease-in-out',
+                      cursor: 'pointer',
+                      border: isSelected ? '2px solid' : '1px solid',
+                      borderColor: isSelected ? 'primary.main' : 'divider',
+                      transition: 'transform 0.15s ease-in-out, border-color 0.15s ease-in-out',
                       '&:hover': {
                         transform: 'translateY(-2px)',
                         boxShadow: 3,
@@ -710,11 +766,11 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* Tab 1: 专项预算与心愿单 (Wish Goals) */}
+      {/* Tab 1: 专项预算 */}
       {/* ===================================================================== */}
       {activeTab === 1 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-          {/* 专项预算与心愿单概览汇总条 */}
+          {/* 专项预算概览汇总条 */}
           <Card
             sx={{
               borderRadius: 3,
@@ -734,7 +790,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
                   <FlagRounded color="secondary" />
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    专项预算与心愿单总览
+                    专项预算总览
                   </Typography>
                   <Chip
                     size="small"
@@ -748,7 +804,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                       专项总目标预算
                     </Typography>
-                    <Typography variant="h6" sx={{ fontWeight: 800, color: 'text.primary' }}>
+                    <Typography variant="h6" sx={{ fontWeight: 800, color: 'text.primary', fontVariantNumeric: 'tabular-nums' }}>
                       ¥{projectStats.totalTarget}
                     </Typography>
                   </Box>
@@ -756,7 +812,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                       累计已支出
                     </Typography>
-                    <Typography variant="h6" sx={{ fontWeight: 800, color: 'text.primary' }}>
+                    <Typography variant="h6" sx={{ fontWeight: 800, color: 'text.primary', fontVariantNumeric: 'tabular-nums' }}>
                       ¥{projectStats.totalSpent}
                     </Typography>
                   </Box>
@@ -768,6 +824,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                       variant="h6"
                       sx={{
                         fontWeight: 800,
+                        fontVariantNumeric: 'tabular-nums',
                         color: Number(projectStats.totalRemaining) < 0 ? 'error.main' : 'success.main',
                       }}
                     >
@@ -784,21 +841,20 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 onClick={() => handleOpenAddWish()}
                 sx={{ borderRadius: 2, height: 42, px: 3, whiteSpace: 'nowrap' }}
               >
-                新增心愿单 / 专项预算
+                新增专项预算
               </Button>
             </Stack>
           </Card>
 
-          {/* 心愿单列表 */}
+          {/* 专项预算列表（仅展示进行中项目，已归档/已过期项目收纳到底部折叠区） */}
           {engine.state.projectTags.length === 0 ? (
-            /* 空状态友好引导卡片 */
             <Card sx={{ borderRadius: 3, p: 4, textAlign: 'center' }}>
               <FlagRounded sx={{ fontSize: 56, color: 'text.secondary', mb: 1 }} />
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-                当前尚未创建任何专项立项与心愿单
+                当前尚未创建任何专项预算
               </Typography>
               <Typography variant="body2" sx={{ color: 'text.secondary', maxWidth: 500, mx: 'auto', mb: 3 }}>
-                纯净账本模式下未预置测试数据。你可以创建如「考证报名与资料」、「寒假旅行基金」、「数码设备换新」等愿望清单，跟踪独立预算与累计开销！
+                纯净账本模式下未预置测试数据。你可以创建如「考证报名与资料」、「寒假旅行基金」、「换新电子设备」等专项预算，跟踪独立预算与累计开销。
               </Typography>
               <Stack direction="row" spacing={1.5} sx={{ justifyContent: 'center', flexWrap: 'wrap' }}>
                 <Button
@@ -827,195 +883,222 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 </Button>
               </Stack>
             </Card>
-          ) : (
-            <Grid container spacing={2}>
-              {engine.state.projectTags.map((tag) => {
-                // 计算当前心愿标签关联交易累计支出
-                const relatedTxs = engine.state.transactions.filter(
-                  (tx) =>
-                    !tx.header.is_deleted &&
-                    tx.items.some((it) => it.project_tag_id === tag.id)
-                );
+          ) : (() => {
+            const renderProjectCard = (tag: ProjectTag, isActive: boolean) => {
+              const relatedTxs = engine.state.transactions.filter(
+                (tx) =>
+                  !tx.header.is_deleted &&
+                  tx.items.some((it) => it.project_tag_id === tag.id)
+              );
 
-                const spentDec = relatedTxs
-                  .flatMap((tx) => tx.items)
-                  .filter((it) => it.project_tag_id === tag.id)
-                  .reduce((acc, it) => acc.plus(toDecimal(it.item_net)), toDecimal(0));
-                const spentStr = formatCny(spentDec);
+              const spentDec = relatedTxs
+                .flatMap((tx) => tx.items)
+                .filter((it) => it.project_tag_id === tag.id)
+                .reduce((acc, it) => acc.plus(toDecimal(it.item_net)), toDecimal(0));
+              const spentStr = formatCny(spentDec);
 
-                const targetDec = toDecimal(tag.target_budget || '0');
-                const remainingDec = targetDec.minus(spentDec);
-                const remainingStr = formatCny(remainingDec);
+              const targetDec = toDecimal(tag.target_budget || '0');
+              const remainingDec = targetDec.minus(spentDec);
+              const remainingStr = formatCny(remainingDec);
 
-                const targetNum = targetDec.toNumber();
-                const spentNum = spentDec.toNumber();
-                const percent =
-                  targetNum > 0 ? Math.min(100, Math.round((spentNum / targetNum) * 100)) : 0;
+              const targetNum = targetDec.toNumber();
+              const spentNum = spentDec.toNumber();
+              const percent =
+                targetNum > 0 ? Math.min(100, Math.round((spentNum / targetNum) * 100)) : 0;
 
-                return (
-                  <Grid size={{ xs: 12, sm: 6, md: 4 }} key={tag.id}>
-                    <Card
-                      sx={{
-                        height: '100%',
-                        borderRadius: 3,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                        border: '1px solid',
-                        borderColor: tag.is_active ? 'secondary.light' : 'divider',
-                        transition: 'transform 0.15s ease-in-out',
-                        '&:hover': {
-                          transform: 'translateY(-2px)',
-                          boxShadow: 3,
-                        },
-                      }}
-                    >
-                      <CardContent sx={{ p: 2 }}>
-                        {/* 头部信息 */}
-                        <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
-                          <Box>
-                            <Typography variant="h6" sx={{ fontWeight: 800, color: 'secondary.main' }}>
-                              #{tag.name}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              {tag.start_date || '开始未定'} ~ {tag.end_date || '长期'}
-                            </Typography>
-                          </Box>
-                          <Stack direction="row" spacing={0.5}>
-                            <Chip
-                              size="small"
-                              label={tag.tag_type === 'PROJECT' ? '专项心愿' : '场景标签'}
-                              color="secondary"
-                              variant="outlined"
-                            />
-                            {tag.is_active ? (
-                              <Chip size="small" label="进行中" color="success" />
-                            ) : (
-                              <Chip size="small" label="已归档" />
-                            )}
-                          </Stack>
+              return (
+                <Grid size={{ xs: 12, sm: 6, md: 4 }} key={tag.id}>
+                  <Card
+                    sx={{
+                      height: '100%',
+                      borderRadius: 3,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      border: '1px solid',
+                      borderColor: isActive ? 'secondary.light' : 'divider',
+                      opacity: isActive ? 1 : 0.85,
+                      transition: 'transform 0.15s ease-in-out',
+                      '&:hover': {
+                        transform: 'translateY(-2px)',
+                        boxShadow: 3,
+                      },
+                    }}
+                  >
+                    <CardContent sx={{ p: 2 }}>
+                      <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
+                        <Box>
+                          <Typography variant="h6" sx={{ fontWeight: 800, color: 'secondary.main' }}>
+                            #{tag.name}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
+                            {tag.start_date || '开始未定'} ~ {tag.end_date || '长期'}
+                          </Typography>
+                        </Box>
+                        {isActive ? (
+                          <Chip size="small" label="进行中" color="success" />
+                        ) : (
+                          <Chip size="small" label="已归档" />
+                        )}
+                      </Stack>
+
+                      <Box sx={{ my: 1 }}>
+                        <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            目标总预算
+                          </Typography>
+                          <Typography variant="body1" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                            ¥{tag.target_budget || '0.00'}
+                          </Typography>
                         </Stack>
 
-                        {/* 金额进度 */}
-                        <Box sx={{ my: 1 }}>
-                          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              目标总预算
-                            </Typography>
-                            <Typography variant="body1" sx={{ fontWeight: 800 }}>
-                              ¥{tag.target_budget || '0.00'}
-                            </Typography>
-                          </Stack>
-
-                          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              已消耗进度
-                            </Typography>
-                            <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                              ¥{spentStr}
-                            </Typography>
-                          </Stack>
-
-                          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              剩余可用额度
-                            </Typography>
-                            <Typography
-                              variant="body2"
-                              sx={{
-                                fontWeight: 800,
-                                color: remainingDec.isNegative() ? 'error.main' : 'success.main',
-                              }}
-                            >
-                              ¥{remainingStr}
-                            </Typography>
-                          </Stack>
-
-                          <Box sx={{ mt: 1.5 }}>
-                            <Stack direction="row" sx={{ justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                完成度: {percent}%
-                              </Typography>
-                            </Stack>
-                            <LinearProgress
-                              variant="determinate"
-                              value={percent}
-                              color={percent >= 100 ? 'warning' : 'secondary'}
-                              sx={{ height: 6, borderRadius: 3 }}
-                            />
-                          </Box>
-                        </Box>
-
-                        {/* 关联流水摘要 */}
-                        <Divider sx={{ my: 1.5 }} />
-                        <Box>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <ReceiptLongRounded fontSize="inherit" />
-                            关联明细流水 ({relatedTxs.length} 笔)
+                        <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            已消耗进度
                           </Typography>
-                          {relatedTxs.length === 0 ? (
-                            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
-                              暂无记账流水关联此心愿
-                            </Typography>
-                          ) : (
-                            <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                              {relatedTxs.slice(0, 2).map((tx) => (
-                                <Stack
-                                  key={tx.header.id}
-                                  direction="row"
-                                  sx={{ justifyContent: 'space-between', fontSize: '0.75rem', color: 'text.secondary' }}
-                                >
-                                  <span>{tx.header.tx_date} {tx.header.merchant_or_note || '支出'}</span>
-                                  <span style={{ fontWeight: 600 }}>¥{tx.header.total_net}</span>
-                                </Stack>
-                              ))}
-                              {relatedTxs.length > 2 && (
-                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                  ... 更多 {relatedTxs.length - 2} 笔
-                                </Typography>
-                              )}
-                            </Stack>
-                          )}
-                        </Box>
-                      </CardContent>
+                          <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.primary', fontVariantNumeric: 'tabular-nums' }}>
+                            ¥{spentStr}
+                          </Typography>
+                        </Stack>
 
-                      {/* 底栏动作按钮 */}
-                      <Box
-                        sx={{
-                          p: 1.5,
-                          pt: 0,
-                          display: 'flex',
-                          justifyContent: 'flex-end',
-                          gap: 1,
-                          borderTop: '1px solid',
-                          borderColor: 'divider',
-                        }}
-                      >
-                        <Tooltip title="编辑心愿单">
-                          <IconButton
-                            size="small"
-                            color="secondary"
-                            onClick={() => handleOpenEditWish(tag)}
+                        <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            剩余可用额度
+                          </Typography>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontWeight: 800,
+                              fontVariantNumeric: 'tabular-nums',
+                              color: remainingDec.isNegative() ? 'error.main' : 'success.main',
+                            }}
                           >
-                            <EditRounded fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="删除心愿单">
-                          <IconButton
-                            size="small"
-                            color="error"
-                            onClick={() => handleDeleteWish(tag.id, tag.name)}
-                          >
-                            <DeleteOutlineRounded fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                            ¥{remainingStr}
+                          </Typography>
+                        </Stack>
+
+                        <Box sx={{ mt: 1.5 }}>
+                          <Stack direction="row" sx={{ justifyContent: 'space-between', mb: 0.5 }}>
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              完成度: {percent}%
+                            </Typography>
+                          </Stack>
+                          <LinearProgress
+                            variant="determinate"
+                            value={percent}
+                            color={percent >= 100 ? 'warning' : 'secondary'}
+                            sx={{ height: 6, borderRadius: 3 }}
+                          />
+                        </Box>
                       </Box>
-                    </Card>
+
+                      <Divider sx={{ my: 1.5 }} />
+                      <Box>
+                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <ReceiptLongRounded fontSize="inherit" />
+                          关联明细流水 ({relatedTxs.length} 笔)
+                        </Typography>
+                        {relatedTxs.length === 0 ? (
+                          <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
+                            暂无记账流水关联此专项预算
+                          </Typography>
+                        ) : (
+                          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                            {relatedTxs.slice(0, 2).map((tx) => (
+                              <Stack
+                                key={tx.header.id}
+                                direction="row"
+                                sx={{ justifyContent: 'space-between', fontSize: '0.75rem', color: 'text.secondary' }}
+                              >
+                                <span>{tx.header.tx_date} {tx.header.merchant_or_note || '支出'}</span>
+                                <span style={{ fontWeight: 600 }}>¥{tx.header.total_net}</span>
+                              </Stack>
+                            ))}
+                            {relatedTxs.length > 2 && (
+                              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                ... 更多 {relatedTxs.length - 2} 笔
+                              </Typography>
+                            )}
+                          </Stack>
+                        )}
+                      </Box>
+                    </CardContent>
+
+                    <Box
+                      sx={{
+                        p: 1.5,
+                        pt: 0,
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: 1,
+                        borderTop: '1px solid',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      <Tooltip title="编辑专项预算">
+                        <IconButton
+                          size="small"
+                          color="secondary"
+                          onClick={() => handleOpenEditWish(tag)}
+                        >
+                          <EditRounded fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="删除专项预算">
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => handleDeleteWish(tag.id, tag.name)}
+                        >
+                          <DeleteOutlineRounded fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  </Card>
+                </Grid>
+              );
+            };
+
+            return (
+              <>
+                {activeProjectTags.length === 0 ? (
+                  <Card sx={{ borderRadius: 3, p: 3, textAlign: 'center' }}>
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                      当前没有进行中的专项预算，已归档或到期项目已收纳至下方折叠区。
+                    </Typography>
+                  </Card>
+                ) : (
+                  <Grid container spacing={2}>
+                    {activeProjectTags.map((tag) => renderProjectCard(tag, true))}
                   </Grid>
-                );
-              })}
-            </Grid>
-          )}
+                )}
+
+                {archivedProjectTags.length > 0 && (
+                  <Accordion
+                    defaultExpanded={false}
+                    sx={{
+                      borderRadius: '12px !important',
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      boxShadow: 'none',
+                      '&::before': { display: 'none' },
+                    }}
+                  >
+                    <AccordionSummary expandIcon={<ExpandMoreRounded />}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.secondary' }}>
+                        已归档 / 已到期专项预算 ({archivedProjectTags.length})
+                      </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                      <Grid container spacing={2}>
+                        {archivedProjectTags.map((tag) => renderProjectCard(tag, false))}
+                      </Grid>
+                    </AccordionDetails>
+                  </Accordion>
+                )}
+              </>
+            );
+          })()}
         </Box>
       )}
 
@@ -1089,7 +1172,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       </Dialog>
 
       {/* ===================================================================== */}
-      {/* 弹窗 2: 心愿单编辑 / 新增 Dialog */}
+      {/* 弹窗 2: 专项预算编辑 / 新增 Dialog */}
       {/* ===================================================================== */}
       <Dialog
         open={wishModalOpen}
@@ -1099,11 +1182,11 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
         slotProps={{ paper: { sx: { borderRadius: 3 } } }}
       >
         <DialogTitle sx={{ fontWeight: 700 }}>
-          {wishEditingId ? `编辑心愿专项: ${wishForm.name}` : '新增心愿单 / 专项预算'}
+          {wishEditingId ? `编辑专项预算: ${wishForm.name}` : '新增专项预算'}
         </DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
           <TextField
-            label="心愿 / 专项名称"
+            label="专项预算名称"
             fullWidth
             size="small"
             value={wishForm.name}
@@ -1120,19 +1203,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
             onChange={(e) => setWishForm({ ...wishForm, target_budget: e.target.value })}
             placeholder="如: 350.00"
           />
-
-          <FormControl fullWidth size="small">
-            <InputLabel>标签类型</InputLabel>
-            <Select
-              value={wishForm.tag_type}
-              label="标签类型"
-              onChange={(e) => setWishForm({ ...wishForm, tag_type: e.target.value as TagType })}
-            >
-              <MenuItem value="PROJECT">专项立项（跨月追踪）</MenuItem>
-              <MenuItem value="SCENE">消费场景标签</MenuItem>
-              <MenuItem value="STOCK_CONSUME">零元消耗打卡标记</MenuItem>
-            </Select>
-          </FormControl>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <TextField
@@ -1155,24 +1225,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
             />
           </Stack>
 
-          <FormControl fullWidth size="small">
-            <InputLabel>关联预算沉淀池</InputLabel>
-            <Select
-              value={wishForm.linked_pool_id}
-              label="关联预算沉淀池"
-              onChange={(e) => setWishForm({ ...wishForm, linked_pool_id: e.target.value })}
-            >
-              <MenuItem value="POOL_FUND">年度专项基金池</MenuItem>
-              {engine.state.budgetPools
-                .filter((p) => p.id !== 'POOL_FUND')
-                .map((p) => (
-                  <MenuItem key={p.id} value={p.id}>
-                    {p.name}
-                  </MenuItem>
-                ))}
-            </Select>
-          </FormControl>
-
           <FormControlLabel
             control={
               <Switch
@@ -1180,13 +1232,13 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 onChange={(e) => setWishForm({ ...wishForm, is_active: e.target.checked })}
               />
             }
-            label={wishForm.is_active ? '进行中心愿 (活跃状态)' : '已达成/归档心愿'}
+            label={wishForm.is_active ? '进行中专项预算 (活跃状态)' : '已达成/归档专项预算'}
           />
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setWishModalOpen(false)}>取消</Button>
           <Button variant="contained" color="secondary" onClick={handleSaveWish}>
-            保存心愿单
+            保存专项预算
           </Button>
         </DialogActions>
       </Dialog>

@@ -26,6 +26,7 @@ import {
   Switch,
   FormControlLabel,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import ConfirmationNumberRounded from '@mui/icons-material/ConfirmationNumberRounded';
 import EventRepeatRounded from '@mui/icons-material/EventRepeatRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
@@ -79,7 +80,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   const filteredVouchers = useMemo(() => {
     if (voucherFilter === 'ALL') return engine.state.vouchers;
     return engine.state.vouchers.filter((v) => v.status === voucherFilter);
-  }, [engine.state.vouchers, voucherFilter]);
+  }, [engine.stateVersion, voucherFilter]);
 
   // ===========================================================================
   // 弹窗状态与表单模型
@@ -102,10 +103,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     customPrefix: '',
     title: '',
     voucher_type: 'FREE_COUPON',
-    face_value: '5.00',
-    acquire_cost: '0.00',
-    min_spend: '50.00',
-    expire_date: '2026-12-31',
+    face_value: '',
+    acquire_cost: '',
+    min_spend: '',
+    expire_date: '',
     status: 'AVAILABLE',
   });
 
@@ -116,7 +117,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     title: string;
     rule_type: RecurringRuleType;
     cron_cycle: CronCycle;
-    trigger_day: number;
+    trigger_day: string;
     currency: string;
     amount: string;
     budget_pool_id: string;
@@ -125,9 +126,9 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     title: '',
     rule_type: 'FIXED_EXPENSE',
     cron_cycle: 'MONTHLY',
-    trigger_day: 1,
+    trigger_day: '',
     currency: 'CNY',
-    amount: '20.00',
+    amount: '',
     budget_pool_id: 'POOL_FIXED',
     auto_reserve_budget: true,
   });
@@ -143,10 +144,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       customPrefix: '',
       title: sampleTitle || '',
       voucher_type: 'FREE_COUPON',
-      face_value: sampleFace || '5.00',
-      acquire_cost: '0.00',
-      min_spend: sampleMin || '50.00',
-      expire_date: '2026-12-31',
+      face_value: sampleFace || '',
+      acquire_cost: '',
+      min_spend: sampleMin || '',
+      expire_date: '',
       status: 'AVAILABLE',
     });
     setVoucherModalOpen(true);
@@ -159,10 +160,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       customPrefix: '',
       title: sampleTitle || '',
       voucher_type: 'PREPAID_COUPON',
-      face_value: sampleFace || '10.00',
-      acquire_cost: sampleCost || '5.99',
-      min_spend: sampleMin || '10.01',
-      expire_date: '2026-12-31',
+      face_value: sampleFace || '',
+      acquire_cost: sampleCost || '',
+      min_spend: sampleMin || '',
+      expire_date: '',
       status: 'AVAILABLE',
     });
     setVoucherModalOpen(true);
@@ -190,11 +191,14 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       return;
     }
 
+    const resolvedCost = voucherForm.acquire_cost.trim() || '0.00';
+    const resolvedMinSpend = voucherForm.min_spend.trim() || '0.00';
+
     const autoTitle = generateVoucherTitle(
       voucherForm.voucher_type,
       voucherForm.face_value,
-      voucherForm.min_spend,
-      voucherForm.acquire_cost
+      resolvedMinSpend,
+      resolvedCost
     );
     const resolvedTitle = voucherForm.customPrefix.trim()
       ? `${voucherForm.customPrefix.trim()} ${autoTitle}`
@@ -208,12 +212,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
           title: resolvedTitle,
           voucher_type: voucherForm.voucher_type,
           face_value: voucherForm.face_value,
-          acquire_cost: voucherForm.acquire_cost,
-          min_spend: voucherForm.min_spend,
+          acquire_cost: resolvedCost,
+          min_spend: resolvedMinSpend,
           expire_date: voucherForm.expire_date || null,
         });
         showToast(
-          `成功购入立减金【${resolvedTitle}】，已扣款 ¥${voucherForm.acquire_cost}`,
+          `成功购入立减金【${resolvedTitle}】，已扣款 ¥${resolvedCost}`,
           'success'
         );
       } else {
@@ -222,8 +226,8 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
           title: resolvedTitle,
           voucher_type: voucherForm.voucher_type,
           face_value: voucherForm.face_value,
-          acquire_cost: voucherForm.acquire_cost,
-          min_spend: voucherForm.min_spend,
+          acquire_cost: resolvedCost,
+          min_spend: resolvedMinSpend,
           expire_date: voucherForm.expire_date || null,
           status: voucherForm.status,
         });
@@ -261,12 +265,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     setRuleEditingId(null);
     const ruleType = sampleType || 'FIXED_EXPENSE';
     setRuleForm({
-      title: sampleTitle || '校园网宽带固定月租',
+      title: sampleTitle || '',
       rule_type: ruleType,
       cron_cycle: 'MONTHLY',
-      trigger_day: sampleDay || 1,
+      trigger_day: sampleDay ? String(sampleDay) : '',
       currency: ruleType === 'FX_SUBSCRIPTION' ? 'USD' : 'CNY',
-      amount: sampleAmt || '20.00',
+      amount: sampleAmt || '',
       budget_pool_id: 'POOL_FIXED',
       auto_reserve_budget: true,
     });
@@ -279,7 +283,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       title: r.title,
       rule_type: r.rule_type,
       cron_cycle: r.cron_cycle,
-      trigger_day: r.trigger_day,
+      trigger_day: String(r.trigger_day),
       currency: r.currency || 'CNY',
       amount: r.amount,
       budget_pool_id: r.budget_pool_id || 'POOL_FIXED',
@@ -298,13 +302,17 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       return;
     }
 
+    const parsedDay = Math.min(31, Math.max(1, Math.round(Number(ruleForm.trigger_day) || 1)));
+    const derivedRuleType: RecurringRuleType =
+      ruleForm.currency === 'CNY' ? 'FIXED_EXPENSE' : 'FX_SUBSCRIPTION';
+
     try {
       engine.upsertRecurringRule({
         id: ruleEditingId || undefined,
         title: ruleForm.title.trim(),
-        rule_type: ruleForm.rule_type,
+        rule_type: derivedRuleType,
         cron_cycle: ruleForm.cron_cycle,
-        trigger_day: ruleForm.trigger_day,
+        trigger_day: parsedDay,
         currency: ruleForm.currency,
         amount: ruleForm.amount,
         account_id: 'ACC_UNION_MAIN',
@@ -816,7 +824,9 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               p: 1.2,
               borderRadius: 2,
               bgcolor: (t) =>
-                t.palette.mode === 'light' ? 'primary.50' : 'grey.900',
+                t.palette.mode === 'light'
+                  ? alpha(t.palette.primary.main, 0.08)
+                  : alpha(t.palette.primary.main, 0.16),
               border: '1px dashed',
               borderColor: 'primary.main',
               display: 'flex',
@@ -831,12 +841,16 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               size="small"
               color="primary"
               variant="outlined"
-              label={`${voucherForm.customPrefix.trim() ? voucherForm.customPrefix.trim() + ' ' : ''}${generateVoucherTitle(
-                voucherForm.voucher_type,
-                voucherForm.face_value,
-                voucherForm.min_spend,
-                voucherForm.acquire_cost
-              )}`}
+              label={
+                Number(voucherForm.face_value) > 0
+                  ? `${voucherForm.customPrefix.trim() ? voucherForm.customPrefix.trim() + ' ' : ''}${generateVoucherTitle(
+                      voucherForm.voucher_type,
+                      voucherForm.face_value,
+                      voucherForm.min_spend || '0.00',
+                      voucherForm.acquire_cost || '0.00'
+                    )}`
+                  : '填写面值后自动生成'
+              }
               sx={{ fontWeight: 700 }}
             />
           </Box>
@@ -958,29 +972,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <FormControl fullWidth size="small">
-              <InputLabel>规则类型</InputLabel>
-              <Select
-                value={ruleForm.rule_type}
-                label="规则类型"
-                onChange={(e) => {
-                  const nextType = e.target.value as RecurringRuleType;
-                  const nextCurrency =
-                    nextType === 'FX_SUBSCRIPTION' && ruleForm.currency === 'CNY'
-                      ? 'USD'
-                      : ruleForm.currency;
-                  setRuleForm({
-                    ...ruleForm,
-                    rule_type: nextType,
-                    currency: nextCurrency,
-                  });
-                }}
-              >
-                <MenuItem value="FIXED_EXPENSE">固定生活开支</MenuItem>
-                <MenuItem value="FX_SUBSCRIPTION">外币周期订阅</MenuItem>
-              </Select>
-            </FormControl>
-
-            <FormControl fullWidth size="small">
               <InputLabel>触发周期</InputLabel>
               <Select
                 value={ruleForm.cron_cycle}
@@ -993,9 +984,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                 <MenuItem value="YEARLY">每年触发</MenuItem>
               </Select>
             </FormControl>
-          </Stack>
 
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <FormControl fullWidth size="small">
               <InputLabel>币种</InputLabel>
               <Select
@@ -1013,7 +1002,9 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                 <MenuItem value="HKD">HKD 港币</MenuItem>
               </Select>
             </FormControl>
+          </Stack>
 
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <TextField
               label={`扣款金额 (${ruleForm.currency})`}
               fullWidth
@@ -1030,7 +1021,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               size="small"
               type="number"
               value={ruleForm.trigger_day}
-              onChange={(e) => setRuleForm({ ...ruleForm, trigger_day: Number(e.target.value) })}
+              onChange={(e) => setRuleForm({ ...ruleForm, trigger_day: e.target.value })}
               placeholder="如 1"
             />
           </Stack>

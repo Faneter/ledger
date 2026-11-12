@@ -49,12 +49,12 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   // 1. 日常预算与省钱汇总
   const dailySummary: DailyBudgetSummary = useMemo(() => {
     return engine.getDailyBudgetSummary('2026-11', '2026-11-12');
-  }, [engine, engine.state.transactions]);
+  }, [engine, engine.stateVersion]);
 
   // 2. 常规月度预算总览
   const budgetStatuses: MonthlyBudgetStatusRow[] = useMemo(() => {
     return engine.getMonthlyBudgetStatus('2026-11');
-  }, [engine, engine.state.transactions]);
+  }, [engine, engine.stateVersion]);
 
   const regularPools = budgetStatuses.filter((b) =>
     ['POOL_FIXED', 'POOL_DAILY', 'POOL_FLEX', 'POOL_EMERGENCY'].includes(b.pool_id)
@@ -73,7 +73,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       ? Math.min(100, Math.round((totalMonthlySpent / totalMonthlyBudget) * 100))
       : 0;
 
-  // 3. 专项/心愿总支出计算
+  // 3. 专项预算总支出计算
   const projectTotalSpent = useMemo(() => {
     const activeProjectTagIds = new Set(
       engine.state.projectTags
@@ -90,7 +90,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       }
     }
     return total.toFixed(2);
-  }, [engine.state.projectTags, engine.state.transactions]);
+  }, [engine.stateVersion]);
 
   // 4. 待清算外币交易
   const pendingFxTxs: TransactionAggregate[] = engine.getPendingFxTransactions();
@@ -100,12 +100,12 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     return engine.state.transactions
       .filter((tx) => !tx.header.is_deleted)
       .slice(0, 5);
-  }, [engine.state.transactions]);
+  }, [engine.stateVersion]);
 
   // 可用立减金数量
   const availableVoucherCount = useMemo(() => {
     return engine.state.vouchers.filter((v) => v.status === 'AVAILABLE').length;
-  }, [engine.state.vouchers]);
+  }, [engine.stateVersion]);
 
   // 处理万事达预授权清算
   const handleSettleFx = (txId: string) => {
@@ -257,7 +257,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 </Box>
               </Stack>
 
-              {/* 常规已支 与 专项/心愿已支 拆解 */}
+              {/* 常规已支 与 专项预算已支 拆解 */}
               <Stack
                 direction="row"
                 spacing={2}
@@ -273,19 +273,19 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
                     常规预算已支
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'primary.main', fontVariantNumeric: 'tabular-nums' }}>
                     ¥{totalMonthlySpent.toFixed(2)}
                   </Typography>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem', fontVariantNumeric: 'tabular-nums' }}>
                     共 ¥{totalMonthlyBudget.toFixed(2)}
                   </Typography>
                 </Box>
                 <Divider orientation="vertical" flexItem />
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                    专项/心愿已支
+                    专项预算已支
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'secondary.main' }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: 'secondary.main', fontVariantNumeric: 'tabular-nums' }}>
                     ¥{projectTotalSpent}
                   </Typography>
                   <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
@@ -628,7 +628,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                           variant="body1"
                           sx={{
                             fontWeight: 800,
-                            fontFamily: 'monospace',
+                            fontVariantNumeric: 'tabular-nums',
                             color: isExpenseLike
                               ? 'text.primary'
                               : isIncome
