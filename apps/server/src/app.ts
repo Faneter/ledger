@@ -17,7 +17,7 @@ import {
   parseQuickInputDsl,
   computeOrderAllocation,
 } from '@ledger/core';
-import { LedgerRepository, FullSyncBundle } from '@ledger/db';
+import { LedgerRepository, type FullSyncBundle } from '@ledger/db';
 
 export interface LedgerServerOptions {
   dbPath?: string;

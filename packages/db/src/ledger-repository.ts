@@ -38,7 +38,7 @@ import {
   DEFAULT_FX_RATES,
   SplitItemInput,
   generateVoucherTitle,
-  FullSyncBundle,
+  type FullSyncBundle,
 } from '@ledger/core';
 import { SCHEMA_SQL, SEED_SQL } from './schema.js';
 import { recalculateAllAccounts } from './balance-recalculator.js';
@@ -48,7 +48,7 @@ const { DatabaseSync } = require('node:sqlite') as {
   DatabaseSync: typeof DatabaseSyncType;
 };
 
-export { FullSyncBundle };
+export type { FullSyncBundle };
 
 export class LedgerRepository {
   public readonly db: DatabaseSyncType;
