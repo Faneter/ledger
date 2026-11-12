@@ -291,8 +291,10 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
         'POOL_FLEX',
         'POOL_EMERGENCY',
       ]);
-      const sinkingFund = engine.state.budgetPools.find((p) => p.id === 'POOL_FUND');
-      expect(sinkingFund?.is_monthly_budget).toBe(false);
+      // 验证已清理废置的 POOL_FUND 与 POOL_ASSET，仅保留 4 个月度常规预算池
+      expect(engine.state.budgetPools.length).toBe(4);
+      expect(engine.state.budgetPools.find((p) => p.id === 'POOL_FUND')).toBeUndefined();
+      expect(engine.state.budgetPools.find((p) => p.id === 'POOL_ASSET')).toBeUndefined();
     });
 
     it('recordManualTransaction() 能在无 DSL 情况下准确录入支出、收入与转账', () => {

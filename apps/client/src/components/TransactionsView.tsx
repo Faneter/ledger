@@ -227,7 +227,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       if (editTargetSelection.startsWith('PROJECT:')) {
         projId = editTargetSelection.slice(8);
         const pt = engine.state.projectTags.find((p) => p.id === projId);
-        poolId = pt?.linked_pool_id || 'POOL_FUND';
+        poolId = pt?.linked_pool_id || 'POOL_FLEX';
       } else if (editTargetSelection.startsWith('POOL:')) {
         poolId = editTargetSelection.slice(5);
         projId = null;

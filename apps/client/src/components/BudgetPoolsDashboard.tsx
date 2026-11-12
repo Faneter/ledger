@@ -243,7 +243,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     tag_type: 'PROJECT',
     start_date: '2026-11-01',
     end_date: '2026-12-31',
-    linked_pool_id: 'POOL_FUND',
+    linked_pool_id: '',
     is_active: true,
   });
 
@@ -350,7 +350,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       tag_type: 'PROJECT',
       start_date: `${yearMonth}-01`,
       end_date: `${yearMonth}-30`,
-      linked_pool_id: 'POOL_FUND',
+      linked_pool_id: '',
       is_active: true,
     });
     setWishModalOpen(true);

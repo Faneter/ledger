@@ -581,24 +581,6 @@ export const CLEAN_SEED_BUDGET_POOLS: BudgetPool[] = [
     description: '纯粹看病买药、突发设备抢修',
     sort_order: 40,
   },
-  {
-    id: 'POOL_FUND',
-    name: '年度专项考证基金池',
-    pool_type: 'SINKING_FUND',
-    is_monthly_budget: false,
-    rollover_strategy: 'ACCUMULATE',
-    description: 'JLPT_N2考证、长途差旅跨期专项基金',
-    sort_order: 50,
-  },
-  {
-    id: 'POOL_ASSET',
-    name: '数码大件固定资产库',
-    pool_type: 'CAPITAL_ASSET',
-    is_monthly_budget: false,
-    rollover_strategy: 'ACCUMULATE',
-    description: '手机、机械硬盘等大额固定资产购置',
-    sort_order: 60,
-  },
 ];
 
 export const CLEAN_SEED_MONTHLY_BUDGETS: MonthlyBudget[] = [
@@ -832,6 +814,71 @@ export class LocalLedgerEngine {
         parsed.version = 2;
         if (!parsed.fxConfig) {
           parsed.fxConfig = { defaultHoldRatio: '1.020', defaultCashbackRate: '0.0100' };
+        }
+
+        // 清理已废置且未被有效流水/规则引用的历史非月度池 (POOL_FUND / POOL_ASSET)
+        const DEPRECATED_POOL_IDS = new Set(['POOL_FUND', 'POOL_ASSET']);
+        const referencedPools = new Set<string>();
+        if (Array.isArray(parsed.transactions)) {
+          for (const tx of parsed.transactions) {
+            if (tx?.header?.is_deleted) continue;
+            if (Array.isArray(tx?.items)) {
+              for (const it of tx.items) {
+                if (it?.budget_pool_id) referencedPools.add(it.budget_pool_id);
+              }
+            }
+          }
+        }
+        if (Array.isArray(parsed.recurringRules)) {
+          for (const r of parsed.recurringRules) {
+            if (r?.budget_pool_id) referencedPools.add(r.budget_pool_id);
+          }
+        }
+
+        const poolsToRemove = new Set(
+          Array.from(DEPRECATED_POOL_IDS).filter((id) => !referencedPools.has(id))
+        );
+
+        let cleaned = false;
+        if (poolsToRemove.size > 0) {
+          if (Array.isArray(parsed.budgetPools)) {
+            const nextPools = parsed.budgetPools.filter(
+              (p: BudgetPool) => !poolsToRemove.has(p.id)
+            );
+            if (nextPools.length !== parsed.budgetPools.length) {
+              parsed.budgetPools = nextPools;
+              cleaned = true;
+            }
+          }
+          if (Array.isArray(parsed.monthlyBudgets)) {
+            const nextBudgets = parsed.monthlyBudgets.filter(
+              (b: MonthlyBudget) => !poolsToRemove.has(b.pool_id)
+            );
+            if (nextBudgets.length !== parsed.monthlyBudgets.length) {
+              parsed.monthlyBudgets = nextBudgets;
+              cleaned = true;
+            }
+          }
+          if (Array.isArray(parsed.projectTags)) {
+            for (const tag of parsed.projectTags) {
+              if (tag.linked_pool_id && poolsToRemove.has(tag.linked_pool_id)) {
+                tag.linked_pool_id = null;
+                cleaned = true;
+              }
+            }
+          }
+          if (Array.isArray(parsed.categories)) {
+            for (const cat of parsed.categories) {
+              if (cat.default_pool_id && poolsToRemove.has(cat.default_pool_id)) {
+                cat.default_pool_id = 'POOL_FLEX';
+                cleaned = true;
+              }
+            }
+          }
+        }
+
+        if (cleaned) {
+          getStorage().setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
         return parsed;
       }
