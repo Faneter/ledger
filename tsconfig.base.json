@@ -12,7 +12,9 @@
       "@ledger/core": ["./packages/core/src/index.ts"],
       "@ledger/core/*": ["./packages/core/src/*"],
       "@ledger/db": ["./packages/db/src/index.ts"],
-      "@ledger/db/*": ["./packages/db/src/*"]
+      "@ledger/db/*": ["./packages/db/src/*"],
+      "@ledger/server": ["./apps/server/src/app.ts"],
+      "@ledger/server/*": ["./apps/server/src/*"]
     }
   }
 }

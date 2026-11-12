@@ -707,13 +707,27 @@ export class LedgerRepository {
       .prepare('SELECT * FROM vouchers WHERE id = ?')
       .get(info.lastInsertRowid) as any;
 
+    const formattedVoucher: Voucher = {
+      ...voucher,
+      id: Number(voucher.id),
+      face_value: formatCny(voucher.face_value),
+      acquire_cost: formatCny(voucher.acquire_cost),
+      min_spend: formatCny(voucher.min_spend),
+    };
+
+    const voucherHlc = this.hlc.now();
+    this.recordOpLog({
+      hlc: voucherHlc,
+      node_id: this.nodeId,
+      entity_type: 'VOUCHER',
+      entity_id: String(formattedVoucher.id),
+      op_type: 'UPSERT',
+      payload_json: JSON.stringify(formattedVoucher),
+      created_at: new Date().toISOString(),
+    });
+
     return {
-      voucher: {
-        ...voucher,
-        face_value: formatCny(voucher.face_value),
-        acquire_cost: formatCny(voucher.acquire_cost),
-        min_spend: formatCny(voucher.min_spend),
-      },
+      voucher: formattedVoucher,
       transaction: tx,
     };
   }
@@ -1137,6 +1151,36 @@ export class LedgerRepository {
               'UPDATE accounts SET market_value = ?, updated_hlc = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
             )
             .run(payload.market_value, winningOp.hlc, payload.id);
+        }
+      } else if (winningOp.entity_type === 'VOUCHER') {
+        let v: any = {};
+        try {
+          v = JSON.parse(winningOp.payload_json);
+        } catch {
+          continue;
+        }
+        if (v && v.id != null) {
+          this.db
+            .prepare(
+              `
+            INSERT OR REPLACE INTO vouchers (
+              id, title, voucher_type, face_value, acquire_cost, min_spend,
+              status, purchase_tx_id, used_tx_id, expire_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+            )
+            .run(
+              Number(v.id),
+              v.title,
+              v.voucher_type ?? 'PREPAID_COUPON',
+              formatCny(v.face_value ?? 0),
+              formatCny(v.acquire_cost ?? 0),
+              formatCny(v.min_spend ?? 0),
+              v.status ?? 'AVAILABLE',
+              v.purchase_tx_id ?? null,
+              v.used_tx_id ?? null,
+              v.expire_date ?? null
+            );
         }
       }
     }

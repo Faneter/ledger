@@ -223,6 +223,13 @@ export function mergeOpLogEntries(
           loserPayload = JSON.parse(loserOp.payload_json);
         } catch {}
 
+        // 若高 HLC 操作显式声明了 base_hlc 且恰好等于低 HLC 操作，说明是正常因果演进，而非并发冲突
+        const winnerBaseHlc =
+          winnerPayload.base_hlc ?? winnerPayload.header?.base_hlc;
+        if (winnerBaseHlc && winnerBaseHlc === loserOp.hlc) {
+          continue;
+        }
+
         const winnerStatus =
           winnerPayload.settlement_status ??
           winnerPayload.header?.settlement_status;

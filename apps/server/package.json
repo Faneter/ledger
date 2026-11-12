@@ -1,0 +1,16 @@
+{
+  "name": "@ledger/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/app.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node --experimental-strip-types src/index.ts"
+  },
+  "dependencies": {
+    "@ledger/core": "workspace:*",
+    "@ledger/db": "workspace:*"
+  }
+}

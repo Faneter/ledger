@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       '@ledger/core': resolve(__dirname, 'packages/core/src/index.ts'),
       '@ledger/db': resolve(__dirname, 'packages/db/src/index.ts'),
+      '@ledger/server': resolve(__dirname, 'apps/server/src/app.ts'),
     },
   },
 });
