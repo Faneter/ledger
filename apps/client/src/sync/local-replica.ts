@@ -35,7 +35,10 @@ import {
   DEFAULT_CATEGORIES,
   DEFAULT_ACCOUNTS,
   DEFAULT_PROJECT_TAGS,
+  generateVoucherTitle,
 } from '@ledger/core';
+
+export { generateVoucherTitle };
 
 export const LOCAL_STORAGE_KEY = 'geek_ledger_local_replica_v2';
 
@@ -1092,10 +1095,27 @@ export class LocalLedgerEngine {
     let effectiveNet = parsed.total_net;
 
     if (appliedVoucherId != null) {
-      const v = this.state.vouchers.find(
-        (it) => it.id === appliedVoucherId && it.status === 'AVAILABLE'
-      );
+      const v = this.state.vouchers.find((it) => it.id === appliedVoucherId);
       if (v) {
+        if (v.status !== 'AVAILABLE') {
+          throw new Error(`优惠券「${v.title}」已被使用或已失效`);
+        }
+        if (parsed.tx_type === 'EXPENSE' && v.voucher_type === 'REPAY_COUPON') {
+          throw new Error('还款专用券仅限在「转账/还款」中使用');
+        }
+        if (parsed.tx_type === 'TRANSFER' && v.voucher_type !== 'REPAY_COUPON') {
+          throw new Error('转账/还款仅可使用「还款券」类型的优惠券');
+        }
+        if (parsed.tx_type === 'INCOME') {
+          throw new Error('收入交易不可使用优惠券');
+        }
+        const totalGrossDec = toDecimal(parsed.total_gross);
+        if (totalGrossDec.lessThan(toDecimal(v.min_spend))) {
+          throw new Error(
+            `未达到优惠券「${v.title}」的最低使用门槛（需满 ¥${v.min_spend}，当前金额 ¥${formatCny(totalGrossDec)}）`
+          );
+        }
+
         voucherInfo = v;
         if (parsed.tx_type === 'EXPENSE') {
           const cashPaid = Decimal.max(
@@ -1301,22 +1321,54 @@ export class LocalLedgerEngine {
     let holdAmountCny = '0.00';
     let exchangeRate: string | null = isFx ? null : '1.000000';
 
+    let appliedVoucher: Voucher | null = null;
+    if (params.applied_voucher_id != null) {
+      const v = this.state.vouchers.find(
+        (it) => it.id === params.applied_voucher_id
+      );
+      if (!v) {
+        throw new Error(`优惠券 "${params.applied_voucher_id}" 不存在`);
+      }
+      if (v.status !== 'AVAILABLE') {
+        throw new Error(`优惠券「${v.title}」已被使用或已失效`);
+      }
+      if (params.tx_type === 'EXPENSE' && v.voucher_type === 'REPAY_COUPON') {
+        throw new Error('还款专用券仅限在「转账/还款」中使用');
+      }
+      if (params.tx_type === 'TRANSFER' && v.voucher_type !== 'REPAY_COUPON') {
+        throw new Error('转账/还款仅可使用「还款券」类型的优惠券');
+      }
+      if (params.tx_type === 'INCOME') {
+        throw new Error('收入交易不可使用优惠券');
+      }
+      const totalGrossDec = isFx
+        ? roundCny(
+            toDecimal(params.amount).times(
+              DEFAULT_FX_RATES[currency] ?? '7.200000'
+            )
+          )
+        : toDecimal(params.amount);
+      if (totalGrossDec.lessThan(toDecimal(v.min_spend))) {
+        throw new Error(
+          `未达到优惠券「${v.title}」的最低使用门槛（需满 ¥${v.min_spend}，当前金额 ¥${formatCny(totalGrossDec)}）`
+        );
+      }
+      appliedVoucher = v;
+    }
+
     if (params.tx_type === 'EXPENSE') {
       const catId = params.category_id ?? (this.state.categories[0]?.id ?? 'CAT_FOOD');
       const cat = this.state.categories.find((c) => c.id === catId);
       const poolId = params.budget_pool_id ?? (cat?.default_pool_id ?? 'POOL_DAILY');
 
-      if (params.applied_voucher_id != null) {
-        const v = this.state.vouchers.find(
-          (it) => it.id === params.applied_voucher_id && it.status === 'AVAILABLE'
+      if (appliedVoucher) {
+        const v = appliedVoucher;
+        const cashPaid = Decimal.max(
+          0,
+          toDecimal(params.amount)
+            .minus(toDecimal(params.discount ?? 0))
+            .minus(toDecimal(v.face_value))
         );
-        if (v) {
-          const cashPaid = Decimal.max(
-            0,
-            toDecimal(params.amount)
-              .minus(toDecimal(params.discount ?? 0))
-              .minus(toDecimal(v.face_value))
-          );
           const splitInputs: SplitItemInput[] = [
             {
               name: params.merchant_or_note,
@@ -1356,7 +1408,6 @@ export class LocalLedgerEngine {
             },
           ];
         }
-      }
 
       if (items.length === 0) {
         items = [
@@ -1409,13 +1460,8 @@ export class LocalLedgerEngine {
       }
     } else if (params.tx_type === 'TRANSFER') {
       let discountDec = toDecimal(params.discount ?? 0);
-      if (params.applied_voucher_id != null) {
-        const v = this.state.vouchers.find(
-          (it) => it.id === params.applied_voucher_id && it.status === 'AVAILABLE'
-        );
-        if (v) {
-          discountDec = discountDec.plus(toDecimal(v.face_value));
-        }
+      if (appliedVoucher) {
+        discountDec = discountDec.plus(toDecimal(appliedVoucher.face_value));
       }
       paymentDiscount = formatCny(discountDec);
       totalNet = formatCny(
@@ -1919,7 +1965,7 @@ export class LocalLedgerEngine {
   // --------------------------------------------------------------------------
   public upsertVoucher(params: {
     id?: number;
-    title: string;
+    title?: string;
     voucher_type: VoucherType;
     face_value: string;
     acquire_cost: string;
@@ -1928,9 +1974,18 @@ export class LocalLedgerEngine {
     status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
     accountId?: string;
   }): { voucher: Voucher; tx?: TransactionAggregate } {
+    const finalTitle =
+      params.title?.trim() ||
+      generateVoucherTitle(
+        params.voucher_type,
+        params.face_value,
+        params.min_spend,
+        params.acquire_cost
+      );
+
     if (!params.id && Number(params.acquire_cost) > 0 && params.accountId) {
       return this.buyVoucher({
-        title: params.title,
+        title: finalTitle,
         voucher_type: params.voucher_type,
         face_value: params.face_value,
         acquire_cost: params.acquire_cost,
@@ -1945,7 +2000,7 @@ export class LocalLedgerEngine {
       if (!v) {
         throw new Error(`Voucher "${params.id}" not found`);
       }
-      v.title = params.title;
+      v.title = finalTitle;
       v.voucher_type = params.voucher_type;
       v.face_value = formatCny(params.face_value);
       v.acquire_cost = formatCny(params.acquire_cost ?? '0.00');
@@ -1963,7 +2018,7 @@ export class LocalLedgerEngine {
       this.state.vouchers.reduce((max, it) => Math.max(max, it.id), 0) + 1;
     const newV: Voucher = {
       id: nextId,
-      title: params.title,
+      title: finalTitle,
       voucher_type: params.voucher_type,
       face_value: formatCny(params.face_value),
       acquire_cost: formatCny(params.acquire_cost ?? '0.00'),
@@ -2171,7 +2226,7 @@ export class LocalLedgerEngine {
   // 虚拟卡包：有偿购券入库
   // --------------------------------------------------------------------------
   public buyVoucher(params: {
-    title: string;
+    title?: string;
     voucher_type: VoucherType;
     face_value: string;
     acquire_cost: string;
@@ -2179,6 +2234,14 @@ export class LocalLedgerEngine {
     accountId: string;
     expire_date?: string | null;
   }): { voucher: Voucher; tx: TransactionAggregate } {
+    const finalTitle =
+      params.title?.trim() ||
+      generateVoucherTitle(
+        params.voucher_type,
+        params.face_value,
+        params.min_spend,
+        params.acquire_cost
+      );
     const nextId =
       this.state.vouchers.reduce((max, v) => Math.max(max, v.id), 0) + 1;
     const nowIso = new Date().toISOString();
@@ -2188,7 +2251,7 @@ export class LocalLedgerEngine {
 
     const newVoucher: Voucher = {
       id: nextId,
-      title: params.title,
+      title: finalTitle,
       voucher_type: params.voucher_type,
       face_value: formatCny(params.face_value),
       acquire_cost: formatCny(params.acquire_cost),
@@ -2219,8 +2282,8 @@ export class LocalLedgerEngine {
       settlement_status: 'SETTLED',
       hold_amount_cny: '0.00',
       settled_at: nowIso,
-      raw_input_text: `购买卡券：${params.title} 成本 ${params.acquire_cost}`,
-      merchant_or_note: params.title,
+      raw_input_text: `购买卡券：${finalTitle} 成本 ${params.acquire_cost}`,
+      merchant_or_note: finalTitle,
       applied_voucher_id: null,
       is_deleted: false,
       updated_hlc: hlc,

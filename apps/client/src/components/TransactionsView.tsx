@@ -373,9 +373,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 sx={{ minWidth: { xs: '100%', md: 140 } }}
               >
                 <MenuItem value="ALL">全部类型</MenuItem>
-                <MenuItem value="EXPENSE">支出 (EXPENSE)</MenuItem>
-                <MenuItem value="INCOME">收入 (INCOME)</MenuItem>
-                <MenuItem value="TRANSFER">转账 (TRANSFER)</MenuItem>
+                <MenuItem value="EXPENSE">支出</MenuItem>
+                <MenuItem value="INCOME">收入</MenuItem>
+                <MenuItem value="TRANSFER">转账 / 还款</MenuItem>
               </TextField>
 
               {/* 账户筛选 */}
@@ -614,7 +614,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           {h.applied_voucher_id != null && (
                             <Chip
                               size="small"
-                              label="🎟️ 已用立减金"
+                              label={h.tx_type === 'TRANSFER' ? '🎟️ 已用还款券' : '🎟️ 已用立减金'}
                               color="success"
                               variant="outlined"
                               sx={{ height: 20, fontSize: '0.7rem' }}
@@ -899,7 +899,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <TextField
-                label="原价金额 (Gross)"
+                label="原价金额"
                 type="number"
                 fullWidth
                 value={editGross}
@@ -915,7 +915,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               />
 
               <TextField
-                label="优惠减免 (Discount)"
+                label="优惠减免"
                 type="number"
                 fullWidth
                 value={editDiscount}

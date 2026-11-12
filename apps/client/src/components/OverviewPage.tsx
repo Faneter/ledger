@@ -126,7 +126,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
     try {
       engine.settleMastercardPending(txId, val);
-      setSettleFeedback(`✅ 外币交易 ${txId} 已成功正式清算入账！实际扣款 ¥${val}`);
+      setSettleFeedback(`✅ 外币交易已成功正式清算入账！实际扣款 ¥${val}`);
       setSettleInputs((prev) => {
         const next = { ...prev };
         delete next[txId];
@@ -257,7 +257,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 </Box>
                 <Box>
                   <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                    净资产总览 (Net Worth)
+                    净资产总览
                   </Typography>
                   <Typography variant="h5" sx={{ fontWeight: 800 }}>
                     ¥{netWorthSummary.netWorth.toFixed(2)}
@@ -279,7 +279,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               >
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                    总资产 (借记+投资)
+                    总资产
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 700, color: 'success.main' }}>
                     ¥{netWorthSummary.totalAssets.toFixed(2)}
@@ -288,7 +288,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 <Divider orientation="vertical" flexItem />
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                    总负债 (信用卡/花呗)
+                    总负债
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 700, color: 'warning.main' }}>
                     ¥{netWorthSummary.totalLiabilities.toFixed(2)}
@@ -328,7 +328,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 </Box>
                 <Box>
                   <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                    本月优惠省钱 (Wool)
+                    本月优惠省钱
                   </Typography>
                   <Typography variant="h5" sx={{ fontWeight: 800, color: 'success.main' }}>
                     +¥{dailySummary.totalSavedWool}

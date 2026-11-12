@@ -99,6 +99,15 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   const [merchantOrNote, setMerchantOrNote] = useState('');
   const [selectedVoucherIdVisual, setSelectedVoucherIdVisual] = useState<number | null>(null);
 
+  // 当前折算人民币总金额 (用于校验优惠券门槛)
+  const currentCnyGross = useMemo(() => {
+    const amtNum = Number(amount || 0);
+    if (isNaN(amtNum) || amtNum <= 0) return 0;
+    if (currency === 'CNY') return amtNum;
+    const rate = Number(DEFAULT_FX_RATES[currency] ?? '7.200000');
+    return amtNum * rate;
+  }, [amount, currency]);
+
   // 外币预授权冻结金额预估折算
   const estimatedHoldAmount = useMemo(() => {
     if (currency === 'CNY' || !amount.trim() || isNaN(Number(amount)) || Number(amount) <= 0) {
@@ -171,13 +180,16 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
         budget_pool_id: budgetPoolId,
         project_tag_id: projTagId,
         merchant_or_note: noteToSave,
-        applied_voucher_id: txType === 'EXPENSE' ? selectedVoucherIdVisual : null,
+        applied_voucher_id:
+          txType === 'EXPENSE' || txType === 'TRANSFER'
+            ? selectedVoucherIdVisual
+            : null,
         currency,
         hold_amount_cny: holdAmountCnyInput.trim() || undefined,
       });
 
       triggerSuccess(
-        `✅ 记账成功！单据号: ${tx.header.id}，实付 ¥${tx.header.total_net}`
+        `✅ 记账成功！实付 ¥${tx.header.total_net}`
       );
 
       // 表单重置
@@ -198,7 +210,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
       setErrorMsg(null);
       const tx = engine.recordFromDsl(dslInput, txDate, selectedVoucherIdDsl);
       triggerSuccess(
-        `✅ 记账成功！单据号: ${tx.header.id}，实付 ¥${tx.header.total_net}`
+        `✅ 记账成功！实付 ¥${tx.header.total_net}`
       );
       setSelectedVoucherIdDsl(null);
       setDslInput('');
@@ -279,7 +291,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
             </ToggleButton>
             <ToggleButton value="dsl" sx={{ px: 2, gap: 0.5 }}>
               <FlashOnRounded fontSize="small" />
-              <span>极速算式 DSL</span>
+              <span>极速算式记账</span>
             </ToggleButton>
           </ToggleButtonGroup>
         </Stack>
@@ -300,7 +312,12 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                 <ToggleButtonGroup
                   value={txType}
                   exclusive
-                  onChange={(_, val) => val && setTxType(val)}
+                  onChange={(_, val) => {
+                    if (val) {
+                      setTxType(val);
+                      setSelectedVoucherIdVisual(null);
+                    }
+                  }}
                   size="small"
                   sx={{ width: 'fit-content' }}
                 >
@@ -317,7 +334,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     }}
                   >
                     <TrendingDownRounded fontSize="small" />
-                    <span>支出 (EXPENSE)</span>
+                    <span>支出</span>
                   </ToggleButton>
                   <ToggleButton
                     value="INCOME"
@@ -332,7 +349,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     }}
                   >
                     <TrendingUpRounded fontSize="small" />
-                    <span>收入 (INCOME)</span>
+                    <span>收入</span>
                   </ToggleButton>
                   <ToggleButton
                     value="TRANSFER"
@@ -347,7 +364,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     }}
                   >
                     <SwapHorizRounded fontSize="small" />
-                    <span>转账/还款 (TRANSFER)</span>
+                    <span>转账 / 还款</span>
                   </ToggleButton>
                 </ToggleButtonGroup>
               </Box>
@@ -355,7 +372,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
               {/* 核心金额、立减与日期网格 */}
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
-                  label={txType === 'TRANSFER' ? '转账金额' : '交易金额 (Gross)'}
+                  label={txType === 'TRANSFER' ? '转账金额' : '交易金额'}
                   type="number"
                   required
                   fullWidth
@@ -376,7 +393,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
 
                 {txType === 'EXPENSE' && (
                   <TextField
-                    label="优惠/支付立减 (Discount)"
+                    label="直接满减/立减（选填）"
                     type="number"
                     fullWidth
                     value={discount}
@@ -418,10 +435,10 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     onChange={(e) => setCurrency(e.target.value)}
                     sx={{ minWidth: 100 }}
                   >
-                    <MenuItem value="CNY">CNY (人民币)</MenuItem>
-                    <MenuItem value="USD">USD (美元)</MenuItem>
-                    <MenuItem value="EUR">EUR (欧元)</MenuItem>
-                    <MenuItem value="JPY">JPY (日元)</MenuItem>
+                    <MenuItem value="CNY">CNY 人民币</MenuItem>
+                    <MenuItem value="USD">USD 美元</MenuItem>
+                    <MenuItem value="EUR">EUR 欧元</MenuItem>
+                    <MenuItem value="JPY">JPY 日元</MenuItem>
                   </TextField>
                 )}
               </Stack>
@@ -469,7 +486,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                   {engine.state.accounts.map((acc) => (
                     <MenuItem key={acc.id} value={acc.id}>
                       {acc.name} · 余额 ¥{acc.book_balance}
-                      {acc.account_role === 'CREDIT' ? ' (信用卡/信贷)' : ''}
+                      {acc.account_role === 'CREDIT' ? '（信用卡）' : ''}
                     </MenuItem>
                   ))}
                 </TextField>
@@ -590,12 +607,58 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                   }
                 >
                   <MenuItem value="">(不使用卡券 / 纯原价实付)</MenuItem>
-                  {availableVouchers.map((v) => (
-                    <MenuItem key={v.id} value={v.id}>
-                      {v.title} · 面值 ¥{v.face_value} (成本 ¥{v.acquire_cost} / 门槛 ¥
-                      {v.min_spend})
-                    </MenuItem>
-                  ))}
+                  {availableVouchers
+                    .filter((v) => v.voucher_type !== 'REPAY_COUPON')
+                    .map((v) => {
+                      const isUnderMinSpend =
+                        currentCnyGross > 0 &&
+                        currentCnyGross < Number(v.min_spend);
+                      return (
+                        <MenuItem
+                          key={v.id}
+                          value={v.id}
+                          disabled={isUnderMinSpend}
+                        >
+                          {v.title} · 面值 ¥{v.face_value} (成本 ¥{v.acquire_cost} / 门槛 ¥
+                          {v.min_spend})
+                          {isUnderMinSpend ? `（未满 ¥${v.min_spend} 门槛）` : ''}
+                        </MenuItem>
+                      );
+                    })}
+                </TextField>
+              )}
+
+              {/* 转账/还款专属：使用还款券抵扣 */}
+              {txType === 'TRANSFER' && (
+                <TextField
+                  select
+                  fullWidth
+                  label="使用还款券抵扣 (可选)"
+                  value={selectedVoucherIdVisual ?? ''}
+                  onChange={(e) =>
+                    setSelectedVoucherIdVisual(
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                >
+                  <MenuItem value="">(不使用卡券 / 全额还款)</MenuItem>
+                  {availableVouchers
+                    .filter((v) => v.voucher_type === 'REPAY_COUPON')
+                    .map((v) => {
+                      const isUnderMinSpend =
+                        currentCnyGross > 0 &&
+                        currentCnyGross < Number(v.min_spend);
+                      return (
+                        <MenuItem
+                          key={v.id}
+                          value={v.id}
+                          disabled={isUnderMinSpend}
+                        >
+                          {v.title} · 面值 ¥{v.face_value} (门槛 ¥{v.min_spend})
+                          {isUnderMinSpend ? `（未满 ¥${v.min_spend} 门槛）` : ''}
+                        </MenuItem>
+                      );
+                    })}
                 </TextField>
               )}
 
@@ -773,7 +836,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                     variant="subtitle2"
                     sx={{ fontWeight: 700, color: 'secondary.main' }}
                   >
-                    📊 拆单与满减分摊实时预览（分摊模式: {preview.parsed.allocation_mode} ·
+                    📊 拆单与满减分摊实时预览（分摊模式: {preview.parsed.allocation_mode === 'PROPORTIONAL' ? '等比分摊' : preview.parsed.allocation_mode === 'PRIMARY_ITEM' ? '主商品抵扣' : '单一分摊'} ·
                     付款账户: {getAccountName(preview.parsed.account_id)}）
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 2, fontSize: '0.85rem' }}>
@@ -797,7 +860,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                         <TableCell align="right">原价/算式</TableCell>
                         <TableCell align="right">分摊优惠</TableCell>
                         <TableCell align="right">实付净额</TableCell>
-                        <TableCell>属性分类</TableCell>
                         <TableCell>归属预算池</TableCell>
                         <TableCell>专项标签</TableCell>
                       </TableRow>
@@ -842,14 +904,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                             <Typography variant="body2" sx={{ fontWeight: 700 }}>
                               ¥{item.item_net}
                             </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              size="small"
-                              label={getCategoryName(item.category_id)}
-                              variant="outlined"
-                              sx={{ height: 22, fontSize: '0.75rem' }}
-                            />
                           </TableCell>
                           <TableCell>
                             <Chip

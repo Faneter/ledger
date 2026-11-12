@@ -55,6 +55,7 @@ import {
   VoucherType,
   formatCny,
   toDecimal,
+  generateVoucherTitle,
 } from '@ledger/core';
 import { LocalLedgerEngine } from '../sync/local-replica';
 
@@ -211,6 +212,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   const [voucherEditingId, setVoucherEditingId] = useState<number | null>(null);
   const [voucherMode, setVoucherMode] = useState<'FREE' | 'BUY' | 'EDIT'>('FREE');
   const [voucherForm, setVoucherForm] = useState<{
+    customPrefix: string;
     title: string;
     voucher_type: VoucherType;
     face_value: string;
@@ -220,6 +222,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     status: 'AVAILABLE' | 'USED' | 'EXPIRED';
     accountId: string;
   }>({
+    customPrefix: '',
     title: '',
     voucher_type: 'FREE_COUPON',
     face_value: '5.00',
@@ -243,7 +246,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     account_id: string;
     target_account_id: string;
     budget_pool_id: string;
-    category_id: string;
     auto_reserve_budget: boolean;
   }>({
     title: '',
@@ -255,7 +257,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     account_id: 'ACC_UNION_MAIN',
     target_account_id: 'ACC_ALIPAY_FUND',
     budget_pool_id: 'POOL_FIXED',
-    category_id: 'CAT_CAMPUS_NET',
     auto_reserve_budget: true,
   });
 
@@ -480,7 +481,8 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     setVoucherEditingId(null);
     setVoucherMode('FREE');
     setVoucherForm({
-      title: sampleTitle || '微信还款立减券',
+      customPrefix: '',
+      title: sampleTitle || '',
       voucher_type: 'REPAY_COUPON',
       face_value: sampleFace || '5.00',
       acquire_cost: '0.00',
@@ -497,7 +499,8 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     setVoucherMode('BUY');
     const defaultAcc = mainDebitAccounts[0]?.id || 'ACC_UNION_MAIN';
     setVoucherForm({
-      title: sampleTitle || '微信支付10元立减金',
+      customPrefix: '',
+      title: sampleTitle || '',
       voucher_type: 'PREPAID_COUPON',
       face_value: sampleFace || '10.00',
       acquire_cost: sampleCost || '5.99',
@@ -513,6 +516,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     setVoucherEditingId(v.id);
     setVoucherMode('EDIT');
     setVoucherForm({
+      customPrefix: '',
       title: v.title,
       voucher_type: v.voucher_type,
       face_value: v.face_value,
@@ -526,14 +530,22 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   };
 
   const handleSaveVoucher = () => {
-    if (!voucherForm.title.trim()) {
-      showToast('请输入卡券名称', 'warning');
-      return;
-    }
     if (isNaN(Number(voucherForm.face_value)) || Number(voucherForm.face_value) <= 0) {
       showToast('请输入有效的面值金额', 'warning');
       return;
     }
+
+    const autoTitle = generateVoucherTitle(
+      voucherForm.voucher_type,
+      voucherForm.face_value,
+      voucherForm.min_spend,
+      voucherForm.acquire_cost
+    );
+    const resolvedTitle = voucherForm.customPrefix.trim()
+      ? `${voucherForm.customPrefix.trim()} ${autoTitle}`
+      : voucherMode === 'EDIT' && voucherForm.title.trim()
+      ? voucherForm.title.trim()
+      : autoTitle;
 
     try {
       if (voucherMode === 'BUY') {
@@ -542,7 +554,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
           return;
         }
         engine.buyVoucher({
-          title: voucherForm.title.trim(),
+          title: resolvedTitle,
           voucher_type: voucherForm.voucher_type,
           face_value: voucherForm.face_value,
           acquire_cost: voucherForm.acquire_cost,
@@ -551,13 +563,13 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
           expire_date: voucherForm.expire_date || null,
         });
         showToast(
-          `成功购入立减金【${voucherForm.title}】，已扣款 ¥${voucherForm.acquire_cost}`,
+          `成功购入立减金【${resolvedTitle}】，已扣款 ¥${voucherForm.acquire_cost}`,
           'success'
         );
       } else {
         engine.upsertVoucher({
           id: voucherEditingId || undefined,
-          title: voucherForm.title.trim(),
+          title: resolvedTitle,
           voucher_type: voucherForm.voucher_type,
           face_value: voucherForm.face_value,
           acquire_cost: voucherForm.acquire_cost,
@@ -567,8 +579,8 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
         });
         showToast(
           voucherEditingId
-            ? `卡券【${voucherForm.title}】已更新`
-            : `成功登记免费卡券【${voucherForm.title}】`,
+            ? `卡券【${resolvedTitle}】已更新`
+            : `成功登记免费卡券【${resolvedTitle}】`,
           'success'
         );
       }
@@ -598,17 +610,17 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   const handleOpenAddRule = (sampleTitle?: string, sampleAmt?: string, sampleDay?: number, sampleType?: RecurringRuleType) => {
     setRuleEditingId(null);
     const defaultAcc = mainDebitAccounts[0]?.id || 'ACC_UNION_MAIN';
+    const ruleType = sampleType || 'FIXED_EXPENSE';
     setRuleForm({
       title: sampleTitle || '校园网宽带固定月租',
-      rule_type: sampleType || 'FIXED_EXPENSE',
+      rule_type: ruleType,
       cron_cycle: 'MONTHLY',
       trigger_day: sampleDay || 1,
-      currency: 'CNY',
+      currency: ruleType === 'FX_SUBSCRIPTION' ? 'USD' : 'CNY',
       amount: sampleAmt || '20.00',
       account_id: defaultAcc,
       target_account_id: investmentAccounts[0]?.id || 'ACC_ALIPAY_FUND',
       budget_pool_id: 'POOL_FIXED',
-      category_id: 'CAT_CAMPUS_NET',
       auto_reserve_budget: true,
     });
     setRuleModalOpen(true);
@@ -621,12 +633,11 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
       rule_type: r.rule_type,
       cron_cycle: r.cron_cycle,
       trigger_day: r.trigger_day,
-      currency: r.currency,
+      currency: r.currency || 'CNY',
       amount: r.amount,
       account_id: r.account_id,
       target_account_id: r.target_account_id || '',
       budget_pool_id: r.budget_pool_id || 'POOL_FIXED',
-      category_id: r.category_id || '',
       auto_reserve_budget: r.auto_reserve_budget,
     });
     setRuleModalOpen(true);
@@ -655,7 +666,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
         target_account_id:
           ruleForm.rule_type === 'AUTO_INVEST' ? ruleForm.target_account_id : null,
         budget_pool_id: ruleForm.budget_pool_id || null,
-        category_id: ruleForm.category_id || null,
+        category_id: null,
         auto_reserve_budget: ruleForm.auto_reserve_budget,
       });
 
@@ -687,7 +698,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     try {
       const tx = engine.executeRecurringRule(r.id);
       showToast(
-        `⚡ 已立即执行周期扣款记账！流水编号: ${tx.header.id} 金额: ¥${r.amount}`,
+        `⚡ 已立即执行周期扣款记账！实付 ¥${tx.header.total_net}`,
         'success'
       );
       onRefresh?.();
@@ -921,19 +932,19 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             <Tab
               icon={<AccountBalanceWalletRounded fontSize="small" />}
               iconPosition="start"
-              label="资金账户管理 (Accounts)"
+              label="资金账户管理"
               sx={{ fontWeight: 700 }}
             />
             <Tab
               icon={<ConfirmationNumberRounded fontSize="small" />}
               iconPosition="start"
-              label="优惠券卡包 (Vouchers)"
+              label="优惠券卡包"
               sx={{ fontWeight: 700 }}
             />
             <Tab
               icon={<EventRepeatRounded fontSize="small" />}
               iconPosition="start"
-              label="周期性扣款与定投 (Recurring Rules)"
+              label="周期性扣款与定投"
               sx={{ fontWeight: 700 }}
             />
           </Tabs>
@@ -1064,10 +1075,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Alert>
           )}
 
-          {/* 1. 日常信用支付层 (CREDIT) */}
+          {/* 1. 信用支付账户（花呗/信用卡） */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="secondary" label="日常信用支付层" />
+              <Chip size="small" color="secondary" label="信用支付账户（花呗/信用卡）" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
                 花呗 / 信用卡 负债与免息期管控 ({creditAccounts.length})
               </Typography>
@@ -1077,10 +1088,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Grid>
           </Box>
 
-          {/* 2. 核心资金结算层 (DEBIT_MAIN & PREPAID) */}
+          {/* 2. 储蓄卡与校园饭卡 */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="primary" label="核心资金结算层" />
+              <Chip size="small" color="primary" label="储蓄卡与校园饭卡" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
                 主力借记卡 & 预充值校园饭卡 ({mainDebitAccounts.length})
               </Typography>
@@ -1090,10 +1101,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Grid>
           </Box>
 
-          {/* 3. 外币预授权专层 (DEBIT_FX) */}
+          {/* 3. 外币预授权借记卡 */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="info" label="外币预授权专层" />
+              <Chip size="small" color="info" label="外币预授权借记卡" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
                 万事达跨境借记卡 (102%预授权冻结 + 1%返现) ({fxAccounts.length})
               </Typography>
@@ -1103,10 +1114,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Grid>
           </Box>
 
-          {/* 4. 投资理财层 (INVESTMENT) */}
+          {/* 4. 投资理财账户 */}
           <Box>
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Chip size="small" color="warning" label="投资理财专层" />
+              <Chip size="small" color="warning" label="投资理财账户" />
               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
                 指数基金与理财账户 ({investmentAccounts.length})
               </Typography>
@@ -1116,12 +1127,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             </Grid>
           </Box>
 
-          {/* 5. 备用/折叠账户 (Accordion) */}
+          {/* 5. 备用折叠账户 (Accordion) */}
           {foldedAccounts.length > 0 && (
             <Accordion sx={{ borderRadius: '12px !important', overflow: 'hidden' }}>
               <AccordionSummary expandIcon={<ExpandMoreRounded />}>
                 <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary' }}>
-                  📁 备用/睡眠折叠账户 ({foldedAccounts.length} 个)
+                  📁 备用折叠账户 ({foldedAccounts.length} 个)
                 </Typography>
               </AccordionSummary>
               <AccordionDetails>
@@ -1468,10 +1479,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                             size="small"
                             label={
                               rule.rule_type === 'AUTO_INVEST'
-                                ? '自动定投'
+                                ? '自动转账/定投'
                                 : rule.rule_type === 'FX_SUBSCRIPTION'
-                                ? '外币订阅'
-                                : '固定刚需'
+                                ? '外币周期订阅'
+                                : '固定生活开支'
                             }
                             color={
                               rule.rule_type === 'AUTO_INVEST'
@@ -1490,7 +1501,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                               计划扣款金额
                             </Typography>
                             <Typography variant="h5" sx={{ fontWeight: 900, color: 'text.primary' }}>
-                              ¥{rule.amount}
+                              {rule.currency === 'CNY' ? '¥' : `${rule.currency} `}{rule.amount}
                             </Typography>
                           </Stack>
 
@@ -1504,6 +1515,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                               <span> ➔ 目标账户: <strong>{targetAcc.name}</strong></span>
                             )}
                           </Typography>
+
+                          {rule.rule_type !== 'AUTO_INVEST' && rule.budget_pool_id && (
+                            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
+                              绑定资金池: <strong>{engine.state.budgetPools.find((p) => p.id === rule.budget_pool_id)?.name || rule.budget_pool_id}</strong>
+                            </Typography>
+                          )}
 
                           {rule.auto_reserve_budget && (
                             <Chip
@@ -1586,10 +1603,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
           />
 
           <FormControl fullWidth size="small">
-            <InputLabel>账户职能角色 (Role)</InputLabel>
+            <InputLabel>账户职能角色</InputLabel>
             <Select
               value={accountForm.account_role}
-              label="账户职能角色 (Role)"
+              label="账户职能角色"
               onChange={(e) =>
                 setAccountForm({
                   ...accountForm,
@@ -1597,12 +1614,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                 })
               }
             >
-              <MenuItem value="CREDIT">CREDIT - 信用账户 (花呗/信用卡)</MenuItem>
-              <MenuItem value="DEBIT_MAIN">DEBIT_MAIN - 核心主力借记卡/微信零钱</MenuItem>
-              <MenuItem value="DEBIT_FX">DEBIT_FX - 外币预授权借记卡 (万事达)</MenuItem>
-              <MenuItem value="PREPAID">PREPAID - 预付囤货账户 (校园饭卡)</MenuItem>
-              <MenuItem value="INVESTMENT">INVESTMENT - 投资账户 (指数基金)</MenuItem>
-              <MenuItem value="DORMANT">DORMANT - 低频睡眠卡 (折叠备用)</MenuItem>
+              <MenuItem value="CREDIT">信用支付账户（花呗/信用卡）</MenuItem>
+              <MenuItem value="DEBIT_MAIN">储蓄卡与校园饭卡</MenuItem>
+              <MenuItem value="DEBIT_FX">外币预授权借记卡</MenuItem>
+              <MenuItem value="PREPAID">储蓄卡与校园饭卡</MenuItem>
+              <MenuItem value="INVESTMENT">投资理财账户</MenuItem>
+              <MenuItem value="DORMANT">备用折叠账户</MenuItem>
             </Select>
           </FormControl>
 
@@ -1810,13 +1827,45 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
         </DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
           <TextField
-            label="卡券名称"
+            label="备注前缀（选填，如：微信/招行，不填自动生成名称）"
             fullWidth
             size="small"
-            value={voucherForm.title}
-            onChange={(e) => setVoucherForm({ ...voucherForm, title: e.target.value })}
-            placeholder="如: 微信支付10元立减金"
+            value={voucherForm.customPrefix}
+            onChange={(e) =>
+              setVoucherForm({ ...voucherForm, customPrefix: e.target.value })
+            }
+            placeholder="如: 微信 / 招行"
           />
+
+          <Box
+            sx={{
+              p: 1.2,
+              borderRadius: 2,
+              bgcolor: (t) =>
+                t.palette.mode === 'light' ? 'primary.50' : 'grey.900',
+              border: '1px dashed',
+              borderColor: 'primary.main',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              自动生成卡券名称：
+            </Typography>
+            <Chip
+              size="small"
+              color="primary"
+              variant="outlined"
+              label={`${voucherForm.customPrefix.trim() ? voucherForm.customPrefix.trim() + ' ' : ''}${generateVoucherTitle(
+                voucherForm.voucher_type,
+                voucherForm.face_value,
+                voucherForm.min_spend,
+                voucherForm.acquire_cost
+              )}`}
+              sx={{ fontWeight: 700 }}
+            />
+          </Box>
 
           <FormControl fullWidth size="small">
             <InputLabel>卡券类型</InputLabel>
@@ -1830,9 +1879,9 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                 })
               }
             >
-              <MenuItem value="PREPAID_COUPON">PREPAID_COUPON - 有偿购入立减金</MenuItem>
-              <MenuItem value="FREE_COUPON">FREE_COUPON - 免费领取平台券</MenuItem>
-              <MenuItem value="REPAY_COUPON">REPAY_COUPON - 信用卡/花呗还款券</MenuItem>
+              <MenuItem value="PREPAID_COUPON">有偿购买立减金</MenuItem>
+              <MenuItem value="FREE_COUPON">免费平台优惠券</MenuItem>
+              <MenuItem value="REPAY_COUPON">信用卡/花呗还款券</MenuItem>
             </Select>
           </FormControl>
 
@@ -1910,9 +1959,9 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                   })
                 }
               >
-                <MenuItem value="AVAILABLE">AVAILABLE - 待核销/可用</MenuItem>
-                <MenuItem value="USED">USED - 已核销使用</MenuItem>
-                <MenuItem value="EXPIRED">EXPIRED - 已过期失效</MenuItem>
+                <MenuItem value="AVAILABLE">待核销 / 可用</MenuItem>
+                <MenuItem value="USED">已核销使用</MenuItem>
+                <MenuItem value="EXPIRED">已过期失效</MenuItem>
               </Select>
             </FormControl>
           )}
@@ -1958,16 +2007,22 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               <Select
                 value={ruleForm.rule_type}
                 label="规则类型"
-                onChange={(e) =>
+                onChange={(e) => {
+                  const nextType = e.target.value as RecurringRuleType;
+                  const nextCurrency =
+                    nextType === 'FX_SUBSCRIPTION' && ruleForm.currency === 'CNY'
+                      ? 'USD'
+                      : ruleForm.currency;
                   setRuleForm({
                     ...ruleForm,
-                    rule_type: e.target.value as RecurringRuleType,
-                  })
-                }
+                    rule_type: nextType,
+                    currency: nextCurrency,
+                  });
+                }}
               >
-                <MenuItem value="FIXED_EXPENSE">FIXED_EXPENSE - 固定刚需支出</MenuItem>
-                <MenuItem value="AUTO_INVEST">AUTO_INVEST - 自动定投计划</MenuItem>
-                <MenuItem value="FX_SUBSCRIPTION">FX_SUBSCRIPTION - 外币订阅账单</MenuItem>
+                <MenuItem value="FIXED_EXPENSE">固定生活开支</MenuItem>
+                <MenuItem value="AUTO_INVEST">自动转账/基金定投</MenuItem>
+                <MenuItem value="FX_SUBSCRIPTION">外币周期订阅</MenuItem>
               </Select>
             </FormControl>
 
@@ -1980,15 +2035,33 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
                   setRuleForm({ ...ruleForm, cron_cycle: e.target.value as CronCycle })
                 }
               >
-                <MenuItem value="MONTHLY">MONTHLY - 每月触发</MenuItem>
-                <MenuItem value="YEARLY">YEARLY - 每年触发</MenuItem>
+                <MenuItem value="MONTHLY">每月触发</MenuItem>
+                <MenuItem value="YEARLY">每年触发</MenuItem>
               </Select>
             </FormControl>
           </Stack>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            <FormControl fullWidth size="small">
+              <InputLabel>币种</InputLabel>
+              <Select
+                value={ruleForm.currency}
+                label="币种"
+                onChange={(e) =>
+                  setRuleForm({ ...ruleForm, currency: e.target.value })
+                }
+              >
+                <MenuItem value="CNY">CNY 人民币</MenuItem>
+                <MenuItem value="USD">USD 美元</MenuItem>
+                <MenuItem value="EUR">EUR 欧元</MenuItem>
+                <MenuItem value="JPY">JPY 日元</MenuItem>
+                <MenuItem value="GBP">GBP 英镑</MenuItem>
+                <MenuItem value="HKD">HKD 港币</MenuItem>
+              </Select>
+            </FormControl>
+
             <TextField
-              label="扣款金额 (¥)"
+              label={`扣款金额 (${ruleForm.currency})`}
               fullWidth
               size="small"
               type="number"
@@ -1996,6 +2069,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               onChange={(e) => setRuleForm({ ...ruleForm, amount: e.target.value })}
               placeholder="如 20.00"
             />
+
             <TextField
               label="每月触发日 (1~31)"
               fullWidth
@@ -2016,7 +2090,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
             >
               {engine.state.accounts.map((a) => (
                 <MenuItem key={a.id} value={a.id}>
-                  {a.name} ({a.id})
+                  {a.name}
                 </MenuItem>
               ))}
             </Select>
@@ -2032,14 +2106,14 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               >
                 {investmentAccounts.map((a) => (
                   <MenuItem key={a.id} value={a.id}>
-                    {a.name} ({a.id})
+                    {a.name}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
           )}
 
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          {ruleForm.rule_type !== 'AUTO_INVEST' && (
             <FormControl fullWidth size="small">
               <InputLabel>绑定资金池</InputLabel>
               <Select
@@ -2049,27 +2123,12 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               >
                 {engine.state.budgetPools.map((p) => (
                   <MenuItem key={p.id} value={p.id}>
-                    {p.name} ({p.id})
+                    {p.name}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
-
-            <FormControl fullWidth size="small">
-              <InputLabel>绑定收支分类</InputLabel>
-              <Select
-                value={ruleForm.category_id}
-                label="绑定收支分类"
-                onChange={(e) => setRuleForm({ ...ruleForm, category_id: e.target.value })}
-              >
-                {engine.state.categories.map((c) => (
-                  <MenuItem key={c.id} value={c.id}>
-                    {c.icon_name} {c.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Stack>
+          )}
 
           <FormControlLabel
             control={

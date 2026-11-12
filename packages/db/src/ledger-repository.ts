@@ -37,6 +37,7 @@ import {
   processMastercardFxLifecycle,
   DEFAULT_FX_RATES,
   SplitItemInput,
+  generateVoucherTitle,
 } from '@ledger/core';
 import { SCHEMA_SQL, SEED_SQL } from './schema.js';
 import { recalculateAllAccounts } from './balance-recalculator.js';
@@ -424,6 +425,25 @@ export class LedgerRepository {
         .get(appliedVoucherId) as Voucher | undefined;
 
       if (voucher) {
+        if (voucher.status !== 'AVAILABLE') {
+          throw new Error(`优惠券「${voucher.title}」已被使用或已失效`);
+        }
+        if (parsed.tx_type === 'EXPENSE' && voucher.voucher_type === 'REPAY_COUPON') {
+          throw new Error('还款专用券仅限在「转账/还款」中使用');
+        }
+        if (parsed.tx_type === 'TRANSFER' && voucher.voucher_type !== 'REPAY_COUPON') {
+          throw new Error('转账/还款仅可使用「还款券」类型的优惠券');
+        }
+        if (parsed.tx_type === 'INCOME') {
+          throw new Error('收入交易不可使用优惠券');
+        }
+        const totalGrossDec = toDecimal(parsed.total_gross);
+        if (totalGrossDec.lessThan(toDecimal(voucher.min_spend))) {
+          throw new Error(
+            `未达到优惠券「${voucher.title}」的最低使用门槛（需满 ¥${voucher.min_spend}，当前金额 ¥${formatCny(totalGrossDec)}）`
+          );
+        }
+
         if (parsed.tx_type === 'EXPENSE') {
           // 实际现场微信/刷卡支付现金
           const cashPaid = Decimal.max(
@@ -651,7 +671,7 @@ export class LedgerRepository {
    */
   public buyVoucher(params: {
     accountId: string;
-    title: string;
+    title?: string;
     voucherType?: VoucherType;
     faceValue: string;
     acquireCost: string;
@@ -661,6 +681,10 @@ export class LedgerRepository {
     const voucherType = params.voucherType ?? 'PREPAID_COUPON';
     const faceValue = formatCny(params.faceValue);
     const acquireCost = formatCny(params.acquireCost);
+    const minSpend = params.minSpend ? formatCny(params.minSpend) : '0.00';
+    const finalTitle =
+      params.title?.trim() ||
+      generateVoucherTitle(voucherType, faceValue, minSpend, acquireCost);
     const discount = formatCny(toDecimal(faceValue).minus(toDecimal(acquireCost)));
     const txDate = params.txDate ?? new Date().toISOString().slice(0, 10);
 
@@ -682,13 +706,12 @@ export class LedgerRepository {
         settlement_status: 'SETTLED',
         hold_amount_cny: '0.00',
         settled_at: null,
-        raw_input_text: `购买卡券: ${params.title}`,
-        merchant_or_note: `购买卡券: ${params.title}`,
+        raw_input_text: `购买卡券: ${finalTitle}`,
+        merchant_or_note: `购买卡券: ${finalTitle}`,
       },
       items: [],
     });
 
-    const minSpend = params.minSpend ? formatCny(params.minSpend) : '0.00';
     const info = this.db
       .prepare(
         `
@@ -697,7 +720,7 @@ export class LedgerRepository {
     `
       )
       .run(
-        params.title,
+        finalTitle,
         voucherType,
         faceValue,
         acquireCost,
@@ -1506,6 +1529,41 @@ export class LedgerRepository {
     let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
     let holdAmountCny = '0.00';
 
+    let appliedVoucher: Voucher | null = null;
+    if (params.applied_voucher_id != null) {
+      const v = this.db
+        .prepare('SELECT * FROM vouchers WHERE id = ?')
+        .get(params.applied_voucher_id) as Voucher | undefined;
+      if (!v) {
+        throw new Error(`优惠券 "${params.applied_voucher_id}" 不存在`);
+      }
+      if (v.status !== 'AVAILABLE') {
+        throw new Error(`优惠券「${v.title}」已被使用或已失效`);
+      }
+      if (params.tx_type === 'EXPENSE' && v.voucher_type === 'REPAY_COUPON') {
+        throw new Error('还款专用券仅限在「转账/还款」中使用');
+      }
+      if (params.tx_type === 'TRANSFER' && v.voucher_type !== 'REPAY_COUPON') {
+        throw new Error('转账/还款仅可使用「还款券」类型的优惠券');
+      }
+      if (params.tx_type === 'INCOME') {
+        throw new Error('收入交易不可使用优惠券');
+      }
+      const totalGrossDec = isFx
+        ? roundCny(
+            toDecimal(params.amount).times(
+              toDecimal(DEFAULT_FX_RATES[currency] ?? '7.200000')
+            )
+          )
+        : toDecimal(params.amount);
+      if (totalGrossDec.lessThan(toDecimal(v.min_spend))) {
+        throw new Error(
+          `未达到优惠券「${v.title}」的最低使用门槛（需满 ¥${v.min_spend}，当前金额 ¥${formatCny(totalGrossDec)}）`
+        );
+      }
+      appliedVoucher = v;
+    }
+
     if (params.tx_type === 'EXPENSE') {
       const catId = params.category_id ?? 'CAT_FOOD';
       const cat = this.db
@@ -1513,17 +1571,14 @@ export class LedgerRepository {
         .get(catId) as any;
       const poolId = params.budget_pool_id ?? (cat?.default_pool_id ?? 'POOL_DAILY');
 
-      if (params.applied_voucher_id != null) {
-        const v = this.db
-          .prepare("SELECT * FROM vouchers WHERE id = ? AND status = 'AVAILABLE'")
-          .get(params.applied_voucher_id) as any;
-        if (v) {
-          const cashPaid = Decimal.max(
-            0,
-            toDecimal(params.amount)
-              .minus(toDecimal(params.discount ?? 0))
-              .minus(toDecimal(v.face_value))
-          );
+      if (appliedVoucher) {
+        const v = appliedVoucher;
+        const cashPaid = Decimal.max(
+          0,
+          toDecimal(params.amount)
+            .minus(toDecimal(params.discount ?? 0))
+            .minus(toDecimal(v.face_value))
+        );
           const splitInputs: SplitItemInput[] = [
             {
               name: params.merchant_or_note,
@@ -1561,7 +1616,6 @@ export class LedgerRepository {
             },
           ];
         }
-      }
 
       if (items.length === 0) {
         items = [
@@ -1610,13 +1664,8 @@ export class LedgerRepository {
       }
     } else if (params.tx_type === 'TRANSFER') {
       let discountDec = toDecimal(params.discount ?? 0);
-      if (params.applied_voucher_id != null) {
-        const v = this.db
-          .prepare("SELECT * FROM vouchers WHERE id = ? AND status = 'AVAILABLE'")
-          .get(params.applied_voucher_id) as any;
-        if (v) {
-          discountDec = discountDec.plus(toDecimal(v.face_value));
-        }
+      if (appliedVoucher) {
+        discountDec = discountDec.plus(toDecimal(appliedVoucher.face_value));
       }
       paymentDiscount = formatCny(discountDec);
       totalNet = formatCny(
@@ -2278,7 +2327,7 @@ export class LedgerRepository {
 
   public upsertVoucher(params: {
     id?: number;
-    title: string;
+    title?: string;
     voucher_type: VoucherType;
     face_value: string;
     acquire_cost: string;
@@ -2287,9 +2336,18 @@ export class LedgerRepository {
     status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
     accountId?: string;
   }): { voucher: Voucher; tx?: TransactionAggregate } {
+    const finalTitle =
+      params.title?.trim() ||
+      generateVoucherTitle(
+        params.voucher_type,
+        params.face_value,
+        params.min_spend,
+        params.acquire_cost
+      );
+
     if (!params.id && Number(params.acquire_cost) > 0 && params.accountId) {
       const res = this.buyVoucher({
-        title: params.title,
+        title: finalTitle,
         voucherType: params.voucher_type,
         faceValue: params.face_value,
         acquireCost: params.acquire_cost,
@@ -2307,7 +2365,7 @@ export class LedgerRepository {
           WHERE id = ?
         `)
         .run(
-          params.title,
+          finalTitle,
           params.voucher_type,
           formatCny(params.face_value),
           formatCny(params.acquire_cost ?? '0.00'),
@@ -2335,7 +2393,7 @@ export class LedgerRepository {
         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)
       `)
       .run(
-        params.title,
+        finalTitle,
         params.voucher_type,
         formatCny(params.face_value),
         formatCny(params.acquire_cost ?? '0.00'),

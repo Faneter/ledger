@@ -368,9 +368,9 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   const getRolloverChip = (strategy?: RolloverStrategy) => {
     switch (strategy) {
       case 'RESET':
-        return <Chip size="small" color="default" label="月末清零 (RESET)" variant="outlined" />;
+        return <Chip size="small" color="default" label="月末清零" variant="outlined" />;
       case 'ACCUMULATE':
-        return <Chip size="small" color="secondary" label="全额滚存 (ACCUMULATE)" variant="outlined" />;
+        return <Chip size="small" color="secondary" label="结余滚存下月" variant="outlined" />;
       default:
         return <Chip size="small" label="常规池" variant="outlined" />;
     }
@@ -390,13 +390,13 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
             <Tab
               icon={<SavingsRounded fontSize="small" />}
               iconPosition="start"
-              label="月度预算资金池 (Monthly Pools)"
+              label="月度预算资金池"
               sx={{ fontWeight: 700 }}
             />
             <Tab
               icon={<FlagRounded fontSize="small" />}
               iconPosition="start"
-              label="专项预算与心愿单 (Wish Goals)"
+              label="专项预算与心愿单"
               sx={{ fontWeight: 700 }}
             />
           </Tabs>
@@ -1064,8 +1064,8 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
                 })
               }
             >
-              <MenuItem value="RESET">RESET - 月末清零</MenuItem>
-              <MenuItem value="ACCUMULATE">ACCUMULATE - 结余滚存下月</MenuItem>
+              <MenuItem value="RESET">月末清零</MenuItem>
+              <MenuItem value="ACCUMULATE">结余滚存下月</MenuItem>
             </Select>
           </FormControl>
 
@@ -1128,9 +1128,9 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
               label="标签类型"
               onChange={(e) => setWishForm({ ...wishForm, tag_type: e.target.value as TagType })}
             >
-              <MenuItem value="PROJECT">PROJECT - 专项立项 (跨月追踪)</MenuItem>
-              <MenuItem value="SCENE">SCENE - 消费场景标签</MenuItem>
-              <MenuItem value="STOCK_CONSUME">STOCK_CONSUME - 零元消耗打卡标记</MenuItem>
+              <MenuItem value="PROJECT">专项立项（跨月追踪）</MenuItem>
+              <MenuItem value="SCENE">消费场景标签</MenuItem>
+              <MenuItem value="STOCK_CONSUME">零元消耗打卡标记</MenuItem>
             </Select>
           </FormControl>
 
@@ -1162,12 +1162,12 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
               label="关联预算沉淀池"
               onChange={(e) => setWishForm({ ...wishForm, linked_pool_id: e.target.value })}
             >
-              <MenuItem value="POOL_FUND">POOL_FUND - 年度专项基金池</MenuItem>
+              <MenuItem value="POOL_FUND">年度专项基金池</MenuItem>
               {engine.state.budgetPools
                 .filter((p) => p.id !== 'POOL_FUND')
                 .map((p) => (
                   <MenuItem key={p.id} value={p.id}>
-                    {p.id} - {p.name}
+                    {p.name}
                   </MenuItem>
                 ))}
             </Select>

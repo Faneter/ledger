@@ -215,6 +215,34 @@ export interface Voucher {
   created_at?: string;
 }
 
+/**
+ * 自动生成卡券/立减金默认标题
+ */
+export function generateVoucherTitle(
+  voucherType: VoucherType | string,
+  faceValue: string | number,
+  minSpend: string | number,
+  _acquireCost?: string | number
+): string {
+  let typeLabel = '优惠券';
+  if (voucherType === 'REPAY_COUPON') {
+    typeLabel = '还款券';
+  } else if (voucherType === 'PREPAID_COUPON') {
+    typeLabel = '立减金';
+  } else if (voucherType === 'FREE_COUPON') {
+    typeLabel = '优惠券';
+  }
+
+  const minVal = Number(minSpend || 0);
+  const faceVal = Number(faceValue || 0);
+
+  if (minVal > 0) {
+    return `满${minVal}减${faceVal}${typeLabel}`;
+  } else {
+    return `${faceVal}元无门槛${typeLabel}`;
+  }
+}
+
 // ============================================================================
 // 5. 交易流水与凑单分摊相关类型定义
 // ============================================================================

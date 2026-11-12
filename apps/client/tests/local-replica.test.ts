@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LocalLedgerEngine, LOCAL_STORAGE_KEY } from '../src/sync/local-replica';
-import { formatCny } from '@ledger/core';
+import { formatCny, generateVoucherTitle } from '@ledger/core';
 
 describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)', () => {
   let engine: LocalLedgerEngine;
@@ -711,6 +711,131 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       // Check account frozen amount
       const mcAcc = engine.state.accounts.find((a) => a.id === 'ACC_MC_DEBIT_A');
       expect(mcAcc?.frozen_amount).toBe('35.25');
+    });
+  });
+
+  describe('Stage 12: Voucher min_spend, Type Validation & TRANSFER with REPAY_COUPON', () => {
+    it('Voucher min_spend 验证：消费金额小于门槛时抛出异常，达到或超过门槛时成功录入', () => {
+      const { voucher } = engine.upsertVoucher({
+        title: '满50减5优惠券',
+        voucher_type: 'FREE_COUPON',
+        face_value: '5.00',
+        acquire_cost: '0.00',
+        min_spend: '50.00',
+      });
+
+      // 1. 30.00 < 50.00 应抛出门槛未达异常
+      expect(() => {
+        engine.recordManualTransaction({
+          tx_type: 'EXPENSE',
+          account_id: 'ACC_UNION_MAIN',
+          amount: '30.00',
+          merchant_or_note: '超市购物',
+          applied_voucher_id: voucher.id,
+        });
+      }).toThrow('未达到优惠券「满50减5优惠券」的最低使用门槛（需满 ¥50.00，当前金额 ¥30.00）');
+
+      // 2. 50.00 >= 50.00 应成功录入且抵扣 5.00
+      const tx = engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        account_id: 'ACC_UNION_MAIN',
+        amount: '50.00',
+        merchant_or_note: '超市大采购',
+        applied_voucher_id: voucher.id,
+      });
+
+      expect(tx.header.total_gross).toBe('50.00');
+      expect(tx.header.payment_discount).toBe('5.00');
+      expect(tx.header.total_net).toBe('45.00');
+      expect(engine.state.vouchers.find((v) => v.id === voucher.id)?.status).toBe('USED');
+    });
+
+    it('TRANSFER 交易使用 REPAY_COUPON：扣减面值，实付扣除，并标记券为 USED', () => {
+      const { voucher } = engine.upsertVoucher({
+        title: '满50减5还款券',
+        voucher_type: 'REPAY_COUPON',
+        face_value: '5.00',
+        acquire_cost: '0.00',
+        min_spend: '50.00',
+      });
+
+      // 尝试在 EXPENSE 中使用 REPAY_COUPON 应抛出异常
+      expect(() => {
+        engine.recordManualTransaction({
+          tx_type: 'EXPENSE',
+          account_id: 'ACC_UNION_MAIN',
+          amount: '60.00',
+          merchant_or_note: '普通消费',
+          applied_voucher_id: voucher.id,
+        });
+      }).toThrow('还款专用券仅限在「转账/还款」中使用');
+
+      // 在 TRANSFER 中使用且金额低于门槛应抛出异常
+      expect(() => {
+        engine.recordManualTransaction({
+          tx_type: 'TRANSFER',
+          account_id: 'ACC_UNION_MAIN',
+          target_account_id: 'ACC_HUABEI',
+          amount: '40.00',
+          merchant_or_note: '花呗还款',
+          applied_voucher_id: voucher.id,
+        });
+      }).toThrow('未达到优惠券「满50减5还款券」的最低使用门槛（需满 ¥50.00，当前金额 ¥40.00）');
+
+      // 正常还款 100.00，使用 5 元还款券
+      const initialUnionBal = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN')?.book_balance;
+      const initialHuabeiBal = engine.state.accounts.find((a) => a.id === 'ACC_HUABEI')?.book_balance;
+
+      const tx = engine.recordManualTransaction({
+        tx_type: 'TRANSFER',
+        account_id: 'ACC_UNION_MAIN',
+        target_account_id: 'ACC_HUABEI',
+        amount: '100.00',
+        merchant_or_note: '还花呗',
+        applied_voucher_id: voucher.id,
+      });
+
+      expect(tx.header.total_gross).toBe('100.00');
+      expect(tx.header.payment_discount).toBe('5.00');
+      expect(tx.header.total_net).toBe('95.00');
+      expect(engine.state.vouchers.find((v) => v.id === voucher.id)?.status).toBe('USED');
+
+      // 验证全账本余额重算：转出账户扣 95.00，目标账户还款入账 100.00
+      const union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
+      const huabei = engine.state.accounts.find((a) => a.id === 'ACC_HUABEI');
+      expect(union?.book_balance).toBe(formatCny(Number(initialUnionBal) - 95));
+      expect(huabei?.book_balance).toBe(formatCny(Number(initialHuabeiBal) + 100));
+    });
+
+    it('generateVoucherTitle 能够根据类型与门槛正确自动生成卡券名称', () => {
+      // REPAY_COUPON
+      expect(generateVoucherTitle('REPAY_COUPON', '5.00', '50.00')).toBe('满50减5还款券');
+      expect(generateVoucherTitle('REPAY_COUPON', '10.00', '0.00')).toBe('10元无门槛还款券');
+      // PREPAID_COUPON
+      expect(generateVoucherTitle('PREPAID_COUPON', '10.00', '30.00')).toBe('满30减10立减金');
+      expect(generateVoucherTitle('PREPAID_COUPON', '10.00', '0.00')).toBe('10元无门槛立减金');
+      // FREE_COUPON
+      expect(generateVoucherTitle('FREE_COUPON', '20.00', '100.00')).toBe('满100减20优惠券');
+      expect(generateVoucherTitle('FREE_COUPON', '5.00', '0.00')).toBe('5元无门槛优惠券');
+    });
+
+    it('upsertVoucher/buyVoucher 在未传 title 时能自动生成卡券名称', () => {
+      const { voucher: v1 } = engine.upsertVoucher({
+        voucher_type: 'PREPAID_COUPON',
+        face_value: '10.00',
+        acquire_cost: '0.00',
+        min_spend: '30.00',
+      });
+      expect(v1.title).toBe('满30减10立减金');
+
+      const { voucher: v2 } = engine.buyVoucher({
+        voucher_type: 'PREPAID_COUPON',
+        face_value: '20.00',
+        acquire_cost: '15.00',
+        min_spend: '50.00',
+        accountId: 'ACC_UNION_MAIN',
+      });
+      expect(v2.title).toBe('满50减20立减金');
     });
   });
 });
