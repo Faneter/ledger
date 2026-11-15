@@ -8,6 +8,7 @@ import {
   formatRate,
   sumCny,
   equalsCny,
+  getLocalTodayDateStr,
   BudgetPool,
   PoolType,
   Category,
@@ -552,13 +553,34 @@ export class LedgerRepository {
       });
     }
 
-    // 3. 若核销了卡券，更新 vouchers 状态为 USED
+    // 3. 若核销了卡券，更新 vouchers 状态为 USED 并写入 OpLog
     if (voucherIdToUse != null) {
       this.db
         .prepare(
           "UPDATE vouchers SET status = 'USED', used_tx_id = ? WHERE id = ?"
         )
         .run(txId, voucherIdToUse);
+      const updatedVoucher = this.db
+        .prepare('SELECT * FROM vouchers WHERE id = ?')
+        .get(voucherIdToUse) as any;
+      if (updatedVoucher) {
+        const formattedVoucher: Voucher = {
+          ...updatedVoucher,
+          id: Number(updatedVoucher.id),
+          face_value: formatCny(updatedVoucher.face_value),
+          acquire_cost: formatCny(updatedVoucher.acquire_cost),
+          min_spend: formatCny(updatedVoucher.min_spend),
+        };
+        this.recordOpLog({
+          hlc: this.hlc.now(),
+          node_id: this.nodeId,
+          entity_type: 'VOUCHER',
+          entity_id: String(formattedVoucher.id),
+          op_type: 'UPSERT',
+          payload_json: JSON.stringify(formattedVoucher),
+          created_at: new Date().toISOString(),
+        });
+      }
     }
 
     const finalAggregate: TransactionAggregate = {
@@ -571,6 +593,10 @@ export class LedgerRepository {
         payment_discount: formatCny(header.payment_discount ?? 0),
         total_net: formatCny(header.total_net),
         hold_amount_cny: formatCny(header.hold_amount_cny ?? 0),
+        fx_cashback_rate:
+          header.fx_cashback_rate != null && header.fx_cashback_rate !== ''
+            ? Number(header.fx_cashback_rate).toFixed(4)
+            : null,
         exchange_rate: header.exchange_rate
           ? formatRate(header.exchange_rate)
           : '1.000000',
@@ -700,7 +726,7 @@ export class LedgerRepository {
 
     return this.recordTransaction({
       header: {
-        tx_date: txDate ?? new Date().toISOString().slice(0, 10),
+        tx_date: txDate ?? getLocalTodayDateStr(),
         tx_type: parsed.tx_type,
         total_gross: totalGross,
         platform_discount: platformDiscount,
@@ -713,7 +739,10 @@ export class LedgerRepository {
         settlement_status: parsed.settlement_status,
         hold_amount_cny: parsed.hold_amount_cny,
         fx_cashback_rate: parsed.fx_cashback_rate ?? null,
-        settled_at: null,
+        settled_at:
+          parsed.settlement_status === 'SETTLED'
+            ? new Date().toISOString()
+            : null,
         raw_input_text: parsed.raw_input_text,
         merchant_or_note: parsed.merchant_or_note,
         applied_voucher_id: appliedVoucherId ?? null,
@@ -854,6 +883,10 @@ export class LedgerRepository {
     const finalAggregate: TransactionAggregate = {
       header: {
         ...header,
+        platform_discount: formatCny(header.platform_discount ?? 0),
+        original_amount:
+          header.original_amount != null ? formatCny(header.original_amount) : null,
+        is_deleted: Boolean(header.is_deleted),
         settlement_status: 'SETTLED',
         hold_amount_cny: '0.00',
         fx_cashback_rate: resolvedCashbackRate,
@@ -864,7 +897,13 @@ export class LedgerRepository {
         settled_at: finalSettledAt,
         updated_hlc: hlc,
       },
-      items: updatedItems,
+      items: updatedItems.map((it) => ({
+        ...it,
+        is_primary_item: Boolean(it.is_primary_item),
+        item_gross: formatCny(it.item_gross),
+        allocated_discount: formatCny(it.allocated_discount),
+        item_net: formatCny(it.item_net),
+      })),
       appliedVoucherId: header.applied_voucher_id,
     };
 
@@ -891,7 +930,7 @@ export class LedgerRepository {
     acquireCost: string;
     minSpend?: string;
     txDate?: string;
-  }): { voucher: Voucher; transaction: TransactionAggregate } {
+  }): { voucher: Voucher; transaction: TransactionAggregate; tx: TransactionAggregate } {
     const voucherType = params.voucherType ?? 'PREPAID_COUPON';
     const faceValue = formatCny(params.faceValue);
     const acquireCost = formatCny(params.acquireCost);
@@ -899,7 +938,7 @@ export class LedgerRepository {
     const finalTitle =
       params.title?.trim() ||
       generateVoucherTitle(voucherType, faceValue, minSpend, acquireCost);
-    const txDate = params.txDate ?? new Date().toISOString().slice(0, 10);
+    const txDate = params.txDate ?? getLocalTodayDateStr();
 
     // 生成 VOUCHER_BUY 流水
     const tx = this.recordTransaction({
@@ -916,7 +955,7 @@ export class LedgerRepository {
         exchange_rate: '1.000000',
         settlement_status: 'SETTLED',
         hold_amount_cny: '0.00',
-        settled_at: null,
+        settled_at: new Date().toISOString(),
         raw_input_text: `购买卡券: ${finalTitle}`,
         merchant_or_note: `购买卡券: ${finalTitle}`,
       },
@@ -965,6 +1004,7 @@ export class LedgerRepository {
     return {
       voucher: formattedVoucher,
       transaction: tx,
+      tx,
     };
   }
 
@@ -1010,6 +1050,23 @@ export class LedgerRepository {
           )
           .run(toYearMonth, pool.id, baseAlloc, rollover);
       }
+
+      const updatedBudget = this.db
+        .prepare(
+          'SELECT * FROM monthly_budgets WHERE year_month = ? AND pool_id = ?'
+        )
+        .get(toYearMonth, pool.id) as any;
+      if (updatedBudget) {
+        this.recordOpLog({
+          hlc: this.hlc.now(),
+          node_id: this.nodeId,
+          entity_type: 'MONTHLY_BUDGET',
+          entity_id: `${toYearMonth}:${pool.id}`,
+          op_type: 'UPSERT',
+          payload_json: JSON.stringify(updatedBudget),
+          created_at: new Date().toISOString(),
+        });
+      }
     }
 
     return this.getMonthlyBudgetStatus(toYearMonth).pools;
@@ -1023,12 +1080,16 @@ export class LedgerRepository {
       .prepare('SELECT * FROM fixed_assets ORDER BY id ASC')
       .all() as any[];
 
-    const todayStr = currentDateStr ?? new Date().toISOString().slice(0, 10);
+    const todayStr = currentDateStr ?? getLocalTodayDateStr();
     const todayMs = new Date(todayStr).getTime();
 
     return assets.map((asset) => {
       const purchaseMs = new Date(asset.purchase_date).getTime();
-      const diffMs = todayMs - purchaseMs;
+      const endMs =
+        asset.status === 'SOLD' && asset.resale_date
+          ? Math.min(todayMs, new Date(asset.resale_date).getTime())
+          : todayMs;
+      const diffMs = endMs - purchaseMs;
       const daysHeld = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
 
       const netCost = toDecimal(asset.purchase_net_cost).minus(
@@ -1727,6 +1788,8 @@ export class LedgerRepository {
           payment_discount: formatCny(h.payment_discount),
           total_net: formatCny(h.total_net),
           hold_amount_cny: formatCny(h.hold_amount_cny ?? 0),
+          original_amount:
+            h.original_amount != null ? formatCny(h.original_amount) : null,
           fx_cashback_rate:
             h.fx_cashback_rate != null && h.fx_cashback_rate !== ''
               ? Number(h.fx_cashback_rate).toFixed(4)
@@ -1873,7 +1936,7 @@ export class LedgerRepository {
     fx_hold_ratio?: string;
     fx_cashback_rate?: string;
   }): TransactionAggregate {
-    const effectiveDate = params.tx_date ?? new Date().toISOString().slice(0, 10);
+    const effectiveDate = params.tx_date ?? getLocalTodayDateStr();
     const currency = params.currency ?? 'CNY';
     const isFx = currency !== 'CNY';
 
@@ -1897,6 +1960,7 @@ export class LedgerRepository {
     let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
     let holdAmountCny = '0.00';
     let fxCashbackRateToStore: string | null = null;
+    let fxExchangeRate: string | null = null;
 
     let appliedVoucher: Voucher | null = null;
     if (params.applied_voucher_id != null) {
@@ -2026,6 +2090,7 @@ export class LedgerRepository {
         totalGross = fxRes.total_gross;
         paymentDiscount = fxRes.payment_discount;
         totalNet = fxRes.total_net;
+        fxExchangeRate = fxRes.exchange_rate;
         if (items.length > 0) {
           items[0].item_gross = fxRes.total_gross;
           items[0].allocated_discount = fxRes.payment_discount;
@@ -2048,7 +2113,7 @@ export class LedgerRepository {
         allocation_mode: 'SINGLE',
         original_currency: currency,
         original_amount: isFx ? formatCny(params.amount) : null,
-        exchange_rate: isFx ? null : '1.000000',
+        exchange_rate: isFx ? (fxExchangeRate ?? '1.000000') : '1.000000',
         settlement_status: settlementStatus,
         hold_amount_cny: holdAmountCny,
         fx_cashback_rate: fxCashbackRateToStore,
@@ -2279,6 +2344,27 @@ export class LedgerRepository {
       this.db
         .prepare("UPDATE vouchers SET status = 'AVAILABLE', used_tx_id = NULL WHERE id = ?")
         .run(existing.header.applied_voucher_id);
+      const rolledVoucher = this.db
+        .prepare('SELECT * FROM vouchers WHERE id = ?')
+        .get(existing.header.applied_voucher_id) as any;
+      if (rolledVoucher) {
+        const formattedVoucher: Voucher = {
+          ...rolledVoucher,
+          id: Number(rolledVoucher.id),
+          face_value: formatCny(rolledVoucher.face_value),
+          acquire_cost: formatCny(rolledVoucher.acquire_cost),
+          min_spend: formatCny(rolledVoucher.min_spend),
+        };
+        this.recordOpLog({
+          hlc: this.hlc.now(),
+          node_id: this.nodeId,
+          entity_type: 'VOUCHER',
+          entity_id: String(formattedVoucher.id),
+          op_type: 'UPSERT',
+          payload_json: JSON.stringify(formattedVoucher),
+          created_at: new Date().toISOString(),
+        });
+      }
     }
 
     // 若删除的是购券流水，级联删除所购买的卡券
@@ -2286,9 +2372,35 @@ export class LedgerRepository {
       .prepare('SELECT id FROM vouchers WHERE purchase_tx_id = ?')
       .all(txId) as Array<{ id: number }>;
     for (const pv of purchasedVouchers) {
+      const refTxs = this.db
+        .prepare('SELECT id FROM transaction_headers WHERE applied_voucher_id = ?')
+        .all(pv.id) as Array<{ id: string }>;
       this.db
         .prepare('UPDATE transaction_headers SET applied_voucher_id = NULL WHERE applied_voucher_id = ?')
         .run(pv.id);
+      for (const rt of refTxs) {
+        if (rt.id !== txId) {
+          const refAgg = this.getRecentTransactions(1000).find((t) => t.header.id === rt.id);
+          if (refAgg) {
+            const refHlc = this.hlc.now();
+            refAgg.header.applied_voucher_id = null;
+            refAgg.appliedVoucherId = null;
+            refAgg.header.updated_hlc = refHlc;
+            this.db
+              .prepare('UPDATE transaction_headers SET updated_hlc = ? WHERE id = ?')
+              .run(refHlc, rt.id);
+            this.recordOpLog({
+              hlc: refHlc,
+              node_id: this.nodeId,
+              entity_type: 'TRANSACTION',
+              entity_id: rt.id,
+              op_type: 'UPSERT',
+              payload_json: JSON.stringify(refAgg),
+              created_at: new Date().toISOString(),
+            });
+          }
+        }
+      }
       this.db.prepare('DELETE FROM vouchers WHERE id = ?').run(pv.id);
       this.recordOpLog({
         hlc: this.hlc.now(),
@@ -2624,7 +2736,9 @@ export class LedgerRepository {
     min_spend: string;
     expire_date?: string | null;
     status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
-  }): { voucher: Voucher; tx?: TransactionAggregate } {
+    txDate?: string;
+    tx_date?: string;
+  }): { voucher: Voucher; tx?: TransactionAggregate; transaction?: TransactionAggregate } {
     const finalTitle =
       params.title?.trim() ||
       generateVoucherTitle(
@@ -2641,8 +2755,9 @@ export class LedgerRepository {
         faceValue: params.face_value,
         acquireCost: params.acquire_cost,
         minSpend: params.min_spend,
+        txDate: params.txDate ?? params.tx_date,
       });
-      return { voucher: res.voucher, tx: res.transaction };
+      return { voucher: res.voucher, tx: res.transaction, transaction: res.transaction };
     }
 
     if (params.id) {
@@ -2707,23 +2822,56 @@ export class LedgerRepository {
   public deleteVoucher(id: number): void {
     const v = this.db.prepare('SELECT * FROM vouchers WHERE id = ?').get(id) as any;
     if (v?.purchase_tx_id) {
+      const pTx = this.getRecentTransactions(1000).find(
+        (t) => t.header.id === v.purchase_tx_id
+      );
       const txHlc = this.hlc.now();
       this.db
         .prepare('UPDATE transaction_headers SET is_deleted = 1, updated_hlc = ? WHERE id = ?')
         .run(txHlc, v.purchase_tx_id);
+      if (pTx) {
+        pTx.header.is_deleted = true;
+        pTx.header.updated_hlc = txHlc;
+      }
       this.recordOpLog({
         hlc: txHlc,
         node_id: this.nodeId,
         entity_type: 'TRANSACTION',
         entity_id: v.purchase_tx_id,
-        op_type: 'DELETE',
-        payload_json: JSON.stringify({ id: v.purchase_tx_id, is_deleted: true }),
+        op_type: 'UPSERT',
+        payload_json: JSON.stringify(
+          pTx ?? { header: { id: v.purchase_tx_id, is_deleted: true, updated_hlc: txHlc }, items: [] }
+        ),
         created_at: new Date().toISOString(),
       });
     }
+    const refTxs = this.db
+      .prepare('SELECT id FROM transaction_headers WHERE applied_voucher_id = ?')
+      .all(id) as Array<{ id: string }>;
     this.db
       .prepare('UPDATE transaction_headers SET applied_voucher_id = NULL WHERE applied_voucher_id = ?')
       .run(id);
+    for (const rt of refTxs) {
+      const refAgg = this.getRecentTransactions(1000).find((t) => t.header.id === rt.id);
+      if (refAgg) {
+        const refHlc = this.hlc.now();
+        refAgg.header.applied_voucher_id = null;
+        refAgg.appliedVoucherId = null;
+        refAgg.header.updated_hlc = refHlc;
+        this.db
+          .prepare('UPDATE transaction_headers SET updated_hlc = ? WHERE id = ?')
+          .run(refHlc, rt.id);
+        this.recordOpLog({
+          hlc: refHlc,
+          node_id: this.nodeId,
+          entity_type: 'TRANSACTION',
+          entity_id: rt.id,
+          op_type: 'UPSERT',
+          payload_json: JSON.stringify(refAgg),
+          created_at: new Date().toISOString(),
+        });
+      }
+    }
     this.db.prepare('DELETE FROM vouchers WHERE id = ?').run(id);
 
     this.recordOpLog({

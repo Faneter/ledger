@@ -30,3 +30,8 @@ Thumbs.db
 apps/client/src-tauri/target/
 apps/client/android/
 apps/client/ios/
+
+# Rust Core Engine & Flutter Mobile build outputs
+packages/core-rs/target/
+apps/mobile/.dart_tool/
+apps/mobile/build/

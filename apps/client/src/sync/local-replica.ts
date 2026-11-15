@@ -465,7 +465,7 @@ export class LocalLedgerEngine {
       if (Array.isArray(target.projectTags)) {
         for (const tag of target.projectTags) {
           if (tag.linked_pool_id && poolsToRemove.has(tag.linked_pool_id)) {
-            tag.linked_pool_id = null;
+            tag.linked_pool_id = 'POOL_FLEX';
             cleaned = true;
           }
         }
@@ -1570,7 +1570,9 @@ export class LocalLedgerEngine {
     min_spend: string;
     expire_date?: string | null;
     status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
-  }): { voucher: Voucher; tx?: TransactionAggregate } {
+    txDate?: string;
+    tx_date?: string;
+  }): { voucher: Voucher; tx?: TransactionAggregate; transaction?: TransactionAggregate } {
     const finalTitle =
       params.title?.trim() ||
       generateVoucherTitle(
@@ -1588,6 +1590,7 @@ export class LocalLedgerEngine {
         acquire_cost: params.acquire_cost,
         min_spend: params.min_spend,
         expire_date: params.expire_date,
+        txDate: params.txDate ?? params.tx_date,
       });
     }
 
@@ -1644,6 +1647,14 @@ export class LocalLedgerEngine {
           pTx.header.is_deleted = true;
           pTx.header.updated_hlc = this.hlc.now();
           this.appendOpLog('TRANSACTION', pTx.header.id, 'UPSERT', pTx);
+        }
+      }
+      for (const tx of this.state.transactions) {
+        if (!tx.header.is_deleted && tx.header.applied_voucher_id === id) {
+          tx.header.applied_voucher_id = null;
+          tx.appliedVoucherId = null;
+          tx.header.updated_hlc = this.hlc.now();
+          this.appendOpLog('TRANSACTION', tx.header.id, 'UPSERT', tx);
         }
       }
       this.state.vouchers.splice(idx, 1);
@@ -1740,10 +1751,25 @@ export class LocalLedgerEngine {
   // --------------------------------------------------------------------------
   // 万事达外币预授权清算
   // --------------------------------------------------------------------------
+  public settleMastercardTransaction(
+    txId: string,
+    settledAmountCny: string,
+    settledAt?: string,
+    cashbackRate?: string
+  ): TransactionAggregate {
+    return this.settleMastercardPending(
+      txId,
+      settledAmountCny,
+      cashbackRate,
+      settledAt
+    );
+  }
+
   public settleMastercardPending(
     txId: string,
     settledAmountCny: string,
-    cashbackRate?: string
+    cashbackRate?: string,
+    settledAt?: string
   ): TransactionAggregate {
     const tx = this.state.transactions.find((it) => it.header.id === txId);
     if (!tx) {
@@ -1772,7 +1798,7 @@ export class LocalLedgerEngine {
       cashbackRate: resolvedCashbackRate,
     });
 
-    const nowIso = new Date().toISOString();
+    const nowIso = settledAt ?? new Date().toISOString();
     const hlc = this.hlc.now();
 
     tx.header.settlement_status = 'SETTLED';
@@ -1785,11 +1811,50 @@ export class LocalLedgerEngine {
     tx.header.settled_at = nowIso;
     tx.header.updated_hlc = hlc;
 
-    // 同步更新子项
-    if (tx.items.length > 0) {
+    // 同步更新子项（单品直接赋值，多品按清算数额重算缩放分摊）
+    if (tx.items.length === 1) {
       tx.items[0].item_gross = fxResult.total_gross;
       tx.items[0].allocated_discount = fxResult.payment_discount;
       tx.items[0].item_net = fxResult.total_net;
+    } else if (tx.items.length > 1) {
+      const oldGrossSum = sumCny(tx.items.map((it) => it.item_gross));
+      const newGrossDec = toDecimal(fxResult.total_gross);
+      let scaledGrosses = oldGrossSum.gt(0)
+        ? tx.items.map((it) =>
+            roundCny(
+              toDecimal(it.item_gross).times(newGrossDec).dividedBy(oldGrossSum)
+            )
+          )
+        : tx.items.map((it) => toDecimal(it.item_gross));
+      if (scaledGrosses.length > 0 && oldGrossSum.gt(0)) {
+        const diff = newGrossDec.minus(sumCny(scaledGrosses));
+        scaledGrosses[0] = roundCny(scaledGrosses[0].plus(diff));
+      }
+      const splitInputs: SplitItemInput[] = tx.items.map((it, idx) => ({
+        name: it.item_name,
+        gross: formatCny(scaledGrosses[idx]),
+        category_id: it.category_id,
+        budget_pool_id: it.budget_pool_id,
+        project_tag_id: it.project_tag_id,
+        is_primary: it.is_primary_item,
+      }));
+      const mode: AllocationMode =
+        tx.header.allocation_mode === 'MANUAL'
+          ? 'PROPORTIONAL'
+          : tx.header.allocation_mode;
+      const allocated = allocateSplitDiscounts(
+        splitInputs,
+        fxResult.total_net,
+        mode
+      );
+      tx.items.forEach((it, idx) => {
+        const a = allocated[idx];
+        if (a) {
+          it.item_gross = a.gross;
+          it.allocated_discount = a.allocated_discount;
+          it.item_net = a.net;
+        }
+      });
     }
 
     const op: SyncOpLogEntry = {
@@ -1815,34 +1880,39 @@ export class LocalLedgerEngine {
   // --------------------------------------------------------------------------
   public buyVoucher(params: {
     title?: string;
-    voucher_type: VoucherType;
-    face_value: string;
-    acquire_cost: string;
-    min_spend: string;
+    voucher_type?: VoucherType;
+    voucherType?: VoucherType;
+    face_value?: string;
+    faceValue?: string;
+    acquire_cost?: string;
+    acquireCost?: string;
+    min_spend?: string;
+    minSpend?: string;
     expire_date?: string | null;
-  }): { voucher: Voucher; tx: TransactionAggregate } {
+    txDate?: string;
+    tx_date?: string;
+  }): { voucher: Voucher; tx: TransactionAggregate; transaction: TransactionAggregate } {
+    const voucherType = params.voucher_type ?? params.voucherType ?? 'PREPAID_COUPON';
+    const faceValue = formatCny(params.face_value ?? params.faceValue ?? '0.00');
+    const acquireCost = formatCny(params.acquire_cost ?? params.acquireCost ?? '0.00');
+    const minSpend = formatCny(params.min_spend ?? params.minSpend ?? '0.00');
     const finalTitle =
       params.title?.trim() ||
-      generateVoucherTitle(
-        params.voucher_type,
-        params.face_value,
-        params.min_spend,
-        params.acquire_cost
-      );
+      generateVoucherTitle(voucherType, faceValue, minSpend, acquireCost);
     const nextId =
       this.state.vouchers.reduce((max, v) => Math.max(max, v.id), 0) + 1;
     const nowIso = new Date().toISOString();
-    const today = nowIso.slice(0, 10);
+    const today = params.txDate ?? params.tx_date ?? getLocalTodayDateStr();
     const txId = `tx_buy_voucher_${Date.now()}`;
     const hlc = this.hlc.now();
 
     const newVoucher: Voucher = {
       id: nextId,
       title: finalTitle,
-      voucher_type: params.voucher_type,
-      face_value: formatCny(params.face_value),
-      acquire_cost: formatCny(params.acquire_cost),
-      min_spend: formatCny(params.min_spend),
+      voucher_type: voucherType,
+      face_value: faceValue,
+      acquire_cost: acquireCost,
+      min_spend: minSpend,
       status: 'AVAILABLE',
       purchase_tx_id: txId,
       used_tx_id: null,
@@ -1854,10 +1924,10 @@ export class LocalLedgerEngine {
       tx_date: today,
       tx_timestamp: nowIso,
       tx_type: 'VOUCHER_BUY',
-      total_gross: formatCny(params.acquire_cost),
+      total_gross: acquireCost,
       platform_discount: '0.00',
       payment_discount: '0.00',
-      total_net: formatCny(params.acquire_cost),
+      total_net: acquireCost,
       allocation_mode: 'SINGLE',
       original_currency: 'CNY',
       original_amount: null,
@@ -1865,8 +1935,8 @@ export class LocalLedgerEngine {
       settlement_status: 'SETTLED',
       hold_amount_cny: '0.00',
       settled_at: nowIso,
-      raw_input_text: `购买卡券：${finalTitle}`,
-      merchant_or_note: `购买卡券：${finalTitle}`,
+      raw_input_text: `购买卡券: ${finalTitle}`,
+      merchant_or_note: `购买卡券: ${finalTitle}`,
       applied_voucher_id: null,
       is_deleted: false,
       updated_hlc: hlc,
@@ -1906,7 +1976,7 @@ export class LocalLedgerEngine {
     this.recalculateAllBalances();
     this.saveToStorage();
 
-    return { voucher: newVoucher, tx };
+    return { voucher: newVoucher, tx, transaction: tx };
   }
 
   // --------------------------------------------------------------------------
@@ -1921,7 +1991,7 @@ export class LocalLedgerEngine {
 
     asset.resale_recovery = formatCny(resaleRecovery);
     asset.status = 'SOLD';
-    asset.resale_date = new Date().toISOString().slice(0, 10);
+    asset.resale_date = getLocalTodayDateStr();
 
     const hlc = this.hlc.now();
     const op: SyncOpLogEntry = {
@@ -1961,7 +2031,11 @@ export class LocalLedgerEngine {
         tx.header.tx_date.startsWith(yearMonth)
     );
 
-    return this.state.budgetPools.map((pool) => {
+    const sortedPools = [...this.state.budgetPools].sort((a, b) =>
+      a.id.localeCompare(b.id)
+    );
+
+    return sortedPools.map((pool) => {
       const mb = this.state.monthlyBudgets.find(
         (b) => b.year_month === yearMonth && b.pool_id === pool.id
       ) ?? {
@@ -1986,7 +2060,7 @@ export class LocalLedgerEngine {
 
       for (const tx of txsInMonth) {
         for (const it of tx.items) {
-          if (it.project_tag_id) continue;
+          if (it.project_tag_id && pool.is_monthly_budget) continue;
           if (it.budget_pool_id === pool.id) {
             spentGross = spentGross.plus(toDecimal(it.item_gross));
             totalDiscount = totalDiscount.plus(toDecimal(it.allocated_discount));
@@ -2012,6 +2086,91 @@ export class LocalLedgerEngine {
         remaining_budget: formatCny(remaining),
       };
     });
+  }
+
+  public getMonthlyBudgetDashboard(
+    yearMonth: string,
+    currentDateStr?: string
+  ): {
+    pools: MonthlyBudgetStatusRow[];
+    dailyPoolRemainingPerDay: string;
+    totalMonthlyBudget: string;
+    totalMonthlySpent: string;
+    totalMonthlySaved: string;
+  } {
+    const pools = this.getMonthlyBudgetStatus(yearMonth);
+    const [y, m] = yearMonth.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    let remainingDays = daysInMonth;
+
+    if (currentDateStr && currentDateStr.startsWith(yearMonth)) {
+      const parts = currentDateStr.split('-');
+      const curDay = parseInt(parts[2], 10);
+      if (!Number.isNaN(curDay)) {
+        remainingDays = Math.max(1, daysInMonth - curDay + 1);
+      }
+    }
+
+    const dailyPool = pools.find(
+      (p) => p.pool_id === 'POOL_DAILY' || p.pool_type === 'DAILY'
+    );
+    let dailyPoolRemainingPerDay = '0.00';
+    if (dailyPool) {
+      const remaining = toDecimal(dailyPool.remaining_budget);
+      dailyPoolRemainingPerDay = formatCny(remaining.dividedBy(remainingDays));
+    }
+
+    const monthlyPools = pools.filter((p) =>
+      ['POOL_FIXED', 'POOL_DAILY', 'POOL_FLEX', 'POOL_EMERGENCY'].includes(
+        p.pool_id
+      )
+    );
+    const totalMonthlyBudget = formatCny(
+      sumCny(monthlyPools.map((p) => p.total_available_budget))
+    );
+    const totalMonthlySpent = formatCny(
+      sumCny(monthlyPools.map((p) => p.spent_net))
+    );
+    const totalMonthlySaved = formatCny(
+      sumCny(monthlyPools.map((p) => p.total_saved_discount))
+    );
+
+    return {
+      pools,
+      dailyPoolRemainingPerDay,
+      totalMonthlyBudget,
+      totalMonthlySpent,
+      totalMonthlySaved,
+    };
+  }
+
+  public executeMonthRollover(
+    fromYearMonth: string,
+    toYearMonth: string
+  ): MonthlyBudgetStatusRow[] {
+    const fromRows = this.getMonthlyBudgetStatus(fromYearMonth);
+    const sortedPools = [...this.state.budgetPools].sort(
+      (a, b) => a.sort_order - b.sort_order
+    );
+
+    for (const pool of sortedPools) {
+      let rollover = '0.00';
+      const fromRow = fromRows.find((p) => p.pool_id === pool.id);
+      if (pool.rollover_strategy === 'RESET') {
+        rollover = '0.00';
+      } else if (pool.rollover_strategy === 'ACCUMULATE') {
+        rollover = formatCny(toDecimal(fromRow?.remaining_budget ?? '0.00'));
+      }
+
+      this.upsertMonthlyBudget({
+        year_month: toYearMonth,
+        pool_id: pool.id,
+        base_allocation: fromRow?.base_allocation ?? '0.00',
+        rollover_from_prev: rollover,
+      });
+    }
+
+    return this.getMonthlyBudgetStatus(toYearMonth);
   }
 
   public getDailyBudgetSummary(
@@ -2070,7 +2229,9 @@ export class LocalLedgerEngine {
       const pDateObj = new Date(asset.purchase_date);
       let endDateObj = currDateObj;
       if (asset.status === 'SOLD' && asset.resale_date) {
-        endDateObj = new Date(asset.resale_date);
+        const resaleObj = new Date(asset.resale_date);
+        endDateObj =
+          resaleObj.getTime() < currDateObj.getTime() ? resaleObj : currDateObj;
       }
 
       const diffMs = endDateObj.getTime() - pDateObj.getTime();

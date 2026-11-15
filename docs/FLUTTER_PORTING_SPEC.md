@@ -39,7 +39,7 @@
      `{ rawText: string, txDate?: string, appliedVoucherId?: number | null }`
 
 2. **前置校验（Pre-conditions & Validations）**
-   - `tx_date` 为空时默认取本地时区当日日期 `getLocalTodayDateStr()`（注意：服务端 `LedgerRepository` 兜底为 `new Date().toISOString().slice(0, 10)`，Flutter 离线本地引擎应统一采用设备本地时区 `YYYY-MM-DD`，防止凌晨跨 UTC 偏差一天）。
+   - `tx_date` 为空时统一取本地时区当日日期 `getLocalTodayDateStr()`（服务端 `LedgerRepository` 与 Web 本地引擎 `LocalLedgerEngine` 已统一为本地时区 `YYYY-MM-DD`，避免凌晨跨 UTC 偏差一天）。
    - `amount`（手工）必须为有效正数；`rawText`（DSL）去除空白后非空且可解析出至少 1 条有效价格算式。
    - 预算归属解析（仅 `EXPENSE`）：
      - 手工路径：`catId = category_id ?? categories[0]?.id ?? 'CAT_FOOD'`；`poolId = budget_pool_id ?? cat?.default_pool_id ?? 'POOL_DAILY'`。
@@ -65,7 +65,7 @@
    - **`transaction_headers` 新增 1 行**：
      - 手工 `EXPENSE`：`tx_type = 'EXPENSE'`, `total_gross = formatCny(amount)`, `platform_discount = '0.00'`, `payment_discount = formatCny(discount ?? '0.00')`, `total_net = formatCny(Decimal.max(0, total_gross - payment_discount))`, `allocation_mode = 'SINGLE'`, `original_currency = 'CNY'`, `original_amount = null`, `exchange_rate = '1.000000'`, `settlement_status = 'SETTLED'`, `hold_amount_cny = '0.00'`, `fx_cashback_rate = null`, `applied_voucher_id = null`, `is_deleted = 0`, `updated_hlc = hlc`。
      - 手工 `INCOME`：`tx_type = 'INCOME'`, `total_gross = formatCny(amount)`, `platform_discount = '0.00'`, `payment_discount = '0.00'`, `total_net = total_gross`, `allocation_mode = 'SINGLE'`, `settlement_status = 'SETTLED'`, `items = []`。
-     - 单品 DSL `EXPENSE`（算式含 `-`，如 `16.8-0.15`）：`total_gross = evaluated.gross`, `platform_discount = evaluated.discount`, `payment_discount = '0.00'`, `total_net = evaluated.net`, `allocation_mode = 'SINGLE'`, `settled_at = nowIso`（本地引擎）/`null`（仓储层）。
+     - 单品 DSL `EXPENSE`（算式含 `-`，如 `16.8-0.15`）：`total_gross = evaluated.gross`, `platform_discount = evaluated.discount`, `payment_discount = '0.00'`, `total_net = evaluated.net`, `allocation_mode = 'SINGLE'`, `settled_at = (settlement_status == 'SETTLED') ? nowIso : null`（服务端与 Web 本地引擎已统一）。
    - **`transaction_items`**：
      - `INCOME` 写入 `0` 条；
      - `EXPENSE` 写入 `1` 条：`item_gross = header.total_gross`, `allocated_discount = header.payment_discount`（或 DSL 算式 `evaluated.discount`）, `item_net = header.total_net`, `is_primary_item = 1 (true)`, `raw_formula_expr = formula | null`。
@@ -136,7 +136,7 @@
    - **金融合规原因**：`buyVoucher` 生成的交易流水 `tx_type = 'VOUCHER_BUY'` 且 **`transaction_items = []`**；按购券成本结转公理，购券当下 $C_{\text{cost}}$ 不计入预算消耗，直至阶段 3B 实际消费核销时才结转计入对应消费预算池。
 5. **交易主子表与同步日志写入状态（Transaction Header/Items & OpLog Persistence State）**
    - **`transaction_headers`**（仅 `acquire_cost > 0` / `buyVoucher`）：
-     - `tx_type = 'VOUCHER_BUY'`, `total_gross = formatCny(acquire_cost)`, `platform_discount = '0.00'`, `payment_discount = '0.00'`, `total_net = formatCny(acquire_cost)`, `allocation_mode = 'SINGLE'`, `settlement_status = 'SETTLED'`, `hold_amount_cny = '0.00'`, `raw_input_text = '购买卡券: ' + finalTitle`（注：仓储层半角冒号 `购买卡券: `，本地引擎全角冒号 `购买卡券：`）。
+     - `tx_type = 'VOUCHER_BUY'`, `total_gross = formatCny(acquire_cost)`, `platform_discount = '0.00'`, `payment_discount = '0.00'`, `total_net = formatCny(acquire_cost)`, `allocation_mode = 'SINGLE'`, `settlement_status = 'SETTLED'`, `settled_at = nowIso`, `hold_amount_cny = '0.00'`, `raw_input_text = '购买卡券: ' + finalTitle`（服务端、Web 与 Flutter 三端已统一使用半角冒号 `'购买卡券: '` 与即时 `settled_at`）。
    - **`transaction_items`**：`[]`（0 条明细行）。
    - **`vouchers`**：插入新卡券，`status = 'AVAILABLE'`, `face_value = formatCny(face_value)`, `acquire_cost = formatCny(acquire_cost)`, `min_spend = formatCny(min_spend)`, `purchase_tx_id = tx.header.id`（免费领券则为 `null`）, `used_tx_id = null`。
    - **`sync_oplog`**：若发生购券，写入 `VOUCHER`（`UPSERT`）与 `TRANSACTION`（`UPSERT`）两条日志。
@@ -214,7 +214,7 @@
      - `original_amount`: `JPY` 在 DSL 中为 `roundCny(rawAmt).toFixed(0)`，其余及手工表单为 `formatCny(amount)`
      - `hold_amount_cny = formatCny(holdAmountCny)`
      - `fx_cashback_rate = Number(cashbackRate).toFixed(4)`（仓储/本地手工录入显式固化 4 位小数；DSL 中保存 `fxCashbackRate`）
-     - `exchange_rate = fxResult.exchange_rate`（注：仓储层 `recordManualTransaction` 在插入前传 `null` 并默认转 `'1.000000'`，本地引擎 `LocalLedgerEngine` 写入 `fxResult.exchange_rate`，建议 Flutter 统一写入计算出的 `fxResult.exchange_rate`）
+     - `exchange_rate = fxResult.exchange_rate`（服务端 `LedgerRepository`、`LocalLedgerEngine` 与 Flutter 端已统一写入计算出的 `fxResult.exchange_rate`）
      - `total_gross = fxResult.total_gross`, `platform_discount = '0.00'`, `payment_discount = fxResult.payment_discount`, `total_net = fxResult.total_net`
      - `allocation_mode = 'SINGLE'`, `settled_at = null`
    - **`transaction_items`**：1 条明细，字段值与头表一致（`item_gross = total_gross`, `allocated_discount = payment_discount`, `item_net = total_net`, `is_primary_item = 1`）。
@@ -254,8 +254,8 @@
      - `settled_at = settledAt ?? nowIso`
      - `updated_hlc = hlc`
    - **`transaction_items` 原地更新**：
-     - 若 `items.length <= 1`：第 0 项同步覆盖为 `item_gross = total_gross`, `allocated_discount = payment_discount`, `item_net = total_net`。（注：仓储层循环更新所有子项；本地引擎直接更新 `items[0]`）。
-     - 若 `items.length > 1`（仓储层实现）：按原 `allocation_mode` 调用 `allocateSplitDiscounts(splitInputs, total_net, allocation_mode)` 重新分摊。
+     - 若 `items.length <= 1`：第 0 项同步覆盖为 `item_gross = total_gross`, `allocated_discount = payment_discount`, `item_net = total_net`。
+     - 若 `items.length > 1`：按原 `allocation_mode`（及缩放后的原毛额）调用 `allocateSplitDiscounts(splitInputs, total_net, allocation_mode)` 重新分摊（服务端、Web 与 Flutter 三端已统一）。
    - **`sync_oplog`**：追加 1 条 `entity_type = 'TRANSACTION'`, `op_type = 'UPSERT'`（携带更新后完整 `TransactionAggregate`）。
 
 ---
@@ -341,7 +341,7 @@
        2. 从 `vouchers` 表物理删除这些卡券。
      - **情况 6C（在卡包调用 `deleteVoucher(id)`）**：
        1. 若 `voucher.purchase_tx_id != null`，将其关联的 `VOUCHER_BUY` 流水软删除（`is_deleted = 1`）；
-       2. （仓储层同时清空消费单中引用该券的 `applied_voucher_id = null`）；
+       2. 同时清空消费单中引用该券的 `applied_voucher_id = null`（服务端、Web 与 Flutter 三端已统一）；
        3. 从 `vouchers` 表物理删除该卡券。
 
 4. **预算池变动公式（Budget Pool & Project Tag Impact Formula）**
@@ -356,8 +356,8 @@
 5. **交易主子表与同步日志写入状态（Transaction Header/Items & OpLog Persistence State）**
    - **`transaction_headers`**：将目标行设 `is_deleted = 1 (true)`、`updated_hlc = hlc`（注意：`transaction_items` 物理行保留，查询时由头表 `is_deleted = 0` 过滤屏蔽，便于同步重放与防误删恢复）。
    - **`sync_oplog`**：
-     - `deleteTransaction`：为软删交易写入 `TRANSACTION / UPSERT`（带 `is_deleted: true`；在同步重放端按 `DELETE` 等效处理）；若回滚了核销卡券，本地引擎写入 `VOUCHER / UPSERT`（注：Flutter 端建议两端均显式补写该 `VOUCHER / UPSERT` 日志以保证跨端即时释放卡券）；若级联删除了购入卡券，为每张券写入 `VOUCHER / DELETE`。
-     - `deleteVoucher`：为关联 `purchase_tx_id` 写入 `TRANSACTION` 日志（仓储层写 `DELETE`，本地引擎写 `UPSERT(is_deleted: true)`）及 `VOUCHER / DELETE`。
+     - `deleteTransaction`：为软删交易写入 `TRANSACTION / UPSERT`（带 `is_deleted: true`）；若回滚了核销卡券，两端均显式补写 `VOUCHER / UPSERT` 日志；若级联删除了购入卡券，先清理引用消费单的 `applied_voucher_id = null` 并补写 `TRANSACTION / UPSERT`，再为每张券写入 `VOUCHER / DELETE`。
+     - `deleteVoucher`：清空引用消费单的 `applied_voucher_id = null` 并写入 `TRANSACTION / UPSERT`，若存在 `purchase_tx_id` 则将购券流水软删并写入 `TRANSACTION / UPSERT`（`is_deleted: true`），最后写入 `VOUCHER / DELETE`（服务端与 Web 已统一）。
 
 ---
 
@@ -401,7 +401,7 @@
    - **操作 `monthly_budgets` 表**：
      - 若 `(toYearMonth, pool.id)` 已存在：执行 `UPDATE monthly_budgets SET rollover_from_prev = ?`。
      - 若不存在：执行 `INSERT INTO monthly_budgets (year_month, pool_id, base_allocation, rollover_from_prev)`（其中新月 `base_allocation` 沿用 `fromRow?.base_allocation ?? '0.00'`）。
-   - **Flutter 端增量同步补充**：当客户端执行跨月滚存后，应对变更的 `monthly_budgets` 行补发 `MONTHLY_BUDGET / UPSERT`（`entity_id = "${toYearMonth}:${pool.id}"`）日志以参与多端同步。
+   - **跨端增量同步已统一**：客户端与服务端执行跨月滚存后，均对每条变更的 `monthly_budgets` 行发出 `MONTHLY_BUDGET / UPSERT`（`entity_id = "${toYearMonth}:${pool.id}"`）日志以参与多端同步。
 
 ---
 
@@ -421,7 +421,7 @@
    2. **交易类型清理**：本地/迁移过滤掉历史 `tx_type == 'TRANSFER'` 的转账流水（在 SQLite 迁移时直接排除）。
    3. **卡券枚举降级映射**：遇到 `voucher_type == 'REPAY_COUPON'` 的历史卡券时，原地规范化为 **`'FREE_COUPON'`**。
    4. **定投规则过滤**：遇到 `rule_type == 'AUTO_INVEST'` 的历史周期规则时，直接过滤丢弃，不插入数据库。
-   5. **废置池重映射与剔除**：若存在未被引用的 `'POOL_FUND'` 或 `'POOL_ASSET'`，从 `budget_pools` 与 `monthly_budgets` 中删除；同时将引用它们的 `categories.default_pool_id` 统一重映射为 `'POOL_FLEX'`，将 `projects_and_tags.linked_pool_id` 置为 `'POOL_FLEX'`（服务端迁移/恢复）或 `null`（本地副本清洗）。
+   5. **废置池重映射与剔除**：若存在未被引用的 `'POOL_FUND'` 或 `'POOL_ASSET'`，从 `budget_pools` 与 `monthly_budgets` 中删除；同时将引用它们的 `categories.default_pool_id` 与 `projects_and_tags.linked_pool_id` 统一重映射为 `'POOL_FLEX'`（服务端、Web 与 Flutter 三端已统一）。
 
 ---
 
@@ -430,7 +430,7 @@
 ### 1. 全局高精度十进制配置与舍入公理（`packages/core/src/money.ts`）
 
 - **全局配置**：`precision = 28` 有效数字位，舍入模式统一为 **`ROUND_HALF_UP`**（远离零的半数进位：如 `2.345 -> 2.35`, `2.355 -> 2.36`, `-2.345 -> -2.35`）。
-- **Dart 移植特别警示**：Dart 标准库 `double.toStringAsFixed` 存在二进制浮点误差且受 `toDouble()` 精度限制；Flutter 端**必须**引入 `decimal`（如 `package:decimal/decimal.dart`），并自己封装与 `decimal.js` 完全一致的 `HALF_UP` 定点舍入函数（不能使用默认银行家舍入 `halfToEven`）。
+- **Rust 核心引擎共享实现**：Web、Server 与 Flutter 三端现均已接入同一套纯 Rust 核心引擎（`packages/core-rs` 分别编译为 WebAssembly 与原生 C-ABI 动态库，Flutter 端通过 `dart:ffi` 零第三方依赖直连），确保 28 位十进制精度与 `ROUND_HALF_UP` 舍入在三端严格比特级一致。
 
 | 纯函数名 | 输入参数与类型 | 输出结果与类型 | 精确算法与舍入规范 |
 | :--- | :--- | :--- | :--- |
@@ -661,7 +661,7 @@
   - **含今日剩余天数**：
     `currentDay = int.tryParse(currentDate.substring(8, 10)) ?? 1`
     `remainingDays = max(1, daysInMonth - currentDay + 1)`
-    *(注：后端 `LedgerRepository.getMonthlyBudgetStatus` 仅当 `currentDateStr.startsWith(yearMonth)` 时按 `curDay` 算剩余天数，非当月查询按整月天数 `daysInMonth` 计算；前端 `LocalLedgerEngine.getDailyBudgetSummary` 对 `remainingBudget` 先取 `Decimal.max(0, remaining)` 钳制非负后再除以 `remainingDays` 并执行 `formatCny`，后端不钳制负值)*。
+    *(注：Web 本地引擎现已补充 `getMonthlyBudgetDashboard(yearMonth, currentDateStr?)`，与服务端 `LedgerRepository.getMonthlyBudgetStatus` 口径完全对齐；前端卡片展示函数 `getDailyBudgetSummary` 则对 `remainingBudget` 先取 `max(0, remaining)` 钳制非负后再除以 `remainingDays` 并执行 `formatCny`)*。
   - **Flutter 移植推荐口径（与前端卡片展现 100% 对齐）**：
     ```dart
     final remainingDec = Decimal.max(Decimal.zero, parseDecimal(dailyRow.remainingBudget));

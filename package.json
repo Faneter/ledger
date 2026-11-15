@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "build": "pnpm --filter @ledger/client build",
+    "build:core-rs": "node packages/core-rs/build-wasm.mjs",
     "start": "pnpm --filter @ledger/client build && pnpm --filter @ledger/server start",
     "start:server": "pnpm --filter @ledger/server start",
     "dev:client": "pnpm --filter @ledger/client dev",

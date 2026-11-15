@@ -1,3 +1,5 @@
+import { invokeRustCore } from './wasm-bridge.js';
+
 /**
  * 极客大学生个人记账与预算管理系统 - 核心领域模型与类型契约
  * 所有金额字段统一采用 string 表示两位小数精确金额（如 "31.95"），避免 JSON/浮点数序列化精度丢失。
@@ -167,21 +169,14 @@ export function generateVoucherTitle(
   minSpend: string | number,
   _acquireCost?: string | number
 ): string {
-  let typeLabel = '优惠券';
-  if (voucherType === 'PREPAID_COUPON') {
-    typeLabel = '立减金';
-  } else if (voucherType === 'FREE_COUPON') {
-    typeLabel = '优惠券';
-  }
-
-  const minVal = Number(minSpend || 0);
-  const faceVal = Number(faceValue || 0);
-
-  if (minVal > 0) {
-    return `满${minVal}减${faceVal}${typeLabel}`;
-  } else {
-    return `${faceVal}元无门槛${typeLabel}`;
-  }
+  const faceStr = faceValue === '' || faceValue == null ? '0' : String(faceValue);
+  const minStr = minSpend === '' || minSpend == null ? '0' : String(minSpend);
+  return invokeRustCore<string>({
+    op: 'generate_voucher_title',
+    voucherType,
+    faceValue: faceStr,
+    minSpend: minStr,
+  });
 }
 
 /**
