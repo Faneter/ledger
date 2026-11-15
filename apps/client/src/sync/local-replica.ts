@@ -1047,8 +1047,14 @@ export class LocalLedgerEngine {
       ) {
         const acc = this.state.accounts.find((a) => a.id === h.account_id);
         const fxRate = DEFAULT_FX_RATES[h.original_currency] ?? '7.200000';
-        const holdRatio = acc?.fx_hold_ratio || '1.020';
-        const cashbackRate = acc?.fx_cashback_rate || '0.0100';
+        const holdRatio =
+          this.state.fxConfig?.defaultHoldRatio || acc?.fx_hold_ratio || '1.020';
+        const cashbackRate =
+          h.fx_cashback_rate !== undefined && h.fx_cashback_rate !== null && h.fx_cashback_rate !== ''
+            ? h.fx_cashback_rate
+            : this.state.fxConfig?.defaultCashbackRate ??
+              acc?.fx_cashback_rate ??
+              '0.0100';
         const holdAmountCny = formatCny(
           roundCny(toDecimal(h.original_amount).times(fxRate).times(holdRatio))
         );
@@ -1163,6 +1169,7 @@ export class LocalLedgerEngine {
       accounts: this.state.accounts,
       projectTags: this.state.projectTags,
       budgetPools: this.state.budgetPools,
+      fxConfig: this.state.fxConfig,
     });
 
     let voucherInfo: Voucher | null = null;
@@ -1283,6 +1290,7 @@ export class LocalLedgerEngine {
       exchange_rate: parsed.exchange_rate,
       settlement_status: parsed.settlement_status,
       hold_amount_cny: parsed.hold_amount_cny,
+      fx_cashback_rate: parsed.fx_cashback_rate ?? null,
       settled_at: parsed.settlement_status === 'SETTLED' ? nowIso : null,
       raw_input_text: parsed.raw_input_text,
       merchant_or_note: parsed.merchant_or_note,
@@ -1399,6 +1407,7 @@ export class LocalLedgerEngine {
     let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
     let holdAmountCny = '0.00';
     let exchangeRate: string | null = isFx ? null : '1.000000';
+    let fxCashbackRateToStore: string | null = null;
 
     let appliedVoucher: Voucher | null = null;
     if (params.applied_voucher_id != null) {
@@ -1509,15 +1518,18 @@ export class LocalLedgerEngine {
       if (isFx) {
         const fxRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
         const holdRatio =
-          params.fx_hold_ratio ||
-          this.state.fxConfig?.defaultHoldRatio ||
-          acc?.fx_hold_ratio ||
-          '1.020';
+          params.fx_hold_ratio !== undefined && params.fx_hold_ratio !== ''
+            ? params.fx_hold_ratio
+            : this.state.fxConfig?.defaultHoldRatio ??
+              acc?.fx_hold_ratio ??
+              '1.020';
         const cashbackRate =
-          params.fx_cashback_rate ||
-          this.state.fxConfig?.defaultCashbackRate ||
-          acc?.fx_cashback_rate ||
-          '0.0100';
+          params.fx_cashback_rate !== undefined && params.fx_cashback_rate !== ''
+            ? params.fx_cashback_rate
+            : this.state.fxConfig?.defaultCashbackRate ??
+              acc?.fx_cashback_rate ??
+              '0.0100';
+        fxCashbackRateToStore = Number(cashbackRate).toFixed(4);
 
         if (params.hold_amount_cny && Number(params.hold_amount_cny) > 0) {
           holdAmountCny = formatCny(params.hold_amount_cny);
@@ -1577,6 +1589,7 @@ export class LocalLedgerEngine {
       exchange_rate: exchangeRate,
       settlement_status: settlementStatus,
       hold_amount_cny: holdAmountCny,
+      fx_cashback_rate: fxCashbackRateToStore,
       settled_at: settlementStatus === 'SETTLED' ? nowIso : null,
       raw_input_text: `手动录入：${params.merchant_or_note} ${params.amount}`,
       merchant_or_note: params.merchant_or_note,
@@ -2283,15 +2296,21 @@ export class LocalLedgerEngine {
       );
     }
 
+    const resolvedCashbackRate =
+      cashbackRate !== undefined && cashbackRate !== null && cashbackRate !== ''
+        ? Number(cashbackRate).toFixed(4)
+        : tx.header.fx_cashback_rate !== undefined &&
+            tx.header.fx_cashback_rate !== null &&
+            tx.header.fx_cashback_rate !== ''
+          ? Number(tx.header.fx_cashback_rate).toFixed(4)
+          : this.state.fxConfig?.defaultCashbackRate ?? '0.0100';
+
     const originalForeign = tx.header.original_amount ?? '1';
     const fxResult = processMastercardFxLifecycle({
       foreignAmount: originalForeign,
       holdAmountCny: tx.header.hold_amount_cny,
       settledAmountCny,
-      cashbackRate:
-        cashbackRate ??
-        this.state.fxConfig?.defaultCashbackRate ??
-        '0.0100',
+      cashbackRate: resolvedCashbackRate,
     });
 
     const nowIso = new Date().toISOString();
@@ -2299,6 +2318,7 @@ export class LocalLedgerEngine {
 
     tx.header.settlement_status = 'SETTLED';
     tx.header.hold_amount_cny = '0.00';
+    tx.header.fx_cashback_rate = resolvedCashbackRate;
     tx.header.total_gross = fxResult.total_gross;
     tx.header.payment_discount = fxResult.payment_discount;
     tx.header.total_net = fxResult.total_net;

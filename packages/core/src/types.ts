@@ -311,6 +311,7 @@ export interface TransactionHeader {
   exchange_rate: string | null;
   settlement_status: SettlementStatus;
   hold_amount_cny: string;
+  fx_cashback_rate?: string | null;
   settled_at: string | null;
   raw_input_text: string | null;
   merchant_or_note: string | null;

@@ -44,6 +44,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 }) => {
   // 结算输入框状态
   const [settleInputs, setSettleInputs] = useState<Record<string, string>>({});
+  const [settleCashbackInputs, setSettleCashbackInputs] = useState<Record<string, string>>({});
   const [settleFeedback, setSettleFeedback] = useState<string | null>(null);
 
   // 1. 日常预算与省钱汇总
@@ -108,17 +109,41 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   }, [engine.stateVersion]);
 
   // 处理万事达预授权清算
-  const handleSettleFx = (txId: string) => {
+  const handleSettleFx = (tx: TransactionAggregate) => {
+    const txId = tx.header.id;
     const val = settleInputs[txId];
     if (!val || isNaN(Number(val)) || Number(val) <= 0) {
       alert('请输入有效的银行最终正式清算人民币金额（如 31.20）');
       return;
     }
 
+    const customPct = settleCashbackInputs[txId];
+    let resolvedRate: string;
+    if (customPct !== undefined && customPct.trim() !== '') {
+      const num = Number(customPct);
+      if (isNaN(num) || num < 0) {
+        alert('请输入有效的外币返现比例（如 0 或 1）');
+        return;
+      }
+      resolvedRate = (num / 100).toFixed(4);
+    } else {
+      resolvedRate =
+        tx.header.fx_cashback_rate ??
+        engine.state.fxConfig?.defaultCashbackRate ??
+        '0.0100';
+    }
+
     try {
-      engine.settleMastercardPending(txId, val);
-      setSettleFeedback(`✅ 外币交易已成功正式清算入账！实际扣款 ¥${val}`);
+      const settled = engine.settleMastercardPending(txId, val, resolvedRate);
+      setSettleFeedback(
+        `✅ 外币交易已正式清算入账！入账 ¥${settled.header.total_gross}，优惠 ¥${settled.header.payment_discount}，净付 ¥${settled.header.total_net}`
+      );
       setSettleInputs((prev) => {
+        const next = { ...prev };
+        delete next[txId];
+        return next;
+      });
+      setSettleCashbackInputs((prev) => {
         const next = { ...prev };
         delete next[txId];
         return next;
@@ -388,48 +413,83 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               </Box>
 
               <Stack spacing={1} sx={{ width: { xs: '100%', md: 'auto' } }}>
-                {pendingFxTxs.map((tx) => (
-                  <Stack
-                    key={tx.header.id}
-                    direction={{ xs: 'column', sm: 'row' }}
-                    spacing={1.5}
-                    sx={{ alignItems: 'center' }}
-                  >
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {tx.header.merchant_or_note || tx.header.raw_input_text} (
-                      {tx.header.original_currency} {tx.header.original_amount} · 冻结 ¥
-                      {tx.header.hold_amount_cny})
-                    </Typography>
-                    <TextField
-                      size="small"
-                      placeholder="实际扣账人民币"
-                      value={settleInputs[tx.header.id] || ''}
-                      onChange={(e) =>
-                        setSettleInputs((prev) => ({
-                          ...prev,
-                          [tx.header.id]: e.target.value,
-                        }))
-                      }
-                      sx={{ width: 140 }}
-                      slotProps={{
-                        input: {
-                          startAdornment: (
-                            <InputAdornment position="start">¥</InputAdornment>
-                          ),
-                        },
-                      }}
-                    />
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="warning"
-                      onClick={() => handleSettleFx(tx.header.id)}
-                      startIcon={<CheckCircleOutlineRounded />}
+                {pendingFxTxs.map((tx) => {
+                  const defaultRateStr =
+                    tx.header.fx_cashback_rate ??
+                    engine.state.fxConfig?.defaultCashbackRate ??
+                    '0.0100';
+                  const defaultPctDisplay = String(
+                    Number((Number(defaultRateStr) * 100).toFixed(2))
+                  );
+                  const cashbackPctValue =
+                    settleCashbackInputs[tx.header.id] !== undefined
+                      ? settleCashbackInputs[tx.header.id]
+                      : defaultPctDisplay;
+
+                  return (
+                    <Stack
+                      key={tx.header.id}
+                      direction={{ xs: 'column', sm: 'row' }}
+                      spacing={1.5}
+                      sx={{ alignItems: 'center' }}
                     >
-                      正式清算
-                    </Button>
-                  </Stack>
-                ))}
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        {tx.header.merchant_or_note || tx.header.raw_input_text} (
+                        {tx.header.original_currency} {tx.header.original_amount} · 冻结 ¥
+                        {tx.header.hold_amount_cny})
+                      </Typography>
+                      <TextField
+                        size="small"
+                        placeholder="实际扣账人民币"
+                        value={settleInputs[tx.header.id] || ''}
+                        onChange={(e) =>
+                          setSettleInputs((prev) => ({
+                            ...prev,
+                            [tx.header.id]: e.target.value,
+                          }))
+                        }
+                        sx={{ width: 140 }}
+                        slotProps={{
+                          input: {
+                            startAdornment: (
+                              <InputAdornment position="start">¥</InputAdornment>
+                            ),
+                          },
+                        }}
+                      />
+                      <TextField
+                        size="small"
+                        type="number"
+                        label="返现"
+                        value={cashbackPctValue}
+                        onChange={(e) =>
+                          setSettleCashbackInputs((prev) => ({
+                            ...prev,
+                            [tx.header.id]: e.target.value,
+                          }))
+                        }
+                        sx={{ width: 98 }}
+                        slotProps={{
+                          htmlInput: { step: '0.01', min: '0' },
+                          input: {
+                            endAdornment: (
+                              <InputAdornment position="end">%</InputAdornment>
+                            ),
+                          },
+                        }}
+                      />
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="warning"
+                        onClick={() => handleSettleFx(tx)}
+                        startIcon={<CheckCircleOutlineRounded />}
+                      >
+                        正式清算
+                      </Button>
+                    </Stack>
+                  );
+                })}
               </Stack>
             </Stack>
 

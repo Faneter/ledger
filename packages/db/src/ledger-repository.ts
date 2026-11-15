@@ -64,6 +64,7 @@ export class LedgerRepository {
 
     // 初始化建表与种子数据
     this.db.exec(SCHEMA_SQL);
+    this.ensureSchemaMigrations();
     this.db.exec(SEED_SQL);
 
     // 确定混合逻辑时钟初始水位
@@ -74,6 +75,20 @@ export class LedgerRepository {
 
     // 初始化重算各账户余额
     recalculateAllAccounts(this.db);
+  }
+
+  /**
+   * 对已存在的老 SQLite 数据库执行向后兼容的列迁移
+   */
+  private ensureSchemaMigrations(): void {
+    const cols = this.db
+      .prepare('PRAGMA table_info(transaction_headers)')
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'fx_cashback_rate')) {
+      this.db.exec(
+        'ALTER TABLE transaction_headers ADD COLUMN fx_cashback_rate NUMERIC(5, 4) DEFAULT NULL;'
+      );
+    }
   }
 
   /**
@@ -270,9 +285,9 @@ export class LedgerRepository {
         id, tx_date, tx_timestamp, tx_type, account_id, target_account_id,
         total_gross, platform_discount, payment_discount, total_net,
         allocation_mode, original_currency, original_amount, exchange_rate,
-        settlement_status, hold_amount_cny, settled_at, raw_input_text,
+        settlement_status, hold_amount_cny, fx_cashback_rate, settled_at, raw_input_text,
         merchant_or_note, applied_voucher_id, is_deleted, updated_hlc
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
       )
       .run(
@@ -294,6 +309,9 @@ export class LedgerRepository {
         header.exchange_rate ? formatRate(header.exchange_rate) : '1.000000',
         header.settlement_status ?? 'SETTLED',
         formatCny(header.hold_amount_cny ?? 0),
+        header.fx_cashback_rate != null && header.fx_cashback_rate !== ''
+          ? Number(header.fx_cashback_rate).toFixed(4)
+          : null,
         header.settled_at ?? null,
         header.raw_input_text ?? null,
         header.merchant_or_note ?? null,
@@ -510,6 +528,7 @@ export class LedgerRepository {
         exchange_rate: parsed.exchange_rate,
         settlement_status: parsed.settlement_status,
         hold_amount_cny: parsed.hold_amount_cny,
+        fx_cashback_rate: parsed.fx_cashback_rate ?? null,
         settled_at: null,
         raw_input_text: parsed.raw_input_text,
         merchant_or_note: parsed.merchant_or_note,
@@ -538,7 +557,8 @@ export class LedgerRepository {
   public settleMastercardTransaction(
     txId: string,
     settledAmountCny: string,
-    settledAt?: string
+    settledAt?: string,
+    cashbackRate?: string
   ): TransactionAggregate {
     const header = this.db
       .prepare('SELECT * FROM transaction_headers WHERE id = ?')
@@ -553,10 +573,18 @@ export class LedgerRepository {
       );
     }
 
+    const resolvedCashbackRate =
+      cashbackRate !== undefined && cashbackRate !== null && cashbackRate !== ''
+        ? Number(cashbackRate).toFixed(4)
+        : header.fx_cashback_rate != null && header.fx_cashback_rate !== ''
+          ? Number(header.fx_cashback_rate).toFixed(4)
+          : '0.0100';
+
     const fxResult = processMastercardFxLifecycle({
       foreignAmount: header.original_amount!,
       holdAmountCny: header.hold_amount_cny,
       settledAmountCny,
+      cashbackRate: resolvedCashbackRate,
     });
 
     const items = this.db
@@ -603,6 +631,7 @@ export class LedgerRepository {
       UPDATE transaction_headers
       SET settlement_status = 'SETTLED',
           hold_amount_cny = '0.00',
+          fx_cashback_rate = ?,
           total_gross = ?,
           payment_discount = ?,
           total_net = ?,
@@ -613,6 +642,7 @@ export class LedgerRepository {
     `
       )
       .run(
+        resolvedCashbackRate,
         fxResult.total_gross,
         fxResult.payment_discount,
         fxResult.total_net,
@@ -642,6 +672,7 @@ export class LedgerRepository {
         ...header,
         settlement_status: 'SETTLED',
         hold_amount_cny: '0.00',
+        fx_cashback_rate: resolvedCashbackRate,
         total_gross: fxResult.total_gross,
         payment_discount: fxResult.payment_discount,
         total_net: fxResult.total_net,
@@ -1315,9 +1346,9 @@ export class LedgerRepository {
                 id, tx_date, tx_timestamp, tx_type, account_id, target_account_id,
                 total_gross, platform_discount, payment_discount, total_net,
                 allocation_mode, original_currency, original_amount, exchange_rate,
-                settlement_status, hold_amount_cny, settled_at, raw_input_text,
+                settlement_status, hold_amount_cny, fx_cashback_rate, settled_at, raw_input_text,
                 merchant_or_note, applied_voucher_id, is_deleted, updated_hlc
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 tx_date=excluded.tx_date,
                 tx_timestamp=excluded.tx_timestamp,
@@ -1334,6 +1365,7 @@ export class LedgerRepository {
                 exchange_rate=excluded.exchange_rate,
                 settlement_status=excluded.settlement_status,
                 hold_amount_cny=excluded.hold_amount_cny,
+                fx_cashback_rate=excluded.fx_cashback_rate,
                 settled_at=excluded.settled_at,
                 raw_input_text=excluded.raw_input_text,
                 merchant_or_note=excluded.merchant_or_note,
@@ -1363,6 +1395,9 @@ export class LedgerRepository {
                   : '1.000000',
                 header.settlement_status ?? 'SETTLED',
                 formatCny(header.hold_amount_cny ?? 0),
+                header.fx_cashback_rate != null && header.fx_cashback_rate !== ''
+                  ? Number(header.fx_cashback_rate).toFixed(4)
+                  : null,
                 header.settled_at ?? null,
                 header.raw_input_text ?? null,
                 header.merchant_or_note ?? null,
@@ -1721,6 +1756,10 @@ export class LedgerRepository {
           payment_discount: formatCny(h.payment_discount),
           total_net: formatCny(h.total_net),
           hold_amount_cny: formatCny(h.hold_amount_cny ?? 0),
+          fx_cashback_rate:
+            h.fx_cashback_rate != null && h.fx_cashback_rate !== ''
+              ? Number(h.fx_cashback_rate).toFixed(4)
+              : null,
           exchange_rate: h.exchange_rate ? formatRate(h.exchange_rate) : '1.000000',
           is_deleted: Boolean(h.is_deleted),
         },
@@ -1896,6 +1935,7 @@ export class LedgerRepository {
     }> = [];
     let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
     let holdAmountCny = '0.00';
+    let fxCashbackRateToStore: string | null = null;
 
     let appliedVoucher: Voucher | null = null;
     if (params.applied_voucher_id != null) {
@@ -2003,8 +2043,15 @@ export class LedgerRepository {
 
       if (isFx) {
         const refRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
-        const holdRatio = params.fx_hold_ratio || account?.fx_hold_ratio || '1.020';
-        const cashbackRate = params.fx_cashback_rate || account?.fx_cashback_rate || '0.0100';
+        const holdRatio =
+          params.fx_hold_ratio !== undefined && params.fx_hold_ratio !== ''
+            ? params.fx_hold_ratio
+            : account?.fx_hold_ratio || '1.020';
+        const cashbackRate =
+          params.fx_cashback_rate !== undefined && params.fx_cashback_rate !== ''
+            ? params.fx_cashback_rate
+            : account?.fx_cashback_rate ?? '0.0100';
+        fxCashbackRateToStore = Number(cashbackRate).toFixed(4);
         holdAmountCny =
           params.hold_amount_cny && Number(params.hold_amount_cny) > 0
             ? formatCny(params.hold_amount_cny)
@@ -2060,6 +2107,7 @@ export class LedgerRepository {
         exchange_rate: isFx ? null : '1.000000',
         settlement_status: settlementStatus,
         hold_amount_cny: holdAmountCny,
+        fx_cashback_rate: fxCashbackRateToStore,
         settled_at: settlementStatus === 'SETTLED' ? new Date().toISOString() : null,
         raw_input_text: `手动录入：${params.merchant_or_note} ${params.amount}`,
         merchant_or_note: params.merchant_or_note,

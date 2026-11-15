@@ -15,6 +15,7 @@ import {
   AllocationMode,
   SettlementStatus,
   SplitItemInput,
+  FxPreferenceConfig,
 } from './types.js';
 import { allocateSplitDiscounts } from './allocation.js';
 import {
@@ -629,6 +630,7 @@ export interface ParsedDslResult {
   exchange_rate: string;
   settlement_status: SettlementStatus;
   hold_amount_cny: string;
+  fx_cashback_rate?: string | null;
   should_wake_fx_account: boolean;
   items: ParsedDslItemResult[];
   raw_input_text: string;
@@ -641,6 +643,7 @@ export interface DslParserContext {
   projectTags?: ProjectTag[];
   budgetPools?: BudgetPool[];
   txDate?: string;
+  fxConfig?: FxPreferenceConfig;
 }
 
 // ============================================================================
@@ -817,6 +820,8 @@ export function parseQuickInputDsl(
   const accounts = context?.accounts ?? DEFAULT_ACCOUNTS;
   const projectTags = context?.projectTags ?? DEFAULT_PROJECT_TAGS;
   const budgetPools = context?.budgetPools;
+  const fxHoldRatio = context?.fxConfig?.defaultHoldRatio ?? '1.02';
+  const fxCashbackRate = context?.fxConfig?.defaultCashbackRate ?? '0.01';
 
   const defaultAccount =
     accounts.find((a) => a.is_default_pay) ?? accounts[0];
@@ -969,7 +974,7 @@ export function parseQuickInputDsl(
   if (isFxDetected && originalAmount && holdAmountCny === '0.00') {
     const fxRate = DEFAULT_FX_RATES[originalCurrency] ?? '7.200000';
     holdAmountCny = formatCny(
-      roundCny(toDecimal(originalAmount).times(fxRate).times('1.02'))
+      roundCny(toDecimal(originalAmount).times(fxRate).times(fxHoldRatio))
     );
     settlementStatus = 'PENDING_HOLD';
   }
@@ -1181,6 +1186,8 @@ export function parseQuickInputDsl(
     const fxResult = processMastercardFxLifecycle({
       foreignAmount: originalAmount,
       holdAmountCny,
+      holdRatio: fxHoldRatio,
+      cashbackRate: fxCashbackRate,
     });
 
     const item = parsedItems[0];
@@ -1217,6 +1224,7 @@ export function parseQuickInputDsl(
       exchange_rate: fxResult.exchange_rate,
       settlement_status: 'PENDING_HOLD',
       hold_amount_cny: holdAmountCny,
+      fx_cashback_rate: fxCashbackRate,
       should_wake_fx_account: true,
       items: finalItems,
       raw_input_text: rawText,

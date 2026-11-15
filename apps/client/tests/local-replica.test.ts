@@ -948,4 +948,48 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(() => engine.importFullSyncBundle({})).toThrow(/缺少账本核心数据/);
     });
   });
+
+  describe('10. 外币账单返现比例为 0% 的全链路回归测试', () => {
+    it('单笔手动设置 fx_cashback_rate 为 0.0000 时，挂起和正式清算均应按 0% 优惠入账（不受全局 1% 默认值影响）', () => {
+      // 全局默认保持 1%
+      expect(engine.state.fxConfig?.defaultCashbackRate).toBe('0.0100');
+
+      const pending = engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: '2026-11-12',
+        amount: '10.00',
+        currency: 'USD',
+        merchant_or_note: 'ZeroCashbackOrder',
+        fx_hold_ratio: '1.020',
+        fx_cashback_rate: '0.0000',
+      });
+
+      expect(pending.header.fx_cashback_rate).toBe('0.0000');
+      expect(pending.header.payment_discount).toBe('0.00');
+      expect(pending.header.total_net).toBe(pending.header.total_gross);
+
+      // 不额外传第 3 个参数进行正式清算时，应自动继承该笔交易记录的 0.0000，而不是按 1% 计算
+      const settled = engine.settleMastercardPending(pending.header.id, '72.40');
+      expect(settled.header.settlement_status).toBe('SETTLED');
+      expect(settled.header.fx_cashback_rate).toBe('0.0000');
+      expect(settled.header.total_gross).toBe('72.40');
+      expect(settled.header.payment_discount).toBe('0.00');
+      expect(settled.header.total_net).toBe('72.40');
+      expect(settled.items[0].allocated_discount).toBe('0.00');
+      expect(settled.items[0].item_net).toBe('72.40');
+    });
+
+    it('将全局默认外币返现比例设为 0.0000 后，DSL 与手工记账及后续清算均应保持 0% 优惠', () => {
+      engine.updateFxConfig({ defaultCashbackRate: '0.0000' });
+
+      const dslTx = engine.recordFromDsl('Namecheap $10.00', '2026-11-12');
+      expect(dslTx.header.fx_cashback_rate).toBe('0.0000');
+      expect(dslTx.header.payment_discount).toBe('0.00');
+      expect(dslTx.header.total_net).toBe(dslTx.header.total_gross);
+
+      const settledDsl = engine.settleMastercardPending(dslTx.header.id, '71.80');
+      expect(settledDsl.header.payment_discount).toBe('0.00');
+      expect(settledDsl.header.total_net).toBe('71.80');
+    });
+  });
 });

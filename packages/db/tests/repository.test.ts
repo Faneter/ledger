@@ -428,5 +428,37 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
         });
       }).toThrow(/Conservation law violated/);
     });
+
+    it('should preserve per-transaction fx_cashback_rate=0.0000 through hold and settlement', () => {
+      const repo = new LedgerRepository(':memory:', 'node-fx-zero-test');
+
+      const pendingTx = repo.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: '2026-11-12',
+        amount: '10.00',
+        currency: 'USD',
+        merchant_or_note: 'Cloudflare',
+        fx_hold_ratio: '1.020',
+        fx_cashback_rate: '0.0000',
+      });
+
+      expect(pendingTx.header.settlement_status).toBe('PENDING_HOLD');
+      expect(pendingTx.header.fx_cashback_rate).toBe('0.0000');
+      expect(pendingTx.header.payment_discount).toBe('0.00');
+      expect(pendingTx.header.total_net).toBe(pendingTx.header.total_gross);
+
+      const settledTx = repo.settleMastercardTransaction(
+        pendingTx.header.id,
+        '72.50'
+      );
+
+      expect(settledTx.header.settlement_status).toBe('SETTLED');
+      expect(settledTx.header.fx_cashback_rate).toBe('0.0000');
+      expect(settledTx.header.total_gross).toBe('72.50');
+      expect(settledTx.header.payment_discount).toBe('0.00');
+      expect(settledTx.header.total_net).toBe('72.50');
+      expect(settledTx.items[0].allocated_discount).toBe('0.00');
+      expect(settledTx.items[0].item_net).toBe('72.50');
+    });
   });
 });

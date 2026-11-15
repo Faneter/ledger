@@ -497,5 +497,18 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
 
       expect(res.items[0].budget_pool_id).toBe('POOL_CUSTOM_SNACK');
     });
+
+    it('should respect fxConfig defaultCashbackRate 0.0000 in FX DSL parsing', () => {
+      const res = parseQuickInputDsl('Porkbun域名 $10.00', {
+        fxConfig: { defaultHoldRatio: '1.020', defaultCashbackRate: '0.0000' },
+      });
+
+      expect(res.original_currency).toBe('USD');
+      expect(res.fx_cashback_rate).toBe('0.0000');
+      expect(res.payment_discount).toBe('0.00');
+      expect(res.total_net).toBe(res.total_gross);
+      expect(res.items[0].allocated_discount).toBe('0.00');
+      expect(res.items[0].item_net).toBe(res.total_gross);
+    });
   });
 });

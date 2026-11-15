@@ -315,7 +315,7 @@ export function createLedgerServer(
     let m = pathname.match(/^\/api\/transactions\/([^/]+)\/settle-fx$/);
     if (method === 'POST' && m) {
       const id = decodeURIComponent(m[1]);
-      const { settledAmountCny, settledAt } = (body as any) || {};
+      const { settledAmountCny, settledAt, cashbackRate } = (body as any) || {};
       if (!settledAmountCny) {
         return {
           statusCode: 400,
@@ -326,7 +326,8 @@ export function createLedgerServer(
         const transaction = repo.settleMastercardTransaction(
           id,
           settledAmountCny,
-          settledAt
+          settledAt,
+          cashbackRate
         );
         return { statusCode: 200, body: { transaction } };
       } catch (err) {

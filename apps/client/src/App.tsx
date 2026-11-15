@@ -99,8 +99,14 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (engine.state.fxConfig) {
-      setFxHoldPctInput(String(Number((Number(engine.state.fxConfig.defaultHoldRatio) * 100).toFixed(1))));
-      setFxCashbackPctInput(String(Number((Number(engine.state.fxConfig.defaultCashbackRate) * 100).toFixed(2))));
+      const nextHoldPct = String(Number((Number(engine.state.fxConfig.defaultHoldRatio) * 100).toFixed(1)));
+      const nextCashbackPct = String(Number((Number(engine.state.fxConfig.defaultCashbackRate) * 100).toFixed(2)));
+      setFxHoldPctInput((prev) =>
+        prev === '' || prev.endsWith('.') || Number(prev) === Number(nextHoldPct) ? prev : nextHoldPct
+      );
+      setFxCashbackPctInput((prev) =>
+        prev === '' || prev.endsWith('.') || Number(prev) === Number(nextCashbackPct) ? prev : nextCashbackPct
+      );
     }
   }, [engine.state.fxConfig]);
 
@@ -839,11 +845,20 @@ export const App: React.FC = () => {
                               value={fxCashbackPctInput}
                               onChange={(e) => {
                                 setFxCashbackPctInput(e.target.value);
-                                const val = e.target.value;
-                                if (val && !isNaN(Number(val))) {
+                                const val = e.target.value.trim();
+                                if (val === '') {
+                                  engine.updateFxConfig({
+                                    defaultCashbackRate: '0.0000',
+                                  });
+                                } else if (!isNaN(Number(val)) && Number(val) >= 0) {
                                   engine.updateFxConfig({
                                     defaultCashbackRate: (Number(val) / 100).toFixed(4),
                                   });
+                                }
+                              }}
+                              onBlur={() => {
+                                if (fxCashbackPctInput.trim() === '') {
+                                  setFxCashbackPctInput('0');
                                 }
                               }}
                               slotProps={{

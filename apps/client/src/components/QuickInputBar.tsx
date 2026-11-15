@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -82,6 +82,15 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   const [fxCashbackPct, setFxCashbackPct] = useState(() =>
     String(Number((Number(engine.state.fxConfig?.defaultCashbackRate ?? 0.01) * 100).toFixed(2)))
   );
+
+  useEffect(() => {
+    setFxHoldPct(
+      String(Number((Number(engine.state.fxConfig?.defaultHoldRatio ?? 1.02) * 100).toFixed(1)))
+    );
+    setFxCashbackPct(
+      String(Number((Number(engine.state.fxConfig?.defaultCashbackRate ?? 0.01) * 100).toFixed(2)))
+    );
+  }, [engine.state.fxConfig?.defaultHoldRatio, engine.state.fxConfig?.defaultCashbackRate]);
   const [targetSelection, setTargetSelection] = useState<{
     type: 'POOL' | 'PROJECT';
     id: string;
@@ -178,8 +187,8 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
             : null,
         currency,
         hold_amount_cny: holdAmountCnyInput.trim() || undefined,
-        fx_hold_ratio: (Number(fxHoldPct || 100) / 100).toFixed(3),
-        fx_cashback_rate: (Number(fxCashbackPct || 0) / 100).toFixed(4),
+        fx_hold_ratio: (Number(fxHoldPct.trim() === '' ? 102 : fxHoldPct) / 100).toFixed(3),
+        fx_cashback_rate: (Number(fxCashbackPct.trim() === '' ? 0 : fxCashbackPct) / 100).toFixed(4),
       });
 
       triggerSuccess(
@@ -192,6 +201,12 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
       setMerchantOrNote('');
       setHoldAmountCnyInput('');
       setSelectedVoucherIdVisual(null);
+      setFxHoldPct(
+        String(Number((Number(engine.state.fxConfig?.defaultHoldRatio ?? 1.02) * 100).toFixed(1)))
+      );
+      setFxCashbackPct(
+        String(Number((Number(engine.state.fxConfig?.defaultCashbackRate ?? 0.01) * 100).toFixed(2)))
+      );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
     }

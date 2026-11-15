@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS transaction_headers (
                             'REFUNDED'          -- 退货退款
                         )),
     hold_amount_cny     NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    fx_cashback_rate    NUMERIC(5, 4) DEFAULT NULL,
     settled_at          TIMESTAMP DEFAULT NULL,
     raw_input_text      TEXT,
     merchant_or_note    TEXT,
