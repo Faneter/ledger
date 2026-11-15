@@ -9,6 +9,7 @@ build/
 
 # Local SQLite databases & journals
 *.db
+*.db.bak
 *.db-shm
 *.db-wal
 *.sqlite

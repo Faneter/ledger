@@ -19,7 +19,7 @@ import {
 export interface VoucherRedemptionInfo {
   face_value: MoneyInput;
   acquire_cost: MoneyInput;
-  voucher_type: VoucherType | 'PREPAID_COUPON' | 'FREE_COUPON' | 'REPAY_COUPON';
+  voucher_type: VoucherType | 'PREPAID_COUPON' | 'FREE_COUPON';
 }
 
 /**

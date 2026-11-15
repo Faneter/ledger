@@ -564,7 +564,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 const h = tx.header;
                 const isExpense = h.tx_type === 'EXPENSE';
                 const isIncome = h.tx_type === 'INCOME';
-                const isTransfer = h.tx_type === 'TRANSFER';
                 const isVoucherBuy = h.tx_type === 'VOUCHER_BUY';
                 const isExpenseLike = isExpense || isVoucherBuy;
 

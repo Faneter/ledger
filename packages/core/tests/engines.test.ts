@@ -426,8 +426,6 @@ describe('Stage 2: Core Financial Engines & Distributed HLC Synchronization', ()
         tx_date: '2026-11-12',
         tx_timestamp: '2026-11-12T10:00:00Z',
         tx_type: 'EXPENSE',
-        account_id: 'ACC_UNION_MAIN',
-        target_account_id: null,
         total_gross: net,
         platform_discount: '0.00',
         payment_discount: '0.00',
@@ -464,10 +462,10 @@ describe('Stage 2: Core Financial Engines & Distributed HLC Synchronization', ()
       const op1: SyncOpLogEntry = {
         hlc: '000000000001000-0000-node1',
         node_id: 'node1',
-        entity_type: 'ACCOUNT',
-        entity_id: 'ACC_UNION_MAIN',
+        entity_type: 'BUDGET_POOL',
+        entity_id: 'POOL_DAILY',
         op_type: 'UPSERT',
-        payload_json: JSON.stringify({ id: 'ACC_UNION_MAIN', balance: '100.00' }),
+        payload_json: JSON.stringify({ id: 'POOL_DAILY', name: '日常餐饮' }),
         created_at: '2026-11-12T10:00:00Z',
       };
       const op2: SyncOpLogEntry = {
@@ -492,20 +490,20 @@ describe('Stage 2: Core Financial Engines & Distributed HLC Synchronization', ()
       const opA: SyncOpLogEntry = {
         hlc: '000000000001000-0000-nodeA',
         node_id: 'nodeA',
-        entity_type: 'ACCOUNT',
-        entity_id: 'ACC_HUABEI',
+        entity_type: 'BUDGET_POOL',
+        entity_id: 'POOL_DAILY',
         op_type: 'UPSERT',
-        payload_json: JSON.stringify({ id: 'ACC_HUABEI', balance: '-200.00' }),
+        payload_json: JSON.stringify({ id: 'POOL_DAILY', name: '日常餐饮' }),
         created_at: '2026-11-12T10:00:00Z',
       };
 
       const opB: SyncOpLogEntry = {
         hlc: '000000000002000-0000-nodeB',
         node_id: 'nodeB',
-        entity_type: 'ACCOUNT',
-        entity_id: 'ACC_MC_DEBIT_A',
+        entity_type: 'BUDGET_POOL',
+        entity_id: 'POOL_FLEX',
         op_type: 'UPSERT',
-        payload_json: JSON.stringify({ id: 'ACC_MC_DEBIT_A', balance: '500.00' }),
+        payload_json: JSON.stringify({ id: 'POOL_FLEX', name: '机动灵活' }),
         created_at: '2026-11-12T10:05:00Z',
       };
 

@@ -614,9 +614,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                   }
                 >
                   <MenuItem value="">(不使用卡券 / 纯原价实付)</MenuItem>
-                  {availableVouchers
-                    .filter((v) => v.voucher_type !== 'REPAY_COUPON')
-                    .map((v) => {
+                  {availableVouchers.map((v) => {
                       const isUnderMinSpend =
                         currentCnyGross > 0 &&
                         currentCnyGross < Number(v.min_spend);
@@ -733,7 +731,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
             </Box>
 
             {/* 外币符号自动置顶感知 */}
-            {preview?.should_wake_fx_account && (
+            {preview?.is_fx_detected && (
               <Alert severity="info" sx={{ borderRadius: 3 }}>
                 <strong>外币消费自动感知：</strong>已识别外币消费（自动启用预授权冻结挂起与返现核算）
               </Alert>

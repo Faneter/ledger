@@ -3,7 +3,6 @@ import {
   evaluateMathFormula,
   parseQuickInputDsl,
   DEFAULT_CATEGORIES,
-  DEFAULT_ACCOUNTS,
   DEFAULT_PROJECT_TAGS,
 } from '../src/dsl-parser.js';
 
@@ -24,28 +23,11 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
 
       const asset = DEFAULT_CATEGORIES.find((c) => c.id === 'CAT_MAJOR_ASSET');
       expect(asset).toBeDefined();
-      expect(asset?.default_pool_id).toBe('POOL_ASSET');
+      expect(asset?.default_pool_id).toBe('POOL_FLEX');
 
       const exam = DEFAULT_CATEGORIES.find((c) => c.id === 'CAT_EXAM_CERT');
       expect(exam).toBeDefined();
-      expect(exam?.default_pool_id).toBe('POOL_FUND');
-    });
-
-    it('DEFAULT_ACCOUNTS should cover all 8 accounts with ACC_HUABEI as default pay', () => {
-      expect(DEFAULT_ACCOUNTS).toHaveLength(8);
-
-      const huabei = DEFAULT_ACCOUNTS.find((a) => a.id === 'ACC_HUABEI');
-      expect(huabei?.is_default_pay).toBe(true);
-      expect(huabei?.account_role).toBe('CREDIT');
-
-      const cc = DEFAULT_ACCOUNTS.find((a) => a.id === 'ACC_CC_MAIN');
-      expect(cc?.name).toBe('主力信用卡');
-
-      const mcA = DEFAULT_ACCOUNTS.find((a) => a.id === 'ACC_MC_DEBIT_A');
-      expect(mcA?.account_role).toBe('DEBIT_FX');
-
-      const dormant = DEFAULT_ACCOUNTS.find((a) => a.id === 'ACC_DORMANT_01');
-      expect(dormant?.account_role).toBe('DORMANT');
+      expect(exam?.default_pool_id).toBe('POOL_FLEX');
     });
 
     it('DEFAULT_PROJECT_TAGS should cover the 3 PRD project tags', () => {
@@ -54,7 +36,7 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       const jlpt = DEFAULT_PROJECT_TAGS.find((t) => t.id === 'TAG_JLPT_N2');
       expect(jlpt?.name).toBe('JLPT_N2考试专项');
       expect(jlpt?.target_budget).toBe('800.00');
-      expect(jlpt?.linked_pool_id).toBe('POOL_FUND');
+      expect(jlpt?.linked_pool_id).toBe('POOL_FLEX');
 
       const mcu = DEFAULT_PROJECT_TAGS.find((t) => t.id === 'TAG_MCU_LAB');
       expect(mcu?.linked_pool_id).toBe('POOL_FLEX');
@@ -167,8 +149,6 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       const result = parseQuickInputDsl(input);
 
       expect(result.tx_type).toBe('EXPENSE');
-      expect(result.account_id).toBe('ACC_HUABEI'); // 默认支付账户
-      expect(result.target_account_id).toBeNull();
       expect(result.total_gross).toBe('36.80');
       expect(result.platform_discount).toBe('3.39');
       expect(result.payment_discount).toBe('0.00');
@@ -179,7 +159,7 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       expect(result.exchange_rate).toBe('1.000000');
       expect(result.settlement_status).toBe('SETTLED');
       expect(result.hold_amount_cny).toBe('0.00');
-      expect(result.should_wake_fx_account).toBe(false);
+      expect(result.is_fx_detected).toBe(false);
       expect(result.raw_input_text).toBe(input);
       expect(result.merchant_or_note).toBe('咸蛋黄拌面 + 饭卡充值');
 
@@ -241,8 +221,6 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       const result = parseQuickInputDsl(input);
 
       expect(result.tx_type).toBe('EXPENSE');
-      expect(result.account_id).toBe('ACC_CC_MAIN');
-      expect(result.target_account_id).toBeNull();
       expect(result.total_gross).toBe('55.00');
       expect(result.platform_discount).toBe('0.00');
       expect(result.payment_discount).toBe('5.00');
@@ -253,7 +231,7 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       expect(result.exchange_rate).toBe('1.000000');
       expect(result.settlement_status).toBe('SETTLED');
       expect(result.hold_amount_cny).toBe('0.00');
-      expect(result.should_wake_fx_account).toBe(false);
+      expect(result.is_fx_detected).toBe(false);
       expect(result.raw_input_text).toBe(input);
       expect(result.merchant_or_note).toBe('牛奶 + 晾衣架 + 排针');
 
@@ -307,13 +285,11 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       const result = parseQuickInputDsl(input);
 
       expect(result.tx_type).toBe('EXPENSE');
-      expect(result.account_id).toBe('ACC_MC_DEBIT_A');
-      expect(result.target_account_id).toBeNull();
       expect(result.original_currency).toBe('USD');
       expect(result.original_amount).toBe('4.35');
       expect(result.hold_amount_cny).toBe('31.95');
       expect(result.settlement_status).toBe('PENDING_HOLD');
-      expect(result.should_wake_fx_account).toBe(true);
+      expect(result.is_fx_detected).toBe(true);
 
       // processMastercardFxLifecycle 计算值
       expect(result.total_gross).toBe('31.32');
@@ -337,33 +313,6 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       expect(item.is_primary_item).toBe(true);
       expect(item.raw_formula_expr).toBe('$4.35');
     });
-
-    // ------------------------------------------------------------------------
-    // 场景 4：信用卡/花呗用券还款
-    // 示例：还款 @花呗 500 - 还款券 5 从 @主力银联卡
-    // ------------------------------------------------------------------------
-    it('Scenario 4: Credit Account Repayment with Voucher Discount', () => {
-      const input = '还款 @花呗 500 - 还款券 5 从 @主力银联卡';
-      const result = parseQuickInputDsl(input);
-
-      expect(result.tx_type).toBe('TRANSFER');
-      expect(result.account_id).toBe('ACC_UNION_MAIN'); // 扣款来源账户
-      expect(result.target_account_id).toBe('ACC_HUABEI'); // 还款目标账户
-      expect(result.total_gross).toBe('500.00'); // 冲销负债原额
-      expect(result.payment_discount).toBe('5.00'); // 还款券优惠
-      expect(result.platform_discount).toBe('0.00');
-      expect(result.total_net).toBe('495.00'); // 实际银行卡扣款
-      expect(result.allocation_mode).toBe('SINGLE');
-      expect(result.original_currency).toBe('CNY');
-      expect(result.original_amount).toBeNull();
-      expect(result.exchange_rate).toBe('1.000000');
-      expect(result.settlement_status).toBe('SETTLED');
-      expect(result.hold_amount_cny).toBe('0.00');
-      expect(result.should_wake_fx_account).toBe(false);
-      expect(result.items).toHaveLength(0);
-      expect(result.raw_input_text).toBe(input);
-      expect(result.merchant_or_note).toContain('花呗');
-    });
   });
 
   // ==========================================================================
@@ -375,7 +324,6 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       expect(resBurger.items[0].category_id).toBe('CAT_FOOD');
       expect(resBurger.items[0].budget_pool_id).toBe('POOL_DAILY');
       expect(resBurger.total_net).toBe('18.50');
-      expect(resBurger.account_id).toBe('ACC_HUABEI');
 
       const resWallace = parseQuickInputDsl('华莱士 19.9');
       expect(resWallace.items[0].category_id).toBe('CAT_FOOD');
@@ -395,35 +343,31 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       expect(resTraffic.items[0].budget_pool_id).toBe('POOL_FLEX');
     });
 
-    it('should recognize #JLPT_N2考试 and associate with POOL_FUND and CAT_EXAM_CERT', () => {
+    it('should recognize #JLPT_N2考试 and associate with POOL_FLEX and CAT_EXAM_CERT', () => {
       const result = parseQuickInputDsl('报名费 800 #JLPT_N2考试');
 
       expect(result.items).toHaveLength(1);
       const item = result.items[0];
       expect(item.project_tag_id).toBe('TAG_JLPT_N2');
       expect(item.category_id).toBe('CAT_EXAM_CERT');
-      expect(item.budget_pool_id).toBe('POOL_FUND');
+      expect(item.budget_pool_id).toBe('POOL_FLEX');
       expect(item.item_gross).toBe('800.00');
       expect(item.item_net).toBe('800.00');
     });
 
-    it('should wake FX account when foreign currency symbol or JPY is present', () => {
-      const resJpy = parseQuickInputDsl('任天堂游戏 JPY 6500 @万事达B');
-      expect(resJpy.should_wake_fx_account).toBe(true);
+    it('should detect FX currency when foreign currency symbol or JPY is present', () => {
+      const resJpy = parseQuickInputDsl('任天堂游戏 JPY 6500');
+      expect(resJpy.is_fx_detected).toBe(true);
       expect(resJpy.original_currency).toBe('JPY');
       expect(resJpy.original_amount).toBe('6500');
-      expect(resJpy.account_id).toBe('ACC_MC_DEBIT_B');
 
-      const resSteam = parseQuickInputDsl('Steam游戏 $19.99 @万事达A');
-      expect(resSteam.should_wake_fx_account).toBe(true);
+      const resSteam = parseQuickInputDsl('Steam游戏 $19.99');
+      expect(resSteam.is_fx_detected).toBe(true);
       expect(resSteam.original_currency).toBe('USD');
       expect(resSteam.original_amount).toBe('19.99');
-      expect(resSteam.account_id).toBe('ACC_MC_DEBIT_A');
 
-      // 未显式写 @账户 时，检测到外币自动唤醒并选中首个 DEBIT_FX 账户
       const resAutoFx = parseQuickInputDsl('Cloudflare域名 $10.44 冻结76.50');
-      expect(resAutoFx.should_wake_fx_account).toBe(true);
-      expect(resAutoFx.account_id).toBe('ACC_MC_DEBIT_A');
+      expect(resAutoFx.is_fx_detected).toBe(true);
     });
 
     it('should support *primary item marker in DSL split order (PRIMARY_ITEM mode)', () => {
@@ -435,14 +379,7 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       expect(res.items[1].allocated_discount).toBe('0.00');
     });
 
-    it('should support custom categories, accounts, and project tags from context', () => {
-      const customAccount = {
-        id: 'ACC_CUSTOM_WALLET',
-        name: '数字人民币钱包',
-        account_role: 'DEBIT_MAIN' as const,
-        is_default_pay: true,
-      };
-
+    it('should support custom categories and project tags from context', () => {
       const customCategory = {
         id: 'CAT_CUSTOM_BOOK',
         parent_id: null,
@@ -453,12 +390,10 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
         sort_order: 99,
       };
 
-      const result = parseQuickInputDsl('数电课本 15 @数字人民币钱包', {
-        accounts: [customAccount],
+      const result = parseQuickInputDsl('数电课本 15', {
         categories: [customCategory],
       });
 
-      expect(result.account_id).toBe('ACC_CUSTOM_WALLET');
       expect(result.items[0].category_id).toBe('CAT_CUSTOM_BOOK');
       expect(result.items[0].budget_pool_id).toBe('POOL_FLEX');
       expect(result.total_net).toBe('15.00');

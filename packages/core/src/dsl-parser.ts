@@ -8,7 +8,6 @@ import {
 } from './money.js';
 import {
   Category,
-  Account,
   ProjectTag,
   BudgetPool,
   TransactionType,
@@ -143,7 +142,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
     id: 'CAT_EXAM_CERT',
     parent_id: null,
     name: '考证报名与差旅',
-    default_pool_id: 'POOL_FUND',
+    default_pool_id: 'POOL_FLEX',
     icon_name: null,
     keywords: 'JLPT,N2,报名费,护照,港澳通行证,青旅,考点住宿',
     sort_order: 130,
@@ -152,67 +151,10 @@ export const DEFAULT_CATEGORIES: Category[] = [
     id: 'CAT_MAJOR_ASSET',
     parent_id: null,
     name: '数码大件购置',
-    default_pool_id: 'POOL_ASSET',
+    default_pool_id: 'POOL_FLEX',
     icon_name: null,
     keywords: 'iPhone,手机,机械硬盘,希捷,固态硬盘,显示器',
     sort_order: 140,
-  },
-];
-
-/**
- * PRD 12.1: 8 个标准账户矩阵核心快照
- */
-export const DEFAULT_ACCOUNTS: Pick<
-  Account,
-  'id' | 'name' | 'account_role' | 'is_default_pay'
->[] = [
-  {
-    id: 'ACC_HUABEI',
-    name: '支付宝花呗',
-    account_role: 'CREDIT',
-    is_default_pay: true,
-  },
-  {
-    id: 'ACC_CC_MAIN',
-    name: '主力信用卡',
-    account_role: 'CREDIT',
-    is_default_pay: false,
-  },
-  {
-    id: 'ACC_UNION_MAIN',
-    name: '主力银联借记卡',
-    account_role: 'DEBIT_MAIN',
-    is_default_pay: false,
-  },
-  {
-    id: 'ACC_CAMPUS_CARD',
-    name: '校园饭卡(预充值)',
-    account_role: 'PREPAID',
-    is_default_pay: false,
-  },
-  {
-    id: 'ACC_MC_DEBIT_A',
-    name: '万事网联借记卡 A',
-    account_role: 'DEBIT_FX',
-    is_default_pay: false,
-  },
-  {
-    id: 'ACC_MC_DEBIT_B',
-    name: '万事网联借记卡 B',
-    account_role: 'DEBIT_FX',
-    is_default_pay: false,
-  },
-  {
-    id: 'ACC_ALIPAY_ETF',
-    name: '支付宝指数基金定投',
-    account_role: 'INVESTMENT',
-    is_default_pay: false,
-  },
-  {
-    id: 'ACC_DORMANT_01',
-    name: '备用低频借记卡(折叠)',
-    account_role: 'DORMANT',
-    is_default_pay: false,
   },
 ];
 
@@ -225,7 +167,7 @@ export const DEFAULT_PROJECT_TAGS: ProjectTag[] = [
     name: 'JLPT_N2考试专项',
     tag_type: 'PROJECT',
     target_budget: '800.00',
-    linked_pool_id: 'POOL_FUND',
+    linked_pool_id: 'POOL_FLEX',
     is_active: true,
   },
   {
@@ -247,43 +189,8 @@ export const DEFAULT_PROJECT_TAGS: ProjectTag[] = [
 ];
 
 // ============================================================================
-// 2. 常见别名映射表 (账户、分类简写、专项标签)
+// 2. 常见别名映射表 (分类简写、专项标签)
 // ============================================================================
-
-const ACCOUNT_ALIASES: Record<string, string> = {
-  花呗: 'ACC_HUABEI',
-  支付宝花呗: 'ACC_HUABEI',
-  招行信用卡: 'ACC_CC_MAIN',
-  信用卡: 'ACC_CC_MAIN',
-  主力信用卡: 'ACC_CC_MAIN',
-  主力银联卡: 'ACC_UNION_MAIN',
-  银联卡: 'ACC_UNION_MAIN',
-  主力银联借记卡: 'ACC_UNION_MAIN',
-  饭卡: 'ACC_CAMPUS_CARD',
-  校园饭卡: 'ACC_CAMPUS_CARD',
-  '校园饭卡(预充值)': 'ACC_CAMPUS_CARD',
-  校园卡: 'ACC_CAMPUS_CARD',
-  万事达a: 'ACC_MC_DEBIT_A',
-  万事达A: 'ACC_MC_DEBIT_A',
-  万事网联a: 'ACC_MC_DEBIT_A',
-  万事网联A: 'ACC_MC_DEBIT_A',
-  '万事网联借记卡 a': 'ACC_MC_DEBIT_A',
-  '万事网联借记卡 A': 'ACC_MC_DEBIT_A',
-  '万事网联借记卡A': 'ACC_MC_DEBIT_A',
-  万事达b: 'ACC_MC_DEBIT_B',
-  万事达B: 'ACC_MC_DEBIT_B',
-  万事网联b: 'ACC_MC_DEBIT_B',
-  万事网联B: 'ACC_MC_DEBIT_B',
-  '万事网联借记卡 b': 'ACC_MC_DEBIT_B',
-  '万事网联借记卡 B': 'ACC_MC_DEBIT_B',
-  '万事网联借记卡B': 'ACC_MC_DEBIT_B',
-  指数基金: 'ACC_ALIPAY_ETF',
-  基金: 'ACC_ALIPAY_ETF',
-  支付宝指数基金定投: 'ACC_ALIPAY_ETF',
-  低频卡: 'ACC_DORMANT_01',
-  备用卡: 'ACC_DORMANT_01',
-  '备用低频借记卡(折叠)': 'ACC_DORMANT_01',
-};
 
 const CATEGORY_ALIASES: Record<string, string> = {
   饮食: 'CAT_FOOD',
@@ -618,8 +525,6 @@ export interface ParsedDslItemResult {
 
 export interface ParsedDslResult {
   tx_type: TransactionType;
-  account_id: string;
-  target_account_id: string | null;
   total_gross: string;
   platform_discount: string;
   payment_discount: string;
@@ -631,7 +536,7 @@ export interface ParsedDslResult {
   settlement_status: SettlementStatus;
   hold_amount_cny: string;
   fx_cashback_rate?: string | null;
-  should_wake_fx_account: boolean;
+  is_fx_detected: boolean;
   items: ParsedDslItemResult[];
   raw_input_text: string;
   merchant_or_note: string;
@@ -639,7 +544,6 @@ export interface ParsedDslResult {
 
 export interface DslParserContext {
   categories?: Category[];
-  accounts?: Pick<Account, 'id' | 'name' | 'account_role' | 'is_default_pay'>[];
   projectTags?: ProjectTag[];
   budgetPools?: BudgetPool[];
   txDate?: string;
@@ -647,50 +551,8 @@ export interface DslParserContext {
 }
 
 // ============================================================================
-// 5. 辅助解析方法：账户匹配、分类与专项标签匹配、关键词归类
+// 5. 辅助解析方法：分类与专项标签匹配、关键词归类
 // ============================================================================
-
-function resolveAccount(
-  rawAcc: string,
-  accounts: Pick<Account, 'id' | 'name' | 'account_role' | 'is_default_pay'>[]
-): string {
-  const clean = rawAcc.replace(/^@/, '').trim();
-  const lower = clean.toLowerCase();
-
-  // 1. 别名表直接映射
-  if (ACCOUNT_ALIASES[clean]) {
-    const targetId = ACCOUNT_ALIASES[clean];
-    if (accounts.some((a) => a.id === targetId)) {
-      return targetId;
-    }
-  }
-  if (ACCOUNT_ALIASES[lower]) {
-    const targetId = ACCOUNT_ALIASES[lower];
-    if (accounts.some((a) => a.id === targetId)) {
-      return targetId;
-    }
-  }
-
-  // 2. id 精确匹配
-  const byId = accounts.find((a) => a.id.toLowerCase() === lower);
-  if (byId) return byId.id;
-
-  // 3. name 精确匹配
-  const byName = accounts.find((a) => a.name.toLowerCase() === lower);
-  if (byName) return byName.id;
-
-  // 4. name 子串双向包含匹配
-  const bySub = accounts.find(
-    (a) =>
-      a.name.toLowerCase().includes(lower) ||
-      lower.includes(a.name.toLowerCase())
-  );
-  if (bySub) return bySub.id;
-
-  // 5. 默认支付账户
-  const defaultAcc = accounts.find((a) => a.is_default_pay) ?? accounts[0];
-  return defaultAcc.id;
-}
 
 function resolveTagOrCategory(
   rawTag: string,
@@ -802,10 +664,10 @@ function autoMatchCategoryByItemName(
 
 /**
  * 极速公式与自然语言解析器（Quick-Parse Input DSL Compiler）
- * 100% 精准支持 PRD 模块 5 的四大标准场景及各种复杂组合输入
+ * 支持算式自含立减、跨品类凑单满减、外币预授权消费解析与池/分类/专项标签路由
  *
  * @param rawText 用户在单行记账框输入的原始文本
- * @param context 可选传入自定义分类、账户或项目标签
+ * @param context 可选传入自定义分类、预算池、项目标签或外币默认配置
  */
 export function parseQuickInputDsl(
   rawText: string,
@@ -817,89 +679,10 @@ export function parseQuickInputDsl(
   }
 
   const categories = context?.categories ?? DEFAULT_CATEGORIES;
-  const accounts = context?.accounts ?? DEFAULT_ACCOUNTS;
   const projectTags = context?.projectTags ?? DEFAULT_PROJECT_TAGS;
   const budgetPools = context?.budgetPools;
   const fxHoldRatio = context?.fxConfig?.defaultHoldRatio ?? '1.02';
   const fxCashbackRate = context?.fxConfig?.defaultCashbackRate ?? '0.01';
-
-  const defaultAccount =
-    accounts.find((a) => a.is_default_pay) ?? accounts[0];
-
-  // --------------------------------------------------------------------------
-  // 场景 4：信用卡/花呗用券还款或内部转账流水
-  // 识别形如：`还款 @花呗 500 - 还款券 5 从 @主力银联卡` 或 `转账 @校园饭卡 100 从 @主力银联卡`
-  // --------------------------------------------------------------------------
-  if (trimmedText.startsWith('还款') || trimmedText.startsWith('转账')) {
-    let working = trimmedText;
-
-    // 1. 识别来源扣款账户（从 @xxx）
-    let sourceAccountId = defaultAccount.id;
-    const sourceMatch = working.match(/从\s*@?([^\s]+)/);
-    if (sourceMatch) {
-      sourceAccountId = resolveAccount(sourceMatch[1], accounts);
-      working = working.replace(sourceMatch[0], ' ');
-    }
-
-    // 2. 识别目标收款/还款账户（@xxx 或 到 @xxx）
-    let targetAccountId: string | null = null;
-    let targetAccountRaw = '';
-    const targetMatch = working.match(/(?:到|还款|转账)\s*@([^\s]+)/);
-    if (targetMatch) {
-      targetAccountId = resolveAccount(targetMatch[1], accounts);
-      targetAccountRaw = targetMatch[1];
-      working = working.replace(targetMatch[0], ' ');
-    } else {
-      // 容错匹配剩余的 @账户
-      const generalAccMatch = working.match(/@([^\s]+)/);
-      if (generalAccMatch) {
-        targetAccountId = resolveAccount(generalAccMatch[1], accounts);
-        targetAccountRaw = generalAccMatch[1];
-        working = working.replace(generalAccMatch[0], ' ');
-      }
-    }
-
-    // 3. 识别还款券抵扣优惠金额（- 还款券 5 或 - 5）
-    let voucherDiscountDec = new Decimal(0);
-    const voucherMatch = working.match(
-      /-\s*(?:还款券|优惠券|抵扣券|券)?\s*([\d\.]+)/
-    );
-    if (voucherMatch) {
-      voucherDiscountDec = roundCny(voucherMatch[1]);
-      working = working.replace(voucherMatch[0], ' ');
-    }
-
-    // 4. 提取原负债冲销/转账总金额
-    working = working.replace(/还款|转账/g, ' ').trim();
-    const amountMatch = working.match(/([\d\.]+)/);
-    if (!amountMatch) {
-      throw new Error(`Failed to parse transfer amount in: "${rawText}"`);
-    }
-    const grossAmountDec = roundCny(amountMatch[1]);
-    const netAmountDec = roundCny(grossAmountDec.minus(voucherDiscountDec));
-
-    const note = targetAccountRaw ? `还款 @${targetAccountRaw}` : '内部转账还款';
-
-    return {
-      tx_type: 'TRANSFER',
-      account_id: sourceAccountId,
-      target_account_id: targetAccountId,
-      total_gross: formatCny(grossAmountDec),
-      platform_discount: '0.00',
-      payment_discount: formatCny(voucherDiscountDec),
-      total_net: formatCny(netAmountDec),
-      allocation_mode: 'SINGLE',
-      original_currency: 'CNY',
-      original_amount: null,
-      exchange_rate: '1.000000',
-      settlement_status: 'SETTLED',
-      hold_amount_cny: '0.00',
-      should_wake_fx_account: false,
-      items: [],
-      raw_input_text: rawText,
-      merchant_or_note: note,
-    };
-  }
 
   // --------------------------------------------------------------------------
   // 常规/专项支出及外币预授权消费解析
@@ -914,14 +697,8 @@ export function parseQuickInputDsl(
     working = working.replace(mergedMatch[0], ' ');
   }
 
-  // B. 提取支付账户（@招行信用卡、@万事达A 等）
-  let accountId = defaultAccount.id;
-  const accMatch = working.match(/@([^\s#=]+)/);
-  const hasExplicitAccount = Boolean(accMatch);
-  if (accMatch) {
-    accountId = resolveAccount(accMatch[1], accounts);
-    working = working.replace(accMatch[0], ' ');
-  }
+  // B. 容错剥离遗留 @xxx 标记（账户体系已前后端移除，不污染商品备注）
+  working = working.replace(/@[^\s+#=]+/g, ' ').trim();
 
   // C. 提取外币标志与预授权冻结本币金额（支持 $、USD、JPY 等符号与 冻结31.95）
   let isFxDetected = false;
@@ -977,13 +754,6 @@ export function parseQuickInputDsl(
       roundCny(toDecimal(originalAmount).times(fxRate).times(fxHoldRatio))
     );
     settlementStatus = 'PENDING_HOLD';
-  }
-
-  if (isFxDetected && !hasExplicitAccount) {
-    const fxAcc = accounts.find((a) => a.account_role === 'DEBIT_FX');
-    if (fxAcc) {
-      accountId = fxAcc.id;
-    }
   }
 
   // D. 提取行尾或全局标签（如 #饮食 或 #JLPT_N2考试）
@@ -1145,13 +915,13 @@ export function parseQuickInputDsl(
       item.projectTagId = globalProjectTagId;
     }
 
-    // 若专项标签关联 POOL_FUND 且未显式指定分类，自动绑定 CAT_EXAM_CERT
+    // 若专项标签绑定默认池且未显式指定分类，优先沿用关联池并在考证标签下自动匹配考证分类
     if (!item.categoryId && item.projectTagId) {
       const pt = projectTags.find((p) => p.id === item.projectTagId);
-      if (pt?.linked_pool_id === 'POOL_FUND') {
+      if (pt?.id === 'TAG_JLPT_N2') {
         item.categoryId = 'CAT_EXAM_CERT';
-        item.poolId = 'POOL_FUND';
-      } else if (pt?.linked_pool_id) {
+      }
+      if (!item.poolId && pt?.linked_pool_id) {
         item.poolId = pt.linked_pool_id;
       }
     }
@@ -1212,8 +982,6 @@ export function parseQuickInputDsl(
 
     return {
       tx_type: 'EXPENSE',
-      account_id: accountId,
-      target_account_id: null,
       total_gross: fxResult.total_gross,
       platform_discount: '0.00',
       payment_discount: fxResult.payment_discount,
@@ -1225,7 +993,7 @@ export function parseQuickInputDsl(
       settlement_status: 'PENDING_HOLD',
       hold_amount_cny: holdAmountCny,
       fx_cashback_rate: fxCashbackRate,
-      should_wake_fx_account: true,
+      is_fx_detected: true,
       items: finalItems,
       raw_input_text: rawText,
       merchant_or_note: item.name,
@@ -1280,8 +1048,6 @@ export function parseQuickInputDsl(
 
     return {
       tx_type: 'EXPENSE',
-      account_id: accountId,
-      target_account_id: null,
       total_gross: formatCny(totalGrossDec),
       platform_discount: '0.00',
       payment_discount: formatCny(totalDiscountDec),
@@ -1292,7 +1058,7 @@ export function parseQuickInputDsl(
       exchange_rate: '1.000000',
       settlement_status: settlementStatus,
       hold_amount_cny: holdAmountCny,
-      should_wake_fx_account: isFxDetected,
+      is_fx_detected: isFxDetected,
       items: finalItems,
       raw_input_text: rawText,
       merchant_or_note: note,
@@ -1335,8 +1101,6 @@ export function parseQuickInputDsl(
 
   return {
     tx_type: 'EXPENSE',
-    account_id: accountId,
-    target_account_id: null,
     total_gross: formatCny(totalGrossDec),
     platform_discount: formatCny(totalItemDiscountDec),
     payment_discount: '0.00',
@@ -1347,7 +1111,7 @@ export function parseQuickInputDsl(
     exchange_rate: '1.000000',
     settlement_status: settlementStatus,
     hold_amount_cny: holdAmountCny,
-    should_wake_fx_account: isFxDetected,
+    is_fx_detected: isFxDetected,
     items: finalItems,
     raw_input_text: rawText,
     merchant_or_note: note,

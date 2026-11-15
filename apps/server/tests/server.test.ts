@@ -49,22 +49,21 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(state.nodeId).toBe('server-master-test');
       expect(state.yearMonth).toBe('2026-11');
       expect(state.currentDate).toBe('2026-11-12');
-      expect(state.accounts.length).toBeGreaterThanOrEqual(8);
-      expect(state.budgetStatus.pools.length).toBe(6);
+      expect(state.budgetStatus.pools.length).toBe(4);
       expect(state.transactions).toEqual([]);
       expect(state.pendingFxTransactions).toEqual([]);
       expect(state.vouchers.length).toBe(2);
       expect(state.fixedAssets.length).toBe(2);
       expect(state.metadata.categories.length).toBe(14);
       expect(state.metadata.projectTags.length).toBe(3);
-      expect(state.metadata.recurringRules.length).toBe(3);
+      expect(state.metadata.recurringRules.length).toBe(2);
       expect(state.conflicts).toEqual([]);
       expect(state.oplogCount).toBe(0);
       expect(state.latestHlc).toBeNull();
     });
 
     it('should preview DSL calculation without modifying database', async () => {
-      const dsl = '麦当劳巨无霸 35.5-10 #饮食 @主力银联卡';
+      const dsl = '麦当劳巨无霸 35.5-10 #饮食';
       const previewRes = await server.inject({
         method: 'POST',
         url: '/api/dsl/preview',
@@ -76,7 +75,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(parsed.total_gross).toBe('35.50');
       expect(parsed.platform_discount).toBe('10.00');
       expect(parsed.total_net).toBe('25.50');
-      expect(parsed.account_id).toBe('ACC_UNION_MAIN');
       expect(parsed.items.length).toBe(1);
       expect(parsed.items[0].item_net).toBe('25.50');
 
@@ -134,7 +132,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(tx.header.total_gross).toBe('35.50');
       expect(tx.header.platform_discount).toBe('10.00');
       expect(tx.header.total_net).toBe('25.50');
-      expect(tx.header.account_id).toBe('ACC_UNION_MAIN');
 
       // 验证全量状态已更新
       const stateRes = await server.inject({
@@ -144,11 +141,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(stateRes.body.transactions.length).toBe(1);
       expect(stateRes.body.oplogCount).toBe(1);
       expect(stateRes.body.latestHlc).toBeDefined();
-
-      const unionCard = stateRes.body.accounts.find(
-        (a: any) => a.id === 'ACC_UNION_MAIN'
-      );
-      expect(unionCard.book_balance).toBe('-25.50');
 
       const dailyPool = stateRes.body.budgetStatus.pools.find(
         (p: any) => p.pool_id === 'POOL_DAILY'
@@ -164,7 +156,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
           header: {
             tx_date: '2026-11-12',
             tx_type: 'EXPENSE',
-            account_id: 'ACC_UNION_MAIN',
             total_gross: '20.00',
             platform_discount: '0.00',
             payment_discount: '0.00',
@@ -197,7 +188,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
           header: {
             tx_date: '2026-11-12',
             tx_type: 'EXPENSE',
-            account_id: 'ACC_UNION_MAIN',
             total_gross: '20.00',
             total_net: '20.00',
           },
@@ -224,7 +214,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
   describe('2. Mastercard FX Hold & Settlement Lifecycle', () => {
     it('should handle Mastercard FX 102% hold and settle confirmation', async () => {
       // 1. 录入外币交易: 10.37 USD, 冻结 76.52 CNY
-      const dsl = 'Porkbun域名续费 $10.37 冻结76.52 #数字服务 @万事达A';
+      const dsl = 'Porkbun域名续费 $10.37 冻结76.52 #数字服务';
       const recordRes = await server.inject({
         method: 'POST',
         url: '/api/transactions/dsl',
@@ -247,10 +237,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(state1.pendingFxTransactions.length).toBe(1);
       expect(state1.pendingFxTransactions[0].header.id).toBe(tx.header.id);
 
-      const fxCard1 = state1.accounts.find((a: any) => a.id === 'ACC_MC_DEBIT_A');
-      expect(fxCard1.frozen_amount).toBe('76.52');
-      expect(fxCard1.available_balance).toBe('-76.52');
-
       // 2. 清算确认：银行正式清算金额 75.25 元 (1% 返现 0.75，最终净扣 74.50)
       const settleRes = await server.inject({
         method: 'POST',
@@ -269,7 +255,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(settledTx.header.total_net).toBe('74.50');
       expect(settledTx.header.settled_at).toBe('2026-11-14T10:00:00Z');
 
-      // 验证清算后待清算列表清空，冻结金额归零
+      // 验证清算后待清算列表清空
       const state2 = (
         await server.inject({
           method: 'GET',
@@ -277,11 +263,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         })
       ).body;
       expect(state2.pendingFxTransactions.length).toBe(0);
-
-      const fxCard2 = state2.accounts.find((a: any) => a.id === 'ACC_MC_DEBIT_A');
-      expect(fxCard2.frozen_amount).toBe('0.00');
-      expect(fxCard2.book_balance).toBe('-74.50');
-      expect(fxCard2.available_balance).toBe('-74.50');
     });
 
     it('should return error for non-existent or already settled fx transactions', async () => {
@@ -311,28 +292,15 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
   });
 
   // ==========================================================================
-  // 测试 3：购券、市值更新、结余划转与预算滚存
+  // 测试 3：购券与预算月末滚存
   // ==========================================================================
-  describe('3. Voucher Buy, Market Value, Sweep-to-Fund & Month Rollover', () => {
-    it('should update initial balance and purchase voucher', async () => {
-      // 1. 设置主力银联卡初始余额 3000 元
-      const balRes = await server.inject({
-        method: 'POST',
-        url: '/api/accounts/ACC_UNION_MAIN/initial-balance',
-        body: { initialBalance: '3000.00' },
-      });
-      expect(balRes.statusCode).toBe(200);
-      const unionAcc = balRes.body.accounts.find(
-        (a: any) => a.id === 'ACC_UNION_MAIN'
-      );
-      expect(unionAcc.book_balance).toBe('3000.00');
-
-      // 2. 购买瑞幸 20 元立减券 (实付 9.90)
+  describe('3. Voucher Buy & Month Rollover', () => {
+    it('should purchase voucher and record VOUCHER_BUY cost transaction', async () => {
+      // 购买瑞幸 20 元立减券 (实付 9.90)
       const buyRes = await server.inject({
         method: 'POST',
         url: '/api/vouchers/buy',
         body: {
-          accountId: 'ACC_UNION_MAIN',
           title: '瑞幸咖啡20元立减券',
           voucherType: 'PREPAID_COUPON',
           faceValue: '20.00',
@@ -347,59 +315,25 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(buyRes.body.transaction.header.tx_type).toBe('VOUCHER_BUY');
       expect(buyRes.body.transaction.header.total_net).toBe('9.90');
 
-      // 验证扣款后的银联卡余额: 3000 - 9.90 = 2990.10
       const state = (
         await server.inject({
           method: 'GET',
           url: '/api/state',
         })
       ).body;
-      const card = state.accounts.find((a: any) => a.id === 'ACC_UNION_MAIN');
-      expect(card.book_balance).toBe('2990.10');
       expect(state.vouchers.length).toBe(3);
     });
 
-    it('should update investment market value and calculate unrealized PnL', async () => {
-      // 投资账户转入本金 1000 元
-      await server.inject({
-        method: 'POST',
-        url: '/api/accounts/ACC_ALIPAY_ETF/initial-balance',
-        body: { initialBalance: '1000.00' },
-      });
-
-      // 更新最新市值为 1250.00 元
-      const mvRes = await server.inject({
-        method: 'POST',
-        url: '/api/accounts/ACC_ALIPAY_ETF/market-value',
-        body: { marketValue: '1250.00' },
-      });
-      expect(mvRes.statusCode).toBe(200);
-      expect(mvRes.body.account.market_value).toBe('1250.00');
-      expect(mvRes.body.account.unrealized_pnl).toBe('250.00');
-    });
-
-    it('should sweep daily pool surplus to sinking fund and execute rollover', async () => {
+    it('should execute month rollover preserving accumulated pool surplus', async () => {
       // 消费 150 元，高频池总额 650，剩余 500 元
       await server.inject({
         method: 'POST',
         url: '/api/transactions/dsl',
         body: {
-          rawText: '食堂大餐 150 #饮食 @主力银联卡',
+          rawText: '食堂大餐 150 #饮食',
           txDate: '2026-11-12',
         },
       });
-
-      // 划转高频池剩余 500 元至专项基金池
-      const sweepRes = await server.inject({
-        method: 'POST',
-        url: '/api/budgets/sweep-to-fund',
-        body: { yearMonth: '2026-11' },
-      });
-      expect(sweepRes.statusCode).toBe(200);
-      expect(sweepRes.body.sweptAmount).toBe('500.00');
-      expect(sweepRes.body.dailyPoolRemaining).toBe('0.00');
-      // 专项基金初始 800 + 500 = 1300
-      expect(sweepRes.body.fundPoolTotal).toBe('1300.00');
 
       // 执行月末滚存至 2026-12
       const rolloverRes = await server.inject({
@@ -408,13 +342,13 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         body: { fromYearMonth: '2026-11', toYearMonth: '2026-12' },
       });
       expect(rolloverRes.statusCode).toBe(200);
-      expect(rolloverRes.body.pools.length).toBe(6);
+      expect(rolloverRes.body.pools.length).toBe(4);
 
-      const fundDec = rolloverRes.body.pools.find(
-        (p: any) => p.pool_id === 'POOL_FUND'
+      const dailyDec = rolloverRes.body.pools.find(
+        (p: any) => p.pool_id === 'POOL_DAILY'
       );
-      // POOL_FUND ACCUMULATE: 滚存 1300.00
-      expect(fundDec.rollover_from_prev).toBe('1300.00');
+      // POOL_DAILY ACCUMULATE: 滚存剩余 500.00
+      expect(dailyDec.rollover_from_prev).toBe('500.00');
     });
   });
 
@@ -425,13 +359,9 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
     it('should sync changes between multiple clients and handle retries idempotently', async () => {
       // 客户端 1 本地离线记账
       const client1 = new LedgerRepository(':memory:', 'node-client-1');
-      client1.setAccountInitialBalance('ACC_UNION_MAIN', '5000.00');
-      client1.recordFromDsl(
-        '必胜客比萨 88.00 #饮食 @主力银联卡',
-        '2026-11-10'
-      );
+      client1.recordFromDsl('必胜客比萨 88.00 #饮食', '2026-11-10');
       const opsClient1 = client1.getOpLogs();
-      expect(opsClient1.length).toBe(2);
+      expect(opsClient1.length).toBe(1);
 
       // 客户端 1 同步至服务端
       const exchange1 = await server.inject({
@@ -444,22 +374,21 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         },
       });
       expect(exchange1.statusCode).toBe(200);
-      expect(exchange1.body.appliedCount).toBe(2);
+      expect(exchange1.body.appliedCount).toBe(1);
       expect(exchange1.body.conflicts).toEqual([]);
 
       // 验证服务端状态已吸收 Client 1
       const stateServer1 = (
         await server.inject({
           method: 'GET',
-          url: '/api/state',
+          url: '/api/state?yearMonth=2026-11&currentDate=2026-11-12',
         })
       ).body;
-      const unionCard = stateServer1.accounts.find(
-        (a: any) => a.id === 'ACC_UNION_MAIN'
+      const dailyPool = stateServer1.budgetStatus.pools.find(
+        (p: any) => p.pool_id === 'POOL_DAILY'
       );
-      // 5000 - 88 = 4912.00
-      expect(unionCard.book_balance).toBe('4912.00');
-      expect(stateServer1.oplogCount).toBe(2);
+      expect(dailyPool.spent_net).toBe('88.00');
+      expect(stateServer1.oplogCount).toBe(1);
 
       // 网络重传测试：Client 1 模拟超时重试，连续再次发送同一批 ops 2 次（共 3 次）
       for (let retry = 0; retry < 2; retry++) {
@@ -475,18 +404,18 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         expect(retryRes.statusCode).toBe(200);
       }
 
-      // 验证绝对幂等：服务端余额依然是 4912.00，绝不重复扣款！
+      // 验证绝对幂等：服务端支出与 oplog 数量绝不重复累加
       const stateServerRetry = (
         await server.inject({
           method: 'GET',
-          url: '/api/state',
+          url: '/api/state?yearMonth=2026-11&currentDate=2026-11-12',
         })
       ).body;
-      const unionCardRetry = stateServerRetry.accounts.find(
-        (a: any) => a.id === 'ACC_UNION_MAIN'
+      const dailyPoolRetry = stateServerRetry.budgetStatus.pools.find(
+        (p: any) => p.pool_id === 'POOL_DAILY'
       );
-      expect(unionCardRetry.book_balance).toBe('4912.00');
-      expect(stateServerRetry.oplogCount).toBe(2);
+      expect(dailyPoolRetry.spent_net).toBe('88.00');
+      expect(stateServerRetry.oplogCount).toBe(1);
 
       // 客户端 2 接入并增量拉取服务端操作
       const client2 = new LedgerRepository(':memory:', 'node-client-2');
@@ -500,15 +429,14 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         },
       });
       expect(exchange2.statusCode).toBe(200);
-      expect(exchange2.body.serverOps.length).toBe(2);
+      expect(exchange2.body.serverOps.length).toBe(1);
 
       // 客户端 2 应用远端日志并验证与服务端强一致
       client2.applyRemoteOpLogs(exchange2.body.serverOps);
-      const client2Dashboard = client2.getAccountDashboard();
-      const client2Union = client2Dashboard.find(
-        (a) => a.id === 'ACC_UNION_MAIN'
-      );
-      expect(client2Union?.book_balance).toBe('4912.00');
+      const client2Daily = client2
+        .getMonthlyBudgetStatus('2026-11')
+        .pools.find((p) => p.pool_id === 'POOL_DAILY');
+      expect(client2Daily?.spent_net).toBe('88.00');
       expect(client2.getRecentTransactions(10).length).toBe(1);
     });
   });
@@ -649,30 +577,17 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
     it('should recover 100% state from client bundle after server database crash', async () => {
       // 1. 客户端建立丰富的账本状态
       const client = new LedgerRepository(':memory:', 'client-dr-tester');
-      client.setAccountInitialBalance('ACC_UNION_MAIN', '6000.00');
-      client.setAccountInitialBalance('ACC_HUABEI', '-400.00');
 
       // 录入多笔交易
-      client.recordFromDsl(
-        '聚餐 120.00 #饮食 @主力银联卡',
-        '2026-11-05'
-      );
-      client.recordFromDsl(
-        '冬季保暖卫衣 200.00 #服饰 @主力银联卡',
-        '2026-11-06'
-      );
-      client.recordFromDsl(
-        '还款 @花呗 400 从 @主力银联卡',
-        '2026-11-07'
-      );
+      client.recordFromDsl('聚餐 120.00 #饮食', '2026-11-05');
+      client.recordFromDsl('冬季保暖卫衣 200.00 #服饰', '2026-11-06');
+      client.recordFromDsl('咖啡 35.00 #饮食', '2026-11-07');
       client.buyVoucher({
-        accountId: 'ACC_UNION_MAIN',
         title: '星巴克大杯饮品立减券',
         faceValue: '35.00',
         acquireCost: '18.80',
         minSpend: '35.00',
       });
-      client.updateInvestmentMarketValue('ACC_ALIPAY_ETF', '1800.00');
 
       // 2. 客户端向服务端同步全量操作日志
       const initialExchange = await server.inject({
@@ -695,15 +610,9 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       ).body;
       const initialEpoch = server.serverEpochId;
 
-      expect(preCrashState.oplogCount).toBeGreaterThanOrEqual(6);
+      expect(preCrashState.oplogCount).toBeGreaterThanOrEqual(4);
       expect(preCrashState.transactions.length).toBeGreaterThanOrEqual(4);
       expect(preCrashState.vouchers.length).toBe(3); // 2 默认 + 1 新购
-
-      const preUnionCard = preCrashState.accounts.find(
-        (a: any) => a.id === 'ACC_UNION_MAIN'
-      );
-      // 6000 - 120 - 200 - 400 - 18.80 = 5261.20
-      expect(preUnionCard.book_balance).toBe('5261.20');
 
       // 3. 模拟服务器硬盘物理损坏/空库重启！(/api/sync/simulate-crash)
       const crashRes = await server.inject({
@@ -726,11 +635,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(wipedState.transactions).toEqual([]);
       expect(wipedState.latestHlc).toBeNull();
 
-      const wipedUnionCard = wipedState.accounts.find(
-        (a: any) => a.id === 'ACC_UNION_MAIN'
-      );
-      expect(wipedUnionCard.book_balance).toBe('0.00');
-
       // 4. 客户端检测到服务器纪元变化/炸机，调用 /api/sync/reseed 执行全量反向冷备恢复
       const clientBundle = client.exportFullSyncBundle();
       const reseedRes = await server.inject({
@@ -750,19 +654,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         })
       ).body;
 
-      // 账户余额 100% 恢复
-      const recoveredUnion = recoveredState.accounts.find(
-        (a: any) => a.id === 'ACC_UNION_MAIN'
-      );
-      expect(recoveredUnion.book_balance).toBe('5261.20');
-      expect(recoveredUnion.available_balance).toBe('5261.20');
-
-      const recoveredHuabei = recoveredState.accounts.find(
-        (a: any) => a.id === 'ACC_HUABEI'
-      );
-      // -400 + 400 = 0.00
-      expect(recoveredHuabei.book_balance).toBe('0.00');
-
       // 流水明细 100% 恢复
       expect(recoveredState.transactions.length).toBe(
         preCrashState.transactions.length
@@ -777,6 +668,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         (p: any) => p.pool_id === 'POOL_DAILY'
       );
       expect(recoveredDailyPool.spent_net).toBe(preDailyPool.spent_net);
+      expect(recoveredDailyPool.spent_net).toBe('155.00');
 
       // 备份导出接口可用性验证
       const exportRes = await server.inject({
@@ -784,7 +676,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         url: '/api/backup/export',
       });
       expect(exportRes.statusCode).toBe(200);
-      expect(exportRes.body.accounts.length).toBeGreaterThanOrEqual(8);
       expect(exportRes.body.oplogs.length).toBe(clientBundle.oplogs.length);
     });
   });
@@ -840,7 +731,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         // 3. SPA 任意深层前端路由回退到 index.html
         const spaRes = await realServer.inject({
           method: 'GET',
-          url: '/dashboard/accounts/ACC_UNION_MAIN',
+          url: '/dashboard/budgets',
         });
         expect(spaRes.statusCode).toBe(200);
         expect(spaRes.body).toContain('Ledger SPA App');
@@ -851,7 +742,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
           method: 'POST',
           url: '/api/transactions/dsl',
           body: JSON.stringify({
-            rawText: '早餐 15.00 #饮食 @主力银联卡',
+            rawText: '早餐 15.00 #饮食',
             txDate: '2026-11-12',
           }),
         });
@@ -875,7 +766,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         body: {
           tx_type: 'EXPENSE',
           tx_date: '2026-11-12',
-          account_id: 'ACC_UNION_MAIN',
           amount: '88.00',
           discount: '8.00',
           category_id: 'CAT_FOOD',
@@ -909,40 +799,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       });
       expect(deleteRes.statusCode).toBe(200);
       expect(deleteRes.body.deleted).toBe(true);
-    });
-
-    it('should support account upsert, balance calibration, and safe delete', async () => {
-      // 1. POST /api/accounts
-      const accRes = await server.inject({
-        method: 'POST',
-        url: '/api/accounts',
-        body: {
-          id: 'ACC_TEST_WALLET',
-          name: '测试数字钱包',
-          account_role: 'DEBIT_MAIN',
-          initial_balance: '100.00',
-          is_default_pay: true,
-        },
-      });
-      expect(accRes.statusCode).toBe(200);
-      expect(accRes.body.account.name).toBe('测试数字钱包');
-
-      // 2. POST /api/accounts/:id/calibrate
-      const calibRes = await server.inject({
-        method: 'POST',
-        url: '/api/accounts/ACC_TEST_WALLET/calibrate',
-        body: { targetBookBalance: '250.00' },
-      });
-      expect(calibRes.statusCode).toBe(200);
-      expect(calibRes.body.account.book_balance).toBe('250.00');
-
-      // 3. DELETE /api/accounts/:id
-      const delRes = await server.inject({
-        method: 'DELETE',
-        url: '/api/accounts/ACC_TEST_WALLET',
-      });
-      expect(delRes.statusCode).toBe(200);
-      expect(delRes.body.success).toBe(true);
     });
 
     it('should support budget pools, categories, project tags, vouchers, and recurring rules CRUD', async () => {
@@ -1007,7 +863,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
           title: '服务器托管月付',
           rule_type: 'FIXED_EXPENSE',
           amount: '99.00',
-          account_id: 'ACC_UNION_MAIN',
           budget_pool_id: 'POOL_FIXED',
         },
       });
@@ -1025,10 +880,10 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
   });
 
   // ==========================================================================
-  // 测试 8：Stage 13 自定义实体（账户、资金池、心愿标签、卡券）同步与全量灾备恢复免外键冲突
+  // 测试 8：Stage 13 自定义实体（资金池、心愿标签、卡券）同步与全量灾备恢复免外键冲突
   // ==========================================================================
   describe('8. Stage 13 Custom Entities Sync & Reseed Without FK Errors', () => {
-    it('能够成功同步 (POST /api/sync/exchange) 和灾备重置 (POST /api/sync/reseed) 包含自定义账户、心愿目标、资金池的完整流水', async () => {
+    it('能够成功同步 (POST /api/sync/exchange) 和灾备重置 (POST /api/sync/reseed) 包含心愿目标、资金池的完整流水', async () => {
       const client = new LedgerRepository(':memory:', 'client-stage13-tester');
 
       // 1. 创建自定义资金池
@@ -1056,32 +911,20 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         linked_pool_id: 'POOL_CUSTOM_EQUIP',
       });
 
-      // 4. 创建自定义账户
-      client.upsertAccount({
-        id: 'ACC_CUSTOM_SAVINGS',
-        name: '自定义工行储蓄卡',
-        account_role: 'DEBIT_MAIN',
-        currency: 'CNY',
-        initial_balance: '5000.00',
-      });
-
-      // 5. 购买一张立减金
+      // 4. 购买一张立减金
       const { voucher } = client.buyVoucher({
         title: '数码外设50元抵扣券',
         voucherType: 'PREPAID_COUPON',
         faceValue: '50.00',
         acquireCost: '20.00',
         minSpend: '100.00',
-        accountId: 'ACC_CUSTOM_SAVINGS',
       });
 
-      // 6. 记一笔引用自定义账户、自定义分类、自定义资金池与自定义心愿标签的交易
+      // 5. 记一笔引用自定义分类、自定义资金池与自定义心愿标签的交易
       client.recordTransaction({
         header: {
           tx_date: '2026-11-12',
           tx_type: 'EXPENSE',
-          account_id: 'ACC_CUSTOM_SAVINGS',
-          target_account_id: null,
           total_gross: '120.00',
           platform_discount: '0.00',
           payment_discount: '0.00',
@@ -1110,7 +953,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         ],
       });
 
-      // 7. 测试 POST /api/sync/exchange：增量同步操作日志到服务端
+      // 6. 测试 POST /api/sync/exchange：增量同步操作日志到服务端
       const exchangeRes = await server.inject({
         method: 'POST',
         url: '/api/sync/exchange',
@@ -1125,14 +968,14 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(exchangeRes.body.error).toBeUndefined();
       expect(exchangeRes.body.appliedCount).toBeGreaterThan(0);
 
-      // 8. 模拟服务端灾备重置：POST /api/sync/simulate-crash
+      // 7. 模拟服务端灾备重置：POST /api/sync/simulate-crash
       const crashRes = await server.inject({
         method: 'POST',
         url: '/api/sync/simulate-crash',
       });
       expect(crashRes.statusCode).toBe(200);
 
-      // 9. 测试 POST /api/sync/reseed：使用 client.exportFullSyncBundle() 恢复空库
+      // 8. 测试 POST /api/sync/reseed：使用 client.exportFullSyncBundle() 恢复空库
       const clientBundle = client.exportFullSyncBundle();
       const reseedRes = await server.inject({
         method: 'POST',
@@ -1144,19 +987,18 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(reseedRes.body.error).toBeUndefined();
       expect(reseedRes.body.restored).toBe(true);
 
-      // 10. 验证恢复后的服务端状态，确保无外键约束阻断且数据全部完整
+      // 9. 验证恢复后的服务端状态，确保无外键约束阻断且数据全部完整
       const stateRes = await server.inject({
         method: 'GET',
         url: '/api/state?yearMonth=2026-11&currentDate=2026-11-12',
       });
       expect(stateRes.statusCode).toBe(200);
 
-      const customAcc = stateRes.body.accounts.find(
-        (a: any) => a.id === 'ACC_CUSTOM_SAVINGS'
+      const customTag = stateRes.body.metadata.projectTags.find(
+        (t: any) => t.id === 'TAG_CUSTOM_HHKB'
       );
-      expect(customAcc).toBeDefined();
-      expect(customAcc.name).toBe('自定义工行储蓄卡');
-      expect(customAcc.book_balance).toBe('4860.00');
+      expect(customTag).toBeDefined();
+      expect(customTag.linked_pool_id).toBe('POOL_CUSTOM_EQUIP');
 
       const customVoucher = stateRes.body.vouchers.find(
         (v: any) => v.id === voucher.id

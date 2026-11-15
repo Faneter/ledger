@@ -1,0 +1,3168 @@
+{
+  "schema_version": "2.0-account-free",
+  "generated_from": [
+    "packages/core/src/money.ts",
+    "packages/core/src/allocation.ts",
+    "packages/core/src/dsl-parser.ts",
+    "packages/core/src/mastercard-fx.ts",
+    "packages/db/src/ledger-repository.ts",
+    "apps/client/src/sync/local-replica.ts"
+  ],
+  "meta": {
+    "rounding_mode": "ROUND_HALF_UP",
+    "decimal_precision": 28,
+    "default_fx_rates": {
+      "CNY": "1.000000",
+      "USD": "7.200000",
+      "EUR": "7.800000",
+      "JPY": "0.048000",
+      "GBP": "9.100000",
+      "HKD": "0.920000"
+    },
+    "seed_budget_pools": [
+      {
+        "id": "POOL_FIXED",
+        "name": "固定刚需与定投池",
+        "pool_type": "FIXED",
+        "is_monthly_budget": true,
+        "rollover_strategy": "ACCUMULATE",
+        "description": null,
+        "sort_order": 10
+      },
+      {
+        "id": "POOL_DAILY",
+        "name": "高频饮食与洗护池",
+        "pool_type": "DAILY",
+        "is_monthly_budget": true,
+        "rollover_strategy": "ACCUMULATE",
+        "description": null,
+        "sort_order": 20
+      },
+      {
+        "id": "POOL_FLEX",
+        "name": "月度弹性发展池",
+        "pool_type": "FLEX",
+        "is_monthly_budget": true,
+        "rollover_strategy": "ACCUMULATE",
+        "description": null,
+        "sort_order": 30
+      },
+      {
+        "id": "POOL_EMERGENCY",
+        "name": "医疗与突发应急池",
+        "pool_type": "EMERGENCY",
+        "is_monthly_budget": true,
+        "rollover_strategy": "ACCUMULATE",
+        "description": null,
+        "sort_order": 40
+      }
+    ],
+    "seed_categories": [
+      {
+        "id": "CAT_FOOD",
+        "parent_id": null,
+        "name": "餐饮零食与水饮",
+        "default_pool_id": "POOL_DAILY",
+        "icon_name": null,
+        "keywords": "饭卡,食堂,华莱士,塔斯汀,牛奶,芬达,可乐,面,面包,水果,甘果子,鱼干",
+        "sort_order": 10
+      },
+      {
+        "id": "CAT_CLEAN",
+        "parent_id": null,
+        "name": "日常洗护与消耗",
+        "default_pool_id": "POOL_DAILY",
+        "icon_name": null,
+        "keywords": "洗衣服,洗衣液,纸巾,抽纸,牙线,牙膏,洗发水",
+        "sort_order": 20
+      },
+      {
+        "id": "CAT_TELECOM",
+        "parent_id": null,
+        "name": "通信话费与理发",
+        "default_pool_id": "POOL_FIXED",
+        "icon_name": null,
+        "keywords": "话费,移动,电信,联通,理发,剪头",
+        "sort_order": 30
+      },
+      {
+        "id": "CAT_GAME_FIXED",
+        "parent_id": null,
+        "name": "游戏固定大小月卡",
+        "default_pool_id": "POOL_FIXED",
+        "icon_name": null,
+        "keywords": "小月卡,大月卡,空月祝福,珍珠纪行",
+        "sort_order": 40
+      },
+      {
+        "id": "CAT_CLOTH",
+        "parent_id": null,
+        "name": "服饰鞋帽与床品",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "短袖,裤子,内裤,袜子,床单,被套,鞋子",
+        "sort_order": 50
+      },
+      {
+        "id": "CAT_DAILY_GOODS",
+        "parent_id": null,
+        "name": "宿舍日用百货",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "衣架,挂钩,泡面碗,指甲剪,卷尺,理线器,书架,电池,打气筒",
+        "sort_order": 60
+      },
+      {
+        "id": "CAT_EE_DEV",
+        "parent_id": null,
+        "name": "电子电路与开发",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "MSP430,MSPM0,开发板,J-Link,示波器,探头,排针,电容,电阻,焊接",
+        "sort_order": 70
+      },
+      {
+        "id": "CAT_DIGITAL_SUB",
+        "parent_id": null,
+        "name": "软件订阅与外设",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "域名,Porkbun,阿里云,MOJITEST,鼠标垫,数据线,磁吸镜片,Pico",
+        "sort_order": 80
+      },
+      {
+        "id": "CAT_STUDY_PRINT",
+        "parent_id": null,
+        "name": "打印与学习资料",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "打印,复印,教材,题库,文具",
+        "sort_order": 90
+      },
+      {
+        "id": "CAT_TRAFFIC",
+        "parent_id": null,
+        "name": "日常市内交通",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "公交,地铁,单车,打车",
+        "sort_order": 100
+      },
+      {
+        "id": "CAT_MEDICAL",
+        "parent_id": null,
+        "name": "医疗买药与保健",
+        "default_pool_id": "POOL_EMERGENCY",
+        "icon_name": null,
+        "keywords": "维生素,溃疡,医院,门诊,冷冻,碘伏,棉签,药",
+        "sort_order": 110
+      },
+      {
+        "id": "CAT_REPAIR",
+        "parent_id": null,
+        "name": "突发损坏与维修",
+        "default_pool_id": "POOL_EMERGENCY",
+        "icon_name": null,
+        "keywords": "修车,内外胎,卡槽,维修,发霉替换",
+        "sort_order": 120
+      },
+      {
+        "id": "CAT_EXAM_CERT",
+        "parent_id": null,
+        "name": "考证报名与差旅",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "JLPT,N2,报名费,护照,港澳通行证,青旅,考点住宿",
+        "sort_order": 130
+      },
+      {
+        "id": "CAT_MAJOR_ASSET",
+        "parent_id": null,
+        "name": "数码大件购置",
+        "default_pool_id": "POOL_FLEX",
+        "icon_name": null,
+        "keywords": "iPhone,手机,机械硬盘,希捷,固态硬盘,显示器",
+        "sort_order": 140
+      }
+    ],
+    "seed_project_tags": [
+      {
+        "id": "TAG_JLPT_N2",
+        "name": "JLPT_N2考试专项",
+        "tag_type": "PROJECT",
+        "target_budget": "800.00",
+        "linked_pool_id": "POOL_FLEX",
+        "is_active": true
+      },
+      {
+        "id": "TAG_MCU_LAB",
+        "name": "单片机硬件实验",
+        "tag_type": "SCENE",
+        "target_budget": null,
+        "linked_pool_id": "POOL_FLEX",
+        "is_active": true
+      },
+      {
+        "id": "TAG_STOCK_EAT",
+        "name": "靠存货/刷饭卡度日",
+        "tag_type": "STOCK_CONSUME",
+        "target_budget": null,
+        "linked_pool_id": "POOL_DAILY",
+        "is_active": true
+      }
+    ]
+  },
+  "suites": {
+    "money_rounding_and_helpers": [
+      {
+        "id": "round_half_up_pos_1",
+        "fn": "roundCny",
+        "input": "2.345",
+        "expected": "2.35"
+      },
+      {
+        "id": "round_half_up_pos_2",
+        "fn": "roundCny",
+        "input": "2.355",
+        "expected": "2.36"
+      },
+      {
+        "id": "round_half_up_neg_1",
+        "fn": "roundCny",
+        "input": "-2.345",
+        "expected": "-2.35"
+      },
+      {
+        "id": "round_rate_6_dec",
+        "fn": "roundRate",
+        "input": "31.2000000 / 4.35",
+        "expected": "7.172414"
+      },
+      {
+        "id": "sum_cny_full_precision_then_round",
+        "fn": "sumCny",
+        "input": [
+          "0.004",
+          "0.004",
+          "0.004"
+        ],
+        "expected": "0.01"
+      },
+      {
+        "id": "equals_cny_true",
+        "fn": "equalsCny",
+        "input": [
+          "10.004",
+          "10.00"
+        ],
+        "expected": true
+      },
+      {
+        "id": "generate_voucher_title_prepaid",
+        "fn": "generateVoucherTitle",
+        "input": {
+          "voucherType": "PREPAID_COUPON",
+          "faceValue": "10.00",
+          "minSpend": "10.01",
+          "acquireCost": "5.99"
+        },
+        "expected": "满10.01减10立减金"
+      },
+      {
+        "id": "generate_voucher_title_free_no_threshold",
+        "fn": "generateVoucherTitle",
+        "input": {
+          "voucherType": "FREE_COUPON",
+          "faceValue": "5.50",
+          "minSpend": "0.00",
+          "acquireCost": "0.00"
+        },
+        "expected": "5.5元无门槛优惠券"
+      }
+    ],
+    "math_formula_eval": [
+      {
+        "id": "plain_integer",
+        "input": {
+          "expr": "28"
+        },
+        "expected": {
+          "gross": "28.00",
+          "discount": "0.00",
+          "net": "28.00"
+        }
+      },
+      {
+        "id": "inline_subtraction_discount",
+        "input": {
+          "expr": "16.8-0.15"
+        },
+        "expected": {
+          "gross": "16.80",
+          "discount": "0.15",
+          "net": "16.65"
+        }
+      },
+      {
+        "id": "top_level_subtraction_with_mul",
+        "input": {
+          "expr": "20-1.08*3"
+        },
+        "expected": {
+          "gross": "20.00",
+          "discount": "3.24",
+          "net": "16.76"
+        }
+      },
+      {
+        "id": "parenthesized_no_top_level_minus",
+        "input": {
+          "expr": "(15+5)*0.8"
+        },
+        "expected": {
+          "gross": "16.00",
+          "discount": "0.00",
+          "net": "16.00"
+        }
+      },
+      {
+        "id": "inner_minus_inside_parentheses_mul",
+        "input": {
+          "expr": "(20-2)*0.8"
+        },
+        "expected": {
+          "gross": "14.40",
+          "discount": "0.00",
+          "net": "14.40"
+        }
+      },
+      {
+        "id": "multi_top_level_plus_and_minus",
+        "input": {
+          "expr": "35+12.5-3.2*2+4-1.5"
+        },
+        "expected": {
+          "gross": "51.50",
+          "discount": "7.90",
+          "net": "43.60"
+        }
+      },
+      {
+        "id": "repeating_decimal_division",
+        "input": {
+          "expr": "100-10/3"
+        },
+        "expected": {
+          "gross": "100.00",
+          "discount": "3.33",
+          "net": "96.67"
+        }
+      },
+      {
+        "id": "unary_plus_and_decimal_rounding",
+        "input": {
+          "expr": "10.005+20.005"
+        },
+        "expected": {
+          "gross": "30.01",
+          "discount": "0.00",
+          "net": "30.01"
+        }
+      }
+    ],
+    "dsl_parser": [
+      {
+        "id": "dsl_single_inline_discount",
+        "input": {
+          "rawText": "咸蛋黄拌面 16.8-0.15 #饮食",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "16.80",
+          "platform_discount": "0.15",
+          "payment_discount": "0.00",
+          "total_net": "16.65",
+          "allocation_mode": "SINGLE",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "咸蛋黄拌面",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "16.80",
+              "allocated_discount": "0.15",
+              "item_net": "16.65",
+              "is_primary_item": true,
+              "raw_formula_expr": "16.8-0.15"
+            }
+          ],
+          "raw_input_text": "咸蛋黄拌面 16.8-0.15 #饮食",
+          "merchant_or_note": "咸蛋黄拌面"
+        }
+      },
+      {
+        "id": "dsl_multi_item_inline_formulas_no_override",
+        "input": {
+          "rawText": "咸蛋黄拌面 16.8-0.15 + 饭卡充值 20-1.08*3 #饮食",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "36.80",
+          "platform_discount": "3.39",
+          "payment_discount": "0.00",
+          "total_net": "33.41",
+          "allocation_mode": "MANUAL",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "咸蛋黄拌面",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "16.80",
+              "allocated_discount": "0.15",
+              "item_net": "16.65",
+              "is_primary_item": false,
+              "raw_formula_expr": "16.8-0.15"
+            },
+            {
+              "item_name": "饭卡充值",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "20.00",
+              "allocated_discount": "3.24",
+              "item_net": "16.76",
+              "is_primary_item": false,
+              "raw_formula_expr": "20-1.08*3"
+            }
+          ],
+          "raw_input_text": "咸蛋黄拌面 16.8-0.15 + 饭卡充值 20-1.08*3 #饮食",
+          "merchant_or_note": "咸蛋黄拌面 + 饭卡充值"
+        }
+      },
+      {
+        "id": "dsl_cross_pool_proportional_exact",
+        "input": {
+          "rawText": "测试1 20 #日常 + 测试2 10 #弹性 = 15",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "30.00",
+          "platform_discount": "0.00",
+          "payment_discount": "15.00",
+          "total_net": "15.00",
+          "allocation_mode": "PROPORTIONAL",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "测试1",
+              "category_id": "CAT_CLEAN",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "20.00",
+              "allocated_discount": "10.00",
+              "item_net": "10.00",
+              "is_primary_item": false,
+              "raw_formula_expr": "20"
+            },
+            {
+              "item_name": "测试2",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": null,
+              "item_gross": "10.00",
+              "allocated_discount": "5.00",
+              "item_net": "5.00",
+              "is_primary_item": false,
+              "raw_formula_expr": "10"
+            }
+          ],
+          "raw_input_text": "测试1 20 #日常 + 测试2 10 #弹性 = 15",
+          "merchant_or_note": "测试1 + 测试2"
+        }
+      },
+      {
+        "id": "dsl_cross_pool_proportional_3way_tail_diff",
+        "input": {
+          "rawText": "螺蛳粉 10 #饮食 + 抽纸 10 #日常 + 小药盒 10 #应急 = 20",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "30.00",
+          "platform_discount": "0.00",
+          "payment_discount": "10.00",
+          "total_net": "20.00",
+          "allocation_mode": "PROPORTIONAL",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "螺蛳粉",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "10.00",
+              "allocated_discount": "3.33",
+              "item_net": "6.67",
+              "is_primary_item": false,
+              "raw_formula_expr": "10"
+            },
+            {
+              "item_name": "抽纸",
+              "category_id": "CAT_CLEAN",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "10.00",
+              "allocated_discount": "3.33",
+              "item_net": "6.67",
+              "is_primary_item": false,
+              "raw_formula_expr": "10"
+            },
+            {
+              "item_name": "小药盒",
+              "category_id": "CAT_MEDICAL",
+              "budget_pool_id": "POOL_EMERGENCY",
+              "project_tag_id": null,
+              "item_gross": "10.00",
+              "allocated_discount": "3.34",
+              "item_net": "6.66",
+              "is_primary_item": false,
+              "raw_formula_expr": "10"
+            }
+          ],
+          "raw_input_text": "螺蛳粉 10 #饮食 + 抽纸 10 #日常 + 小药盒 10 #应急 = 20",
+          "merchant_or_note": "螺蛳粉 + 抽纸 + 小药盒"
+        }
+      },
+      {
+        "id": "dsl_cross_category_prime_weights_tail_diff",
+        "input": {
+          "rawText": "面包 7 #饮食 + 洗发水 11 #日常 + 鼠标垫 13 #弹性 = 25",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "31.00",
+          "platform_discount": "0.00",
+          "payment_discount": "6.00",
+          "total_net": "25.00",
+          "allocation_mode": "PROPORTIONAL",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "面包",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "7.00",
+              "allocated_discount": "1.35",
+              "item_net": "5.65",
+              "is_primary_item": false,
+              "raw_formula_expr": "7"
+            },
+            {
+              "item_name": "洗发水",
+              "category_id": "CAT_CLEAN",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "11.00",
+              "allocated_discount": "2.13",
+              "item_net": "8.87",
+              "is_primary_item": false,
+              "raw_formula_expr": "11"
+            },
+            {
+              "item_name": "鼠标垫",
+              "category_id": "CAT_DIGITAL_SUB",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": null,
+              "item_gross": "13.00",
+              "allocated_discount": "2.52",
+              "item_net": "10.48",
+              "is_primary_item": false,
+              "raw_formula_expr": "13"
+            }
+          ],
+          "raw_input_text": "面包 7 #饮食 + 洗发水 11 #日常 + 鼠标垫 13 #弹性 = 25",
+          "merchant_or_note": "面包 + 洗发水 + 鼠标垫"
+        }
+      },
+      {
+        "id": "dsl_primary_item_monopoly",
+        "input": {
+          "rawText": "*核心开发板 35 #电子电路与开发 + 凑单纸巾 15 #日常 = 40",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "50.00",
+          "platform_discount": "0.00",
+          "payment_discount": "10.00",
+          "total_net": "40.00",
+          "allocation_mode": "PRIMARY_ITEM",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "核心开发板",
+              "category_id": "CAT_EE_DEV",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": null,
+              "item_gross": "35.00",
+              "allocated_discount": "10.00",
+              "item_net": "25.00",
+              "is_primary_item": true,
+              "raw_formula_expr": "35"
+            },
+            {
+              "item_name": "凑单纸巾",
+              "category_id": "CAT_CLEAN",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "15.00",
+              "allocated_discount": "0.00",
+              "item_net": "15.00",
+              "is_primary_item": false,
+              "raw_formula_expr": "15"
+            }
+          ],
+          "raw_input_text": "*核心开发板 35 #电子电路与开发 + 凑单纸巾 15 #日常 = 40",
+          "merchant_or_note": "核心开发板 + 凑单纸巾"
+        }
+      },
+      {
+        "id": "dsl_project_tag_inheritance_and_override",
+        "input": {
+          "rawText": "N2词汇书 38 + N2真题 52 #N2 = 75",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "90.00",
+          "platform_discount": "0.00",
+          "payment_discount": "15.00",
+          "total_net": "75.00",
+          "allocation_mode": "PROPORTIONAL",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "N2词汇书",
+              "category_id": "CAT_EXAM_CERT",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": "TAG_JLPT_N2",
+              "item_gross": "38.00",
+              "allocated_discount": "6.33",
+              "item_net": "31.67",
+              "is_primary_item": false,
+              "raw_formula_expr": "38"
+            },
+            {
+              "item_name": "N2真题",
+              "category_id": "CAT_EXAM_CERT",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": "TAG_JLPT_N2",
+              "item_gross": "52.00",
+              "allocated_discount": "8.67",
+              "item_net": "43.33",
+              "is_primary_item": false,
+              "raw_formula_expr": "52"
+            }
+          ],
+          "raw_input_text": "N2词汇书 38 + N2真题 52 #N2 = 75",
+          "merchant_or_note": "N2词汇书 + N2真题"
+        }
+      },
+      {
+        "id": "dsl_inner_plus_not_split_when_followed_by_digit",
+        "input": {
+          "rawText": "食堂加餐 12+3.5 + 矿泉水 2 #饮食 = 15",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "17.50",
+          "platform_discount": "0.00",
+          "payment_discount": "2.50",
+          "total_net": "15.00",
+          "allocation_mode": "PROPORTIONAL",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "食堂加餐",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "15.50",
+              "allocated_discount": "2.21",
+              "item_net": "13.29",
+              "is_primary_item": false,
+              "raw_formula_expr": "12+3.5"
+            },
+            {
+              "item_name": "矿泉水",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "2.00",
+              "allocated_discount": "0.29",
+              "item_net": "1.71",
+              "is_primary_item": false,
+              "raw_formula_expr": "2"
+            }
+          ],
+          "raw_input_text": "食堂加餐 12+3.5 + 矿泉水 2 #饮食 = 15",
+          "merchant_or_note": "食堂加餐 + 矿泉水"
+        }
+      },
+      {
+        "id": "dsl_fx_explicit_hold_default_cashback",
+        "input": {
+          "rawText": "Porkbun域名 $4.35 冻结31.95 #数字服务",
+          "txDate": "2026-11-15",
+          "fxConfig": {
+            "defaultHoldRatio": "1.020",
+            "defaultCashbackRate": "0.0100"
+          }
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "31.32",
+          "platform_discount": "0.00",
+          "payment_discount": "0.31",
+          "total_net": "31.01",
+          "allocation_mode": "SINGLE",
+          "original_currency": "USD",
+          "original_amount": "4.35",
+          "exchange_rate": "7.200000",
+          "settlement_status": "PENDING_HOLD",
+          "hold_amount_cny": "31.95",
+          "fx_cashback_rate": "0.0100",
+          "is_fx_detected": true,
+          "items": [
+            {
+              "item_name": "Porkbun域名",
+              "category_id": "CAT_DIGITAL_SUB",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": null,
+              "item_gross": "31.32",
+              "allocated_discount": "0.31",
+              "item_net": "31.01",
+              "is_primary_item": true,
+              "raw_formula_expr": "$4.35"
+            }
+          ],
+          "raw_input_text": "Porkbun域名 $4.35 冻结31.95 #数字服务",
+          "merchant_or_note": "Porkbun域名"
+        }
+      },
+      {
+        "id": "dsl_fx_auto_hold_zero_cashback_usd",
+        "input": {
+          "rawText": "Cloud服务 $20 #数字服务",
+          "txDate": "2026-11-15",
+          "fxConfig": {
+            "defaultHoldRatio": "1.020",
+            "defaultCashbackRate": "0.0000"
+          }
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "144.00",
+          "platform_discount": "0.00",
+          "payment_discount": "0.00",
+          "total_net": "144.00",
+          "allocation_mode": "SINGLE",
+          "original_currency": "USD",
+          "original_amount": "20.00",
+          "exchange_rate": "7.200000",
+          "settlement_status": "PENDING_HOLD",
+          "hold_amount_cny": "146.88",
+          "fx_cashback_rate": "0.0000",
+          "is_fx_detected": true,
+          "items": [
+            {
+              "item_name": "Cloud服务",
+              "category_id": "CAT_DIGITAL_SUB",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": null,
+              "item_gross": "144.00",
+              "allocated_discount": "0.00",
+              "item_net": "144.00",
+              "is_primary_item": true,
+              "raw_formula_expr": "$20.00"
+            }
+          ],
+          "raw_input_text": "Cloud服务 $20 #数字服务",
+          "merchant_or_note": "Cloud服务"
+        }
+      },
+      {
+        "id": "dsl_fx_jpy_integer_amount_auto_hold",
+        "input": {
+          "rawText": "日本书店 6500 JPY #学习资料",
+          "txDate": "2026-11-15",
+          "fxConfig": {
+            "defaultHoldRatio": "1.020",
+            "defaultCashbackRate": "0.0100"
+          }
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "312.00",
+          "platform_discount": "0.00",
+          "payment_discount": "3.12",
+          "total_net": "308.88",
+          "allocation_mode": "SINGLE",
+          "original_currency": "JPY",
+          "original_amount": "6500",
+          "exchange_rate": "0.048000",
+          "settlement_status": "PENDING_HOLD",
+          "hold_amount_cny": "318.24",
+          "fx_cashback_rate": "0.0100",
+          "is_fx_detected": true,
+          "items": [
+            {
+              "item_name": "日本书店",
+              "category_id": "CAT_STUDY_PRINT",
+              "budget_pool_id": "POOL_FLEX",
+              "project_tag_id": null,
+              "item_gross": "312.00",
+              "allocated_discount": "3.12",
+              "item_net": "308.88",
+              "is_primary_item": true,
+              "raw_formula_expr": "JPY 6500"
+            }
+          ],
+          "raw_input_text": "日本书店 6500 JPY #学习资料",
+          "merchant_or_note": "日本书店"
+        }
+      },
+      {
+        "id": "dsl_legacy_at_account_marker_ignored",
+        "input": {
+          "rawText": "瑞幸咖啡 12.5 @花呗 #饮食",
+          "txDate": "2026-11-15",
+          "fxConfig": null
+        },
+        "expected": {
+          "tx_type": "EXPENSE",
+          "total_gross": "12.50",
+          "platform_discount": "0.00",
+          "payment_discount": "0.00",
+          "total_net": "12.50",
+          "allocation_mode": "SINGLE",
+          "original_currency": "CNY",
+          "original_amount": null,
+          "exchange_rate": "1.000000",
+          "settlement_status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "is_fx_detected": false,
+          "items": [
+            {
+              "item_name": "瑞幸咖啡",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "project_tag_id": null,
+              "item_gross": "12.50",
+              "allocated_discount": "0.00",
+              "item_net": "12.50",
+              "is_primary_item": true,
+              "raw_formula_expr": "12.5"
+            }
+          ],
+          "raw_input_text": "瑞幸咖啡 12.5 @花呗 #饮食",
+          "merchant_or_note": "瑞幸咖啡"
+        }
+      }
+    ],
+    "split_discount_allocation": [
+      {
+        "id": "alloc_proportional_exact_2way",
+        "fn": "allocateSplitDiscounts",
+        "input": {
+          "items": [
+            {
+              "name": "ItemA",
+              "gross": "20.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "ItemB",
+              "gross": "10.00",
+              "category_id": "CAT_DIGITAL_SUB",
+              "budget_pool_id": "POOL_FLEX"
+            }
+          ],
+          "totalNetPaid": "15.00",
+          "mode": "PROPORTIONAL"
+        },
+        "expected": [
+          {
+            "name": "ItemA",
+            "gross": "20.00",
+            "category_id": "CAT_FOOD",
+            "budget_pool_id": "POOL_DAILY",
+            "allocated_discount": "10.00",
+            "net": "10.00"
+          },
+          {
+            "name": "ItemB",
+            "gross": "10.00",
+            "category_id": "CAT_DIGITAL_SUB",
+            "budget_pool_id": "POOL_FLEX",
+            "allocated_discount": "5.00",
+            "net": "5.00"
+          }
+        ]
+      },
+      {
+        "id": "alloc_proportional_3way_indivisible_plus_1_tail",
+        "fn": "allocateSplitDiscounts",
+        "input": {
+          "items": [
+            {
+              "name": "A",
+              "gross": "10.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "B",
+              "gross": "10.00",
+              "category_id": "CAT_CLOTH",
+              "budget_pool_id": "POOL_FLEX"
+            },
+            {
+              "name": "C",
+              "gross": "10.00",
+              "category_id": "CAT_MEDICAL",
+              "budget_pool_id": "POOL_EMERGENCY"
+            }
+          ],
+          "totalNetPaid": "20.00",
+          "mode": "PROPORTIONAL"
+        },
+        "expected": [
+          {
+            "name": "A",
+            "gross": "10.00",
+            "category_id": "CAT_FOOD",
+            "budget_pool_id": "POOL_DAILY",
+            "allocated_discount": "3.33",
+            "net": "6.67"
+          },
+          {
+            "name": "B",
+            "gross": "10.00",
+            "category_id": "CAT_CLOTH",
+            "budget_pool_id": "POOL_FLEX",
+            "allocated_discount": "3.33",
+            "net": "6.67"
+          },
+          {
+            "name": "C",
+            "gross": "10.00",
+            "category_id": "CAT_MEDICAL",
+            "budget_pool_id": "POOL_EMERGENCY",
+            "allocated_discount": "3.34",
+            "net": "6.66"
+          }
+        ]
+      },
+      {
+        "id": "alloc_proportional_3way_indivisible_minus_1_tail",
+        "fn": "allocateSplitDiscounts",
+        "input": {
+          "items": [
+            {
+              "name": "A",
+              "gross": "10.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "B",
+              "gross": "10.00",
+              "category_id": "CAT_CLOTH",
+              "budget_pool_id": "POOL_FLEX"
+            },
+            {
+              "name": "C",
+              "gross": "10.00",
+              "category_id": "CAT_MEDICAL",
+              "budget_pool_id": "POOL_EMERGENCY"
+            }
+          ],
+          "totalNetPaid": "19.00",
+          "mode": "PROPORTIONAL"
+        },
+        "expected": [
+          {
+            "name": "A",
+            "gross": "10.00",
+            "category_id": "CAT_FOOD",
+            "budget_pool_id": "POOL_DAILY",
+            "allocated_discount": "3.67",
+            "net": "6.33"
+          },
+          {
+            "name": "B",
+            "gross": "10.00",
+            "category_id": "CAT_CLOTH",
+            "budget_pool_id": "POOL_FLEX",
+            "allocated_discount": "3.67",
+            "net": "6.33"
+          },
+          {
+            "name": "C",
+            "gross": "10.00",
+            "category_id": "CAT_MEDICAL",
+            "budget_pool_id": "POOL_EMERGENCY",
+            "allocated_discount": "3.66",
+            "net": "6.34"
+          }
+        ]
+      },
+      {
+        "id": "alloc_proportional_prime_weights",
+        "fn": "allocateSplitDiscounts",
+        "input": {
+          "items": [
+            {
+              "name": "Bread",
+              "gross": "7.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "Shampoo",
+              "gross": "11.00",
+              "category_id": "CAT_CLEAN",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "Mousepad",
+              "gross": "13.00",
+              "category_id": "CAT_DIGITAL_SUB",
+              "budget_pool_id": "POOL_FLEX"
+            }
+          ],
+          "totalNetPaid": "25.00",
+          "mode": "PROPORTIONAL"
+        },
+        "expected": [
+          {
+            "name": "Bread",
+            "gross": "7.00",
+            "category_id": "CAT_FOOD",
+            "budget_pool_id": "POOL_DAILY",
+            "allocated_discount": "1.35",
+            "net": "5.65"
+          },
+          {
+            "name": "Shampoo",
+            "gross": "11.00",
+            "category_id": "CAT_CLEAN",
+            "budget_pool_id": "POOL_DAILY",
+            "allocated_discount": "2.13",
+            "net": "8.87"
+          },
+          {
+            "name": "Mousepad",
+            "gross": "13.00",
+            "category_id": "CAT_DIGITAL_SUB",
+            "budget_pool_id": "POOL_FLEX",
+            "allocated_discount": "2.52",
+            "net": "10.48"
+          }
+        ]
+      },
+      {
+        "id": "alloc_primary_item_monopoly",
+        "fn": "allocateSplitDiscounts",
+        "input": {
+          "items": [
+            {
+              "name": "MCU",
+              "gross": "35.00",
+              "category_id": "CAT_EE_DEV",
+              "budget_pool_id": "POOL_FLEX",
+              "is_primary": true
+            },
+            {
+              "name": "Tissue",
+              "gross": "15.00",
+              "category_id": "CAT_CLEAN",
+              "budget_pool_id": "POOL_DAILY",
+              "is_primary": false
+            }
+          ],
+          "totalNetPaid": "40.00",
+          "mode": "PRIMARY_ITEM"
+        },
+        "expected": [
+          {
+            "name": "MCU",
+            "gross": "35.00",
+            "category_id": "CAT_EE_DEV",
+            "budget_pool_id": "POOL_FLEX",
+            "is_primary": true,
+            "allocated_discount": "10.00",
+            "net": "25.00"
+          },
+          {
+            "name": "Tissue",
+            "gross": "15.00",
+            "category_id": "CAT_CLEAN",
+            "budget_pool_id": "POOL_DAILY",
+            "is_primary": false,
+            "allocated_discount": "0.00",
+            "net": "15.00"
+          }
+        ]
+      },
+      {
+        "id": "alloc_manual_exact_conservation",
+        "fn": "allocateSplitDiscounts",
+        "input": {
+          "items": [
+            {
+              "name": "A",
+              "gross": "20.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "B",
+              "gross": "15.00",
+              "category_id": "CAT_FLEX",
+              "budget_pool_id": "POOL_FLEX"
+            }
+          ],
+          "totalNetPaid": "29.00",
+          "mode": "MANUAL",
+          "manualNets": [
+            "17.50",
+            "11.50"
+          ]
+        },
+        "expected": [
+          {
+            "name": "A",
+            "gross": "20.00",
+            "category_id": "CAT_FOOD",
+            "budget_pool_id": "POOL_DAILY",
+            "allocated_discount": "2.50",
+            "net": "17.50"
+          },
+          {
+            "name": "B",
+            "gross": "15.00",
+            "category_id": "CAT_FLEX",
+            "budget_pool_id": "POOL_FLEX",
+            "allocated_discount": "3.50",
+            "net": "11.50"
+          }
+        ]
+      },
+      {
+        "id": "alloc_negative_discount_surcharge_last_item_absorbs",
+        "fn": "allocateSplitDiscounts",
+        "input": {
+          "items": [
+            {
+              "name": "A",
+              "gross": "10.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "B",
+              "gross": "20.00",
+              "category_id": "CAT_FLEX",
+              "budget_pool_id": "POOL_FLEX"
+            }
+          ],
+          "totalNetPaid": "32.50",
+          "mode": "PROPORTIONAL"
+        },
+        "expected": [
+          {
+            "name": "A",
+            "gross": "10.00",
+            "category_id": "CAT_FOOD",
+            "budget_pool_id": "POOL_DAILY",
+            "allocated_discount": "0.00",
+            "net": "10.00"
+          },
+          {
+            "name": "B",
+            "gross": "20.00",
+            "category_id": "CAT_FLEX",
+            "budget_pool_id": "POOL_FLEX",
+            "allocated_discount": "-2.50",
+            "net": "22.50"
+          }
+        ]
+      }
+    ],
+    "voucher_cost_carryover": [
+      {
+        "id": "apply_voucher_prd_example",
+        "fn": "applyVoucherToOrder",
+        "input": {
+          "orderGross": "15.00",
+          "cashActuallyPaidAfterVoucher": "5.00",
+          "voucher": {
+            "voucher_type": "PREPAID_COUPON",
+            "face_value": "10.00",
+            "acquire_cost": "5.99"
+          }
+        },
+        "expected": {
+          "order_gross": "15.00",
+          "cash_paid": "5.00",
+          "voucher_acquire_cost": "5.99",
+          "effective_budget_net": "10.99",
+          "net_savings": "4.01"
+        }
+      },
+      {
+        "id": "compute_order_single_prepaid_coupon",
+        "fn": "computeOrderAllocation",
+        "input": {
+          "items": [
+            {
+              "name": "午餐便当",
+              "gross": "15.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "is_primary": true
+            }
+          ],
+          "cashActuallyPaid": "5.00",
+          "mode": "SINGLE",
+          "voucher": {
+            "voucher_type": "PREPAID_COUPON",
+            "face_value": "10.00",
+            "acquire_cost": "5.99"
+          }
+        },
+        "expected": {
+          "total_gross": "15.00",
+          "total_discount": "4.01",
+          "total_net": "10.99",
+          "cash_paid": "5.00",
+          "voucher_net_savings": "4.01",
+          "voucher_cost_carryover": "5.99",
+          "items": [
+            {
+              "name": "午餐便当",
+              "gross": "15.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "is_primary": true,
+              "allocated_discount": "4.01",
+              "net": "10.99"
+            }
+          ]
+        }
+      },
+      {
+        "id": "compute_order_3way_split_prepaid_coupon_tail_diff",
+        "fn": "computeOrderAllocation",
+        "input": {
+          "items": [
+            {
+              "name": "A",
+              "gross": "10.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "B",
+              "gross": "10.00",
+              "category_id": "CAT_CLOTH",
+              "budget_pool_id": "POOL_FLEX"
+            },
+            {
+              "name": "C",
+              "gross": "10.00",
+              "category_id": "CAT_MEDICAL",
+              "budget_pool_id": "POOL_EMERGENCY"
+            }
+          ],
+          "cashActuallyPaid": "15.00",
+          "mode": "PROPORTIONAL",
+          "voucher": {
+            "voucher_type": "PREPAID_COUPON",
+            "face_value": "10.00",
+            "acquire_cost": "5.99"
+          }
+        },
+        "expected": {
+          "total_gross": "30.00",
+          "total_discount": "9.01",
+          "total_net": "20.99",
+          "cash_paid": "15.00",
+          "voucher_net_savings": "4.01",
+          "voucher_cost_carryover": "5.99",
+          "items": [
+            {
+              "name": "A",
+              "gross": "10.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "allocated_discount": "3.00",
+              "net": "7.00"
+            },
+            {
+              "name": "B",
+              "gross": "10.00",
+              "category_id": "CAT_CLOTH",
+              "budget_pool_id": "POOL_FLEX",
+              "allocated_discount": "3.00",
+              "net": "7.00"
+            },
+            {
+              "name": "C",
+              "gross": "10.00",
+              "category_id": "CAT_MEDICAL",
+              "budget_pool_id": "POOL_EMERGENCY",
+              "allocated_discount": "3.01",
+              "net": "6.99"
+            }
+          ]
+        }
+      },
+      {
+        "id": "compute_order_2way_split_free_coupon",
+        "fn": "computeOrderAllocation",
+        "input": {
+          "items": [
+            {
+              "name": "X",
+              "gross": "12.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY"
+            },
+            {
+              "name": "Y",
+              "gross": "18.00",
+              "category_id": "CAT_DAILY_GOODS",
+              "budget_pool_id": "POOL_FLEX"
+            }
+          ],
+          "cashActuallyPaid": "25.00",
+          "mode": "PROPORTIONAL",
+          "voucher": {
+            "voucher_type": "FREE_COUPON",
+            "face_value": "5.00",
+            "acquire_cost": "0.00"
+          }
+        },
+        "expected": {
+          "total_gross": "30.00",
+          "total_discount": "5.00",
+          "total_net": "25.00",
+          "cash_paid": "25.00",
+          "voucher_net_savings": "5.00",
+          "voucher_cost_carryover": "0.00",
+          "items": [
+            {
+              "name": "X",
+              "gross": "12.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "allocated_discount": "2.00",
+              "net": "10.00"
+            },
+            {
+              "name": "Y",
+              "gross": "18.00",
+              "category_id": "CAT_DAILY_GOODS",
+              "budget_pool_id": "POOL_FLEX",
+              "allocated_discount": "3.00",
+              "net": "15.00"
+            }
+          ]
+        }
+      }
+    ],
+    "mastercard_fx_lifecycle": [
+      {
+        "id": "fx_usd_default_1pct_hold",
+        "input": {
+          "foreignAmount": "4.35",
+          "holdAmountCny": "31.95",
+          "holdRatio": "1.020",
+          "cashbackRate": "0.0100"
+        },
+        "expected": {
+          "status": "PENDING_HOLD",
+          "hold_amount_cny": "31.95",
+          "total_gross": "31.32",
+          "payment_discount": "0.31",
+          "total_net": "31.01",
+          "exchange_rate": "7.200000"
+        }
+      },
+      {
+        "id": "fx_usd_default_1pct_settled",
+        "input": {
+          "foreignAmount": "4.35",
+          "holdAmountCny": "31.95",
+          "settledAmountCny": "31.20",
+          "holdRatio": "1.020",
+          "cashbackRate": "0.0100"
+        },
+        "expected": {
+          "status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "released_to_available": "0.75",
+          "total_gross": "31.20",
+          "payment_discount": "0.31",
+          "total_net": "30.89",
+          "exchange_rate": "7.172414"
+        }
+      },
+      {
+        "id": "fx_usd_zero_cashback_hold",
+        "input": {
+          "foreignAmount": "10.00",
+          "holdAmountCny": "73.44",
+          "holdRatio": "1.020",
+          "cashbackRate": "0.0000"
+        },
+        "expected": {
+          "status": "PENDING_HOLD",
+          "hold_amount_cny": "73.44",
+          "total_gross": "72.00",
+          "payment_discount": "0.00",
+          "total_net": "72.00",
+          "exchange_rate": "7.200000"
+        }
+      },
+      {
+        "id": "fx_usd_zero_cashback_settled",
+        "input": {
+          "foreignAmount": "10.00",
+          "holdAmountCny": "73.44",
+          "settledAmountCny": "72.15",
+          "holdRatio": "1.020",
+          "cashbackRate": "0.0000"
+        },
+        "expected": {
+          "status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "released_to_available": "1.29",
+          "total_gross": "72.15",
+          "payment_discount": "0.00",
+          "total_net": "72.15",
+          "exchange_rate": "7.215000"
+        }
+      },
+      {
+        "id": "fx_usd_cashback_cap_clamped",
+        "input": {
+          "foreignAmount": "10.00",
+          "holdAmountCny": "73.44",
+          "settledAmountCny": "72.00",
+          "holdRatio": "1.020",
+          "cashbackRate": "0.0100",
+          "monthlyRemainingCapCny": "0.25"
+        },
+        "expected": {
+          "status": "SETTLED",
+          "hold_amount_cny": "0.00",
+          "released_to_available": "1.44",
+          "total_gross": "72.00",
+          "payment_discount": "0.25",
+          "total_net": "71.75",
+          "exchange_rate": "7.200000"
+        }
+      }
+    ],
+    "end_to_end_ledger_scenarios": [
+      {
+        "id": "scenario_a_routine_expense_income_and_daily_summary",
+        "description": "普通消费、收入不扣减预算、及高频饮食池正常日均与超支夹零边界",
+        "initial_state": "default_seed_2026_11",
+        "evaluation_date": "2026-11-15",
+        "actions_phase_1_normal": [
+          {
+            "type": "recordFromDsl",
+            "rawText": "咸蛋黄拌面 16.8-0.15 #饮食",
+            "txDate": "2026-11-10"
+          },
+          {
+            "type": "recordManualTransaction",
+            "params": {
+              "tx_type": "INCOME",
+              "tx_date": "2026-11-11",
+              "amount": "1500.00",
+              "merchant_or_note": "十一月生活费入账"
+            }
+          }
+        ],
+        "expected_phase_1_normal": {
+          "monthly_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "16.80",
+                "total_saved_discount": "0.15",
+                "spent_net": "16.65",
+                "remaining_budget": "633.35"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "450.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "39.58",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "16.65",
+            "totalMonthlySaved": "0.15"
+          },
+          "client_daily_budget_summary": {
+            "poolName": "高频饮食与洗护池 (POOL_DAILY)",
+            "totalAvailable": "650.00",
+            "spentNet": "16.65",
+            "remainingBudget": "633.35",
+            "remainingDays": 16,
+            "dailyAvailableAmount": "39.58",
+            "formula": "(633.35 元 ÷ 16 剩余天数)",
+            "totalSavedWool": "0.15"
+          }
+        },
+        "actions_phase_2_with_overspend": [
+          {
+            "type": "recordFromDsl",
+            "rawText": "咸蛋黄拌面 16.8-0.15 #饮食",
+            "txDate": "2026-11-10"
+          },
+          {
+            "type": "recordManualTransaction",
+            "params": {
+              "tx_type": "INCOME",
+              "tx_date": "2026-11-11",
+              "amount": "1500.00",
+              "merchant_or_note": "十一月生活费入账"
+            }
+          },
+          {
+            "type": "recordManualTransaction",
+            "params": {
+              "tx_type": "EXPENSE",
+              "tx_date": "2026-11-15",
+              "amount": "640.00",
+              "discount": "0.00",
+              "category_id": "CAT_FOOD",
+              "budget_pool_id": "POOL_DAILY",
+              "merchant_or_note": "大额食堂餐卡批充（使POOL_DAILY超支触发夹零边界）"
+            }
+          }
+        ],
+        "expected_phase_2_with_overspend": {
+          "transactions": [
+            {
+              "header": {
+                "tx_ref": "TX_1",
+                "tx_date": "2026-11-10",
+                "tx_type": "EXPENSE",
+                "total_gross": "16.80",
+                "platform_discount": "0.15",
+                "payment_discount": "0.00",
+                "total_net": "16.65",
+                "allocation_mode": "SINGLE",
+                "original_currency": "CNY",
+                "original_amount": null,
+                "exchange_rate": "1.000000",
+                "settlement_status": "SETTLED",
+                "hold_amount_cny": "0.00",
+                "fx_cashback_rate": null,
+                "raw_input_text": "咸蛋黄拌面 16.8-0.15 #饮食",
+                "merchant_or_note": "咸蛋黄拌面",
+                "applied_voucher_id": null,
+                "is_deleted": false
+              },
+              "items": [
+                {
+                  "item_index": 0,
+                  "item_name": "咸蛋黄拌面",
+                  "category_id": "CAT_FOOD",
+                  "budget_pool_id": "POOL_DAILY",
+                  "project_tag_id": null,
+                  "item_gross": "16.80",
+                  "allocated_discount": "0.15",
+                  "item_net": "16.65",
+                  "is_primary_item": true,
+                  "raw_formula_expr": "16.8-0.15"
+                }
+              ]
+            },
+            {
+              "header": {
+                "tx_ref": "TX_2",
+                "tx_date": "2026-11-11",
+                "tx_type": "INCOME",
+                "total_gross": "1500.00",
+                "platform_discount": "0.00",
+                "payment_discount": "0.00",
+                "total_net": "1500.00",
+                "allocation_mode": "SINGLE",
+                "original_currency": "CNY",
+                "original_amount": null,
+                "exchange_rate": "1.000000",
+                "settlement_status": "SETTLED",
+                "hold_amount_cny": "0.00",
+                "fx_cashback_rate": null,
+                "raw_input_text": "手动录入：十一月生活费入账 1500.00",
+                "merchant_or_note": "十一月生活费入账",
+                "applied_voucher_id": null,
+                "is_deleted": false
+              },
+              "items": []
+            },
+            {
+              "header": {
+                "tx_ref": "TX_3",
+                "tx_date": "2026-11-15",
+                "tx_type": "EXPENSE",
+                "total_gross": "640.00",
+                "platform_discount": "0.00",
+                "payment_discount": "0.00",
+                "total_net": "640.00",
+                "allocation_mode": "SINGLE",
+                "original_currency": "CNY",
+                "original_amount": null,
+                "exchange_rate": "1.000000",
+                "settlement_status": "SETTLED",
+                "hold_amount_cny": "0.00",
+                "fx_cashback_rate": null,
+                "raw_input_text": "手动录入：大额食堂餐卡批充（使POOL_DAILY超支触发夹零边界） 640.00",
+                "merchant_or_note": "大额食堂餐卡批充（使POOL_DAILY超支触发夹零边界）",
+                "applied_voucher_id": null,
+                "is_deleted": false
+              },
+              "items": [
+                {
+                  "item_index": 0,
+                  "item_name": "大额食堂餐卡批充（使POOL_DAILY超支触发夹零边界）",
+                  "category_id": "CAT_FOOD",
+                  "budget_pool_id": "POOL_DAILY",
+                  "project_tag_id": null,
+                  "item_gross": "640.00",
+                  "allocated_discount": "0.00",
+                  "item_net": "640.00",
+                  "is_primary_item": true,
+                  "raw_formula_expr": null
+                }
+              ]
+            }
+          ],
+          "monthly_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "656.80",
+                "total_saved_discount": "0.15",
+                "spent_net": "656.65",
+                "remaining_budget": "-6.65"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "450.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "-0.42",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "656.65",
+            "totalMonthlySaved": "0.15"
+          },
+          "client_daily_budget_summary": {
+            "poolName": "高频饮食与洗护池 (POOL_DAILY)",
+            "totalAvailable": "650.00",
+            "spentNet": "656.65",
+            "remainingBudget": "-6.65",
+            "remainingDays": 16,
+            "dailyAvailableAmount": "0.00",
+            "formula": "(0.00 元 ÷ 16 剩余天数)",
+            "totalSavedWool": "0.15"
+          }
+        }
+      },
+      {
+        "id": "scenario_b_cross_pool_split_tail_diff_and_item_edit",
+        "description": "跨类目三子项凑单除不尽 0.01 尾差修正 + 编辑总额/优惠及单独修改子项预算池",
+        "initial_state": "default_seed_2026_11",
+        "actions": [
+          {
+            "step": 1,
+            "op": "recordFromDsl",
+            "rawText": "测试1 10 #日常 + 测试2 10 #弹性 + 测试3 10 #固定 = 20",
+            "txDate": "2026-11-15"
+          },
+          {
+            "step": 2,
+            "op": "updateTransaction",
+            "target_tx_ref": "TX_1",
+            "patch": {
+              "tx_date": "2026-11-15",
+              "total_gross": "35.00",
+              "payment_discount": "10.00",
+              "merchant_or_note": "测试1 + 测试2 + 测试3 (改价重分摊)",
+              "item_updates": [
+                {
+                  "index": 1,
+                  "budget_pool_id": "POOL_DAILY"
+                }
+              ]
+            }
+          }
+        ],
+        "expected": {
+          "after_step_1_tx": {
+            "header": {
+              "tx_ref": "TX_1",
+              "tx_date": "2026-11-15",
+              "tx_type": "EXPENSE",
+              "total_gross": "30.00",
+              "platform_discount": "0.00",
+              "payment_discount": "10.00",
+              "total_net": "20.00",
+              "allocation_mode": "PROPORTIONAL",
+              "original_currency": "CNY",
+              "original_amount": null,
+              "exchange_rate": "1.000000",
+              "settlement_status": "SETTLED",
+              "hold_amount_cny": "0.00",
+              "fx_cashback_rate": null,
+              "raw_input_text": "测试1 10 #日常 + 测试2 10 #弹性 + 测试3 10 #固定 = 20",
+              "merchant_or_note": "测试1 + 测试2 + 测试3",
+              "applied_voucher_id": null,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "测试1",
+                "category_id": "CAT_CLEAN",
+                "budget_pool_id": "POOL_DAILY",
+                "project_tag_id": null,
+                "item_gross": "10.00",
+                "allocated_discount": "3.33",
+                "item_net": "6.67",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              },
+              {
+                "item_index": 1,
+                "item_name": "测试2",
+                "category_id": "CAT_FOOD",
+                "budget_pool_id": "POOL_FLEX",
+                "project_tag_id": null,
+                "item_gross": "10.00",
+                "allocated_discount": "3.33",
+                "item_net": "6.67",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              },
+              {
+                "item_index": 2,
+                "item_name": "测试3",
+                "category_id": "CAT_FOOD",
+                "budget_pool_id": "POOL_FIXED",
+                "project_tag_id": null,
+                "item_gross": "10.00",
+                "allocated_discount": "3.34",
+                "item_net": "6.66",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              }
+            ]
+          },
+          "after_step_1_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "10.00",
+                "total_saved_discount": "3.33",
+                "spent_net": "6.67",
+                "remaining_budget": "643.33"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "10.00",
+                "total_saved_discount": "3.34",
+                "spent_net": "6.66",
+                "remaining_budget": "197.34"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "10.00",
+                "total_saved_discount": "3.33",
+                "spent_net": "6.67",
+                "remaining_budget": "443.33"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "40.21",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "20.00",
+            "totalMonthlySaved": "10.00"
+          },
+          "after_step_2_tx": {
+            "header": {
+              "tx_ref": "TX_1",
+              "tx_date": "2026-11-15",
+              "tx_type": "EXPENSE",
+              "total_gross": "35.00",
+              "platform_discount": "0.00",
+              "payment_discount": "10.00",
+              "total_net": "25.00",
+              "allocation_mode": "PROPORTIONAL",
+              "original_currency": "CNY",
+              "original_amount": null,
+              "exchange_rate": "1.000000",
+              "settlement_status": "SETTLED",
+              "hold_amount_cny": "0.00",
+              "fx_cashback_rate": null,
+              "raw_input_text": "测试1 10 #日常 + 测试2 10 #弹性 + 测试3 10 #固定 = 20",
+              "merchant_or_note": "测试1 + 测试2 + 测试3 (改价重分摊)",
+              "applied_voucher_id": null,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "测试1",
+                "category_id": "CAT_CLEAN",
+                "budget_pool_id": "POOL_DAILY",
+                "project_tag_id": null,
+                "item_gross": "11.66",
+                "allocated_discount": "3.33",
+                "item_net": "8.33",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              },
+              {
+                "item_index": 1,
+                "item_name": "测试2",
+                "category_id": "CAT_FOOD",
+                "budget_pool_id": "POOL_DAILY",
+                "project_tag_id": null,
+                "item_gross": "11.67",
+                "allocated_discount": "3.33",
+                "item_net": "8.34",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              },
+              {
+                "item_index": 2,
+                "item_name": "测试3",
+                "category_id": "CAT_FOOD",
+                "budget_pool_id": "POOL_FIXED",
+                "project_tag_id": null,
+                "item_gross": "11.67",
+                "allocated_discount": "3.34",
+                "item_net": "8.33",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              }
+            ]
+          },
+          "after_step_2_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "23.33",
+                "total_saved_discount": "6.66",
+                "spent_net": "16.67",
+                "remaining_budget": "633.33"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "11.67",
+                "total_saved_discount": "3.34",
+                "spent_net": "8.33",
+                "remaining_budget": "195.67"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "450.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "39.58",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "25.00",
+            "totalMonthlySaved": "10.00"
+          }
+        }
+      },
+      {
+        "id": "scenario_c_voucher_buy_redeem_and_delete_rollback",
+        "description": "购买有偿立减金（不耗预算）-> 单品/凑单三子项核销（购券成本结转）-> 删除账单级联退券与释放预算",
+        "initial_state": "default_seed_2026_11",
+        "actions": [
+          {
+            "step": 1,
+            "op": "buyVoucher",
+            "params": {
+              "voucherType": "PREPAID_COUPON",
+              "faceValue": "15.00",
+              "acquireCost": "8.90",
+              "minSpend": "20.00",
+              "txDate": "2026-11-12"
+            }
+          },
+          {
+            "step": 2,
+            "op": "recordFromDsl",
+            "rawText": "午餐套餐 15 #饮食",
+            "txDate": "2026-11-13",
+            "appliedVoucherId": 1
+          },
+          {
+            "step": 3,
+            "op": "recordFromDsl",
+            "rawText": "面条 10 #饮食 + 洗衣液 10 #日常 + 口罩 10 #应急 = 30",
+            "txDate": "2026-11-14",
+            "appliedVoucherId": 3
+          },
+          {
+            "step": 4,
+            "op": "deleteTransaction",
+            "target_tx_ref": "TX_3"
+          }
+        ],
+        "expected": {
+          "step_1_buy_tx": {
+            "header": {
+              "tx_ref": "TX_1",
+              "tx_date": "2026-11-12",
+              "tx_type": "VOUCHER_BUY",
+              "total_gross": "8.90",
+              "platform_discount": "0.00",
+              "payment_discount": "0.00",
+              "total_net": "8.90",
+              "allocation_mode": "SINGLE",
+              "original_currency": "CNY",
+              "original_amount": null,
+              "exchange_rate": "1.000000",
+              "settlement_status": "SETTLED",
+              "hold_amount_cny": "0.00",
+              "fx_cashback_rate": null,
+              "raw_input_text": "购买卡券: 满20减15立减金",
+              "merchant_or_note": "购买卡券: 满20减15立减金",
+              "applied_voucher_id": null,
+              "is_deleted": false
+            },
+            "items": []
+          },
+          "step_1_created_voucher": {
+            "id": 3,
+            "title": "满20减15立减金",
+            "voucher_type": "PREPAID_COUPON",
+            "face_value": "15.00",
+            "acquire_cost": "8.90",
+            "min_spend": "20.00",
+            "status": "AVAILABLE",
+            "purchase_tx_ref": "TX_1",
+            "used_tx_ref": null
+          },
+          "step_1_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "650.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "450.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "40.63",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "0.00",
+            "totalMonthlySaved": "0.00"
+          },
+          "step_2_redeem_single_tx": {
+            "header": {
+              "tx_ref": "TX_2",
+              "tx_date": "2026-11-13",
+              "tx_type": "EXPENSE",
+              "total_gross": "15.00",
+              "platform_discount": "0.00",
+              "payment_discount": "4.01",
+              "total_net": "10.99",
+              "allocation_mode": "SINGLE",
+              "original_currency": "CNY",
+              "original_amount": null,
+              "exchange_rate": "1.000000",
+              "settlement_status": "SETTLED",
+              "hold_amount_cny": "0.00",
+              "fx_cashback_rate": null,
+              "raw_input_text": "午餐套餐 15 #饮食",
+              "merchant_or_note": "午餐套餐",
+              "applied_voucher_id": 1,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "午餐套餐",
+                "category_id": "CAT_FOOD",
+                "budget_pool_id": "POOL_DAILY",
+                "project_tag_id": null,
+                "item_gross": "15.00",
+                "allocated_discount": "4.01",
+                "item_net": "10.99",
+                "is_primary_item": true,
+                "raw_formula_expr": "15"
+              }
+            ]
+          },
+          "step_2_voucher_1_status": "USED",
+          "step_2_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "15.00",
+                "total_saved_discount": "4.01",
+                "spent_net": "10.99",
+                "remaining_budget": "639.01"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "450.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "39.94",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "10.99",
+            "totalMonthlySaved": "4.01"
+          },
+          "step_3_redeem_split_tx": {
+            "header": {
+              "tx_ref": "TX_3",
+              "tx_date": "2026-11-14",
+              "tx_type": "EXPENSE",
+              "total_gross": "30.00",
+              "platform_discount": "0.00",
+              "payment_discount": "6.10",
+              "total_net": "23.90",
+              "allocation_mode": "PROPORTIONAL",
+              "original_currency": "CNY",
+              "original_amount": null,
+              "exchange_rate": "1.000000",
+              "settlement_status": "SETTLED",
+              "hold_amount_cny": "0.00",
+              "fx_cashback_rate": null,
+              "raw_input_text": "面条 10 #饮食 + 洗衣液 10 #日常 + 口罩 10 #应急 = 30",
+              "merchant_or_note": "面条 + 洗衣液 + 口罩",
+              "applied_voucher_id": 3,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "面条",
+                "category_id": "CAT_FOOD",
+                "budget_pool_id": "POOL_DAILY",
+                "project_tag_id": null,
+                "item_gross": "10.00",
+                "allocated_discount": "2.03",
+                "item_net": "7.97",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              },
+              {
+                "item_index": 1,
+                "item_name": "洗衣液",
+                "category_id": "CAT_CLEAN",
+                "budget_pool_id": "POOL_DAILY",
+                "project_tag_id": null,
+                "item_gross": "10.00",
+                "allocated_discount": "2.03",
+                "item_net": "7.97",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              },
+              {
+                "item_index": 2,
+                "item_name": "口罩",
+                "category_id": "CAT_FOOD",
+                "budget_pool_id": "POOL_EMERGENCY",
+                "project_tag_id": null,
+                "item_gross": "10.00",
+                "allocated_discount": "2.04",
+                "item_net": "7.96",
+                "is_primary_item": false,
+                "raw_formula_expr": "10"
+              }
+            ]
+          },
+          "step_3_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "35.00",
+                "total_saved_discount": "8.07",
+                "spent_net": "26.93",
+                "remaining_budget": "623.07"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "10.00",
+                "total_saved_discount": "2.04",
+                "spent_net": "7.96",
+                "remaining_budget": "188.04"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "450.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "38.94",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "34.89",
+            "totalMonthlySaved": "10.11"
+          },
+          "step_4_deleted_tx_is_deleted": true,
+          "step_4_voucher_3_restored": {
+            "status": "AVAILABLE",
+            "used_tx_id": null
+          },
+          "step_4_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "15.00",
+                "total_saved_discount": "4.01",
+                "spent_net": "10.99",
+                "remaining_budget": "639.01"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "450.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "39.94",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "10.99",
+            "totalMonthlySaved": "4.01"
+          }
+        }
+      },
+      {
+        "id": "scenario_d_mastercard_fx_hold_and_settlement",
+        "description": "万事达外币 102% 预授权冻结 -> 清算多退少补，含 1% 返现与 0% 返现持久化防回退校验",
+        "initial_state": "default_seed_2026_11",
+        "actions": [
+          {
+            "step": 1,
+            "op": "recordFromDsl",
+            "rawText": "Porkbun域名 $4.35 冻结31.95 #数字服务",
+            "txDate": "2026-11-08"
+          },
+          {
+            "step": 2,
+            "op": "recordManualTransaction",
+            "params": {
+              "tx_type": "EXPENSE",
+              "tx_date": "2026-11-09",
+              "amount": "10.00",
+              "currency": "USD",
+              "hold_amount_cny": "73.44",
+              "fx_hold_ratio": "1.020",
+              "fx_cashback_rate": "0.0000",
+              "category_id": "CAT_DIGITAL_SUB",
+              "budget_pool_id": "POOL_FLEX",
+              "merchant_or_note": "Cloud API充值 0%返现"
+            }
+          },
+          {
+            "step": 3,
+            "op": "settleMastercardTransaction",
+            "target_tx_ref": "TX_1",
+            "settledAmountCny": "31.20"
+          },
+          {
+            "step": 4,
+            "op": "settleMastercardTransaction",
+            "target_tx_ref": "TX_2",
+            "settledAmountCny": "72.15"
+          }
+        ],
+        "expected": {
+          "step_1_hold_tx": {
+            "header": {
+              "tx_ref": "TX_1",
+              "tx_date": "2026-11-08",
+              "tx_type": "EXPENSE",
+              "total_gross": "31.32",
+              "platform_discount": "0.00",
+              "payment_discount": "0.31",
+              "total_net": "31.01",
+              "allocation_mode": "SINGLE",
+              "original_currency": "USD",
+              "original_amount": "4.35",
+              "exchange_rate": "7.200000",
+              "settlement_status": "PENDING_HOLD",
+              "hold_amount_cny": "31.95",
+              "fx_cashback_rate": "0.01",
+              "raw_input_text": "Porkbun域名 $4.35 冻结31.95 #数字服务",
+              "merchant_or_note": "Porkbun域名",
+              "applied_voucher_id": null,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "Porkbun域名",
+                "category_id": "CAT_DIGITAL_SUB",
+                "budget_pool_id": "POOL_FLEX",
+                "project_tag_id": null,
+                "item_gross": "31.32",
+                "allocated_discount": "0.31",
+                "item_net": "31.01",
+                "is_primary_item": true,
+                "raw_formula_expr": "$4.35"
+              }
+            ]
+          },
+          "step_2_hold_tx_zero_cb": {
+            "header": {
+              "tx_ref": "TX_2",
+              "tx_date": "2026-11-09",
+              "tx_type": "EXPENSE",
+              "total_gross": "72.00",
+              "platform_discount": "0.00",
+              "payment_discount": "0.00",
+              "total_net": "72.00",
+              "allocation_mode": "SINGLE",
+              "original_currency": "USD",
+              "original_amount": "10.00",
+              "exchange_rate": "1.000000",
+              "settlement_status": "PENDING_HOLD",
+              "hold_amount_cny": "73.44",
+              "fx_cashback_rate": "0.0000",
+              "raw_input_text": "手动录入：Cloud API充值 0%返现 10.00",
+              "merchant_or_note": "Cloud API充值 0%返现",
+              "applied_voucher_id": null,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "Cloud API充值 0%返现",
+                "category_id": "CAT_DIGITAL_SUB",
+                "budget_pool_id": "POOL_FLEX",
+                "project_tag_id": null,
+                "item_gross": "72.00",
+                "allocated_discount": "0.00",
+                "item_net": "72.00",
+                "is_primary_item": true,
+                "raw_formula_expr": null
+              }
+            ]
+          },
+          "after_hold_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "650.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "103.32",
+                "total_saved_discount": "0.31",
+                "spent_net": "103.01",
+                "remaining_budget": "346.99"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "40.63",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "103.01",
+            "totalMonthlySaved": "0.31"
+          },
+          "step_3_settled_tx_1pct": {
+            "header": {
+              "tx_ref": "TX_1",
+              "tx_date": "2026-11-08",
+              "tx_type": "EXPENSE",
+              "total_gross": "31.20",
+              "platform_discount": "0.00",
+              "payment_discount": "0.31",
+              "total_net": "30.89",
+              "allocation_mode": "SINGLE",
+              "original_currency": "USD",
+              "original_amount": "4.35",
+              "exchange_rate": "7.172414",
+              "settlement_status": "SETTLED",
+              "hold_amount_cny": "0.00",
+              "fx_cashback_rate": "0.0100",
+              "raw_input_text": "Porkbun域名 $4.35 冻结31.95 #数字服务",
+              "merchant_or_note": "Porkbun域名",
+              "applied_voucher_id": null,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "Porkbun域名",
+                "category_id": "CAT_DIGITAL_SUB",
+                "budget_pool_id": "POOL_FLEX",
+                "project_tag_id": null,
+                "item_gross": "31.20",
+                "allocated_discount": "0.31",
+                "item_net": "30.89",
+                "is_primary_item": true,
+                "raw_formula_expr": "$4.35"
+              }
+            ]
+          },
+          "step_4_settled_tx_0pct": {
+            "header": {
+              "tx_ref": "TX_2",
+              "tx_date": "2026-11-09",
+              "tx_type": "EXPENSE",
+              "total_gross": "72.15",
+              "platform_discount": "0.00",
+              "payment_discount": "0.00",
+              "total_net": "72.15",
+              "allocation_mode": "SINGLE",
+              "original_currency": "USD",
+              "original_amount": "10.00",
+              "exchange_rate": "7.215000",
+              "settlement_status": "SETTLED",
+              "hold_amount_cny": "0.00",
+              "fx_cashback_rate": "0.0000",
+              "raw_input_text": "手动录入：Cloud API充值 0%返现 10.00",
+              "merchant_or_note": "Cloud API充值 0%返现",
+              "applied_voucher_id": null,
+              "is_deleted": false
+            },
+            "items": [
+              {
+                "item_index": 0,
+                "item_name": "Cloud API充值 0%返现",
+                "category_id": "CAT_DIGITAL_SUB",
+                "budget_pool_id": "POOL_FLEX",
+                "project_tag_id": null,
+                "item_gross": "72.15",
+                "allocated_discount": "0.00",
+                "item_net": "72.15",
+                "is_primary_item": true,
+                "raw_formula_expr": null
+              }
+            ]
+          },
+          "after_settle_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "650.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "204.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "103.35",
+                "total_saved_discount": "0.31",
+                "spent_net": "103.04",
+                "remaining_budget": "346.96"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "40.63",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "103.04",
+            "totalMonthlySaved": "0.31"
+          }
+        }
+      },
+      {
+        "id": "scenario_e_project_exemption_and_month_rollover",
+        "description": "专项预算豁免月度池扣减 + 跨月结余滚存（正结余累加、负超支抵扣、RESET清零策略）",
+        "initial_state": "default_seed_2026_11",
+        "actions": [
+          {
+            "step": 1,
+            "op": "recordFromDsl",
+            "rawText": "话费 86 #固定",
+            "txDate": "2026-11-01"
+          },
+          {
+            "step": 2,
+            "op": "recordFromDsl",
+            "rawText": "食堂午饭 150 #饮食",
+            "txDate": "2026-11-05"
+          },
+          {
+            "step": 3,
+            "op": "recordFromDsl",
+            "rawText": "固态硬盘 480 #弹性",
+            "txDate": "2026-11-08"
+          },
+          {
+            "step": 4,
+            "op": "recordFromDsl",
+            "rawText": "JLPT报名费 550 #N2",
+            "txDate": "2026-11-09"
+          },
+          {
+            "step": 5,
+            "op": "executeMonthRollover",
+            "fromYearMonth": "2026-11",
+            "toYearMonth": "2026-12"
+          },
+          {
+            "step": 6,
+            "op": "recordFromDsl",
+            "rawText": "十二月饮食采购 200 #饮食",
+            "txDate": "2026-12-10"
+          },
+          {
+            "step": 7,
+            "op": "upsertBudgetPool",
+            "id": "POOL_DAILY",
+            "rollover_strategy": "RESET"
+          },
+          {
+            "step": 8,
+            "op": "executeMonthRollover",
+            "fromYearMonth": "2026-12",
+            "toYearMonth": "2027-01"
+          }
+        ],
+        "expected": {
+          "nov_2026_budget_status": {
+            "pools": [
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "650.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "150.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "150.00",
+                "remaining_budget": "500.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "196.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "196.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "204.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "86.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "86.00",
+                "remaining_budget": "118.00"
+              },
+              {
+                "year_month": "2026-11",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "0.00",
+                "total_available_budget": "450.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "480.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "480.00",
+                "remaining_budget": "-30.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "31.25",
+            "totalMonthlyBudget": "1500.00",
+            "totalMonthlySpent": "716.00",
+            "totalMonthlySaved": "0.00"
+          },
+          "dec_2026_after_all_accumulate_rollover": [
+            {
+              "year_month": "2026-12",
+              "pool_id": "POOL_DAILY",
+              "pool_name": "高频饮食与洗护池",
+              "pool_type": "DAILY",
+              "base_allocation": "650.00",
+              "rollover_from_prev": "500.00",
+              "total_available_budget": "1150.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "1150.00"
+            },
+            {
+              "year_month": "2026-12",
+              "pool_id": "POOL_EMERGENCY",
+              "pool_name": "医疗与突发应急池",
+              "pool_type": "EMERGENCY",
+              "base_allocation": "196.00",
+              "rollover_from_prev": "196.00",
+              "total_available_budget": "392.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "392.00"
+            },
+            {
+              "year_month": "2026-12",
+              "pool_id": "POOL_FIXED",
+              "pool_name": "固定刚需与定投池",
+              "pool_type": "FIXED",
+              "base_allocation": "204.00",
+              "rollover_from_prev": "118.00",
+              "total_available_budget": "322.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "322.00"
+            },
+            {
+              "year_month": "2026-12",
+              "pool_id": "POOL_FLEX",
+              "pool_name": "月度弹性发展池",
+              "pool_type": "FLEX",
+              "base_allocation": "450.00",
+              "rollover_from_prev": "-30.00",
+              "total_available_budget": "420.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "420.00"
+            }
+          ],
+          "dec_2026_before_jan_rollover": {
+            "pools": [
+              {
+                "year_month": "2026-12",
+                "pool_id": "POOL_DAILY",
+                "pool_name": "高频饮食与洗护池",
+                "pool_type": "DAILY",
+                "base_allocation": "650.00",
+                "rollover_from_prev": "500.00",
+                "total_available_budget": "1150.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "200.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "200.00",
+                "remaining_budget": "950.00"
+              },
+              {
+                "year_month": "2026-12",
+                "pool_id": "POOL_EMERGENCY",
+                "pool_name": "医疗与突发应急池",
+                "pool_type": "EMERGENCY",
+                "base_allocation": "196.00",
+                "rollover_from_prev": "196.00",
+                "total_available_budget": "392.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "392.00"
+              },
+              {
+                "year_month": "2026-12",
+                "pool_id": "POOL_FIXED",
+                "pool_name": "固定刚需与定投池",
+                "pool_type": "FIXED",
+                "base_allocation": "204.00",
+                "rollover_from_prev": "118.00",
+                "total_available_budget": "322.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "322.00"
+              },
+              {
+                "year_month": "2026-12",
+                "pool_id": "POOL_FLEX",
+                "pool_name": "月度弹性发展池",
+                "pool_type": "FLEX",
+                "base_allocation": "450.00",
+                "rollover_from_prev": "-30.00",
+                "total_available_budget": "420.00",
+                "reserved_fixed": "0.00",
+                "spent_gross": "0.00",
+                "total_saved_discount": "0.00",
+                "spent_net": "0.00",
+                "remaining_budget": "420.00"
+              }
+            ],
+            "dailyPoolRemainingPerDay": "55.88",
+            "totalMonthlyBudget": "2284.00",
+            "totalMonthlySpent": "200.00",
+            "totalMonthlySaved": "0.00"
+          },
+          "jan_2027_after_mixed_reset_accumulate_rollover": [
+            {
+              "year_month": "2027-01",
+              "pool_id": "POOL_DAILY",
+              "pool_name": "高频饮食与洗护池",
+              "pool_type": "DAILY",
+              "base_allocation": "650.00",
+              "rollover_from_prev": "0.00",
+              "total_available_budget": "650.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "650.00"
+            },
+            {
+              "year_month": "2027-01",
+              "pool_id": "POOL_EMERGENCY",
+              "pool_name": "医疗与突发应急池",
+              "pool_type": "EMERGENCY",
+              "base_allocation": "196.00",
+              "rollover_from_prev": "392.00",
+              "total_available_budget": "588.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "588.00"
+            },
+            {
+              "year_month": "2027-01",
+              "pool_id": "POOL_FIXED",
+              "pool_name": "固定刚需与定投池",
+              "pool_type": "FIXED",
+              "base_allocation": "204.00",
+              "rollover_from_prev": "322.00",
+              "total_available_budget": "526.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "526.00"
+            },
+            {
+              "year_month": "2027-01",
+              "pool_id": "POOL_FLEX",
+              "pool_name": "月度弹性发展池",
+              "pool_type": "FLEX",
+              "base_allocation": "450.00",
+              "rollover_from_prev": "420.00",
+              "total_available_budget": "870.00",
+              "reserved_fixed": "0.00",
+              "spent_gross": "0.00",
+              "total_saved_discount": "0.00",
+              "spent_net": "0.00",
+              "remaining_budget": "870.00"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

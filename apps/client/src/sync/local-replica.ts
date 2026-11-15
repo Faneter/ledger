@@ -6,9 +6,6 @@ import {
   formatRate,
   sumCny,
   equalsCny,
-  Account,
-  AccountDashboardRow,
-  AccountRole,
   BudgetPool,
   Category,
   MonthlyBudget,
@@ -35,7 +32,6 @@ import {
   DEFAULT_FX_RATES,
   SplitItemInput,
   DEFAULT_CATEGORIES,
-  DEFAULT_ACCOUNTS,
   DEFAULT_PROJECT_TAGS,
   generateVoucherTitle,
   FxPreferenceConfig,
@@ -50,7 +46,6 @@ export const LOCAL_STORAGE_KEY = 'geek_ledger_local_replica_v2';
 export interface FullSyncBundle {
   nodeId: string;
   exportedAt: string;
-  accounts: Account[];
   oplogs: SyncOpLogEntry[];
   vouchers: Voucher[];
   monthlyBudgets: MonthlyBudget[];
@@ -67,7 +62,6 @@ export interface LocalReplicaState {
   nodeId: string;
   isOfflineMode: boolean;
   serverEpochId: string | null;
-  accounts: Account[];
   budgetPools: BudgetPool[];
   categories: Category[];
   monthlyBudgets: MonthlyBudget[];
@@ -97,169 +91,6 @@ export interface DailyBudgetSummary {
 // ----------------------------------------------------------------------------
 // 种子配置常量（严格对齐 PRD 12.1 ~ 12.4 及 Stage 1 ~ Stage 5）
 // ----------------------------------------------------------------------------
-
-export const SEED_ACCOUNTS: Account[] = [
-  {
-    id: 'ACC_HUABEI',
-    name: '支付宝花呗',
-    account_role: 'CREDIT',
-    currency: 'CNY',
-    initial_balance: '-120.00',
-    book_balance: '-120.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: '1500.00',
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: 1,
-    repayment_day: 10,
-    is_default_pay: true,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 10,
-  },
-  {
-    id: 'ACC_CC_MAIN',
-    name: '主力信用卡',
-    account_role: 'CREDIT',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: '5000.00',
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: 5,
-    repayment_day: 25,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 20,
-  },
-  {
-    id: 'ACC_UNION_MAIN',
-    name: '主力银联借记卡',
-    account_role: 'DEBIT_MAIN',
-    currency: 'CNY',
-    initial_balance: '3000.00',
-    book_balance: '3000.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 30,
-  },
-  {
-    id: 'ACC_CAMPUS_CARD',
-    name: '校园饭卡(预充值)',
-    account_role: 'PREPAID',
-    currency: 'CNY',
-    initial_balance: '50.00',
-    book_balance: '50.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 40,
-  },
-  {
-    id: 'ACC_MC_DEBIT_A',
-    name: '万事网联借记卡 A',
-    account_role: 'DEBIT_FX',
-    currency: 'CNY',
-    initial_balance: '500.00',
-    book_balance: '500.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.020',
-    fx_cashback_rate: '0.0100',
-    fx_monthly_cap: '100.00',
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 50,
-  },
-  {
-    id: 'ACC_MC_DEBIT_B',
-    name: '万事网联借记卡 B',
-    account_role: 'DEBIT_FX',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.020',
-    fx_cashback_rate: '0.0100',
-    fx_monthly_cap: '100.00',
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 60,
-  },
-  {
-    id: 'ACC_ALIPAY_ETF',
-    name: '支付宝指数基金定投',
-    account_role: 'INVESTMENT',
-    currency: 'CNY',
-    initial_balance: '600.00',
-    book_balance: '600.00',
-    frozen_amount: '0.00',
-    market_value: '600.00',
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 70,
-  },
-  {
-    id: 'ACC_DORMANT_01',
-    name: '备用低频借记卡(折叠)',
-    account_role: 'DORMANT',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: true,
-    include_in_networth: true,
-    sort_order: 99,
-  },
-];
 
 export const SEED_BUDGET_POOLS: BudgetPool[] = [
   {
@@ -297,24 +128,6 @@ export const SEED_BUDGET_POOLS: BudgetPool[] = [
     rollover_strategy: 'ACCUMULATE',
     description: '纯粹看病买药、突发设备抢修',
     sort_order: 40,
-  },
-  {
-    id: 'POOL_FUND',
-    name: '年度专项考证基金池',
-    pool_type: 'SINKING_FUND',
-    is_monthly_budget: false,
-    rollover_strategy: 'ACCUMULATE',
-    description: 'JLPT_N2考证、长途差旅跨期专项基金',
-    sort_order: 50,
-  },
-  {
-    id: 'POOL_ASSET',
-    name: '数码大件固定资产库',
-    pool_type: 'CAPITAL_ASSET',
-    is_monthly_budget: false,
-    rollover_strategy: 'ACCUMULATE',
-    description: '手机、机械硬盘等大额固定资产购置',
-    sort_order: 60,
   },
 ];
 
@@ -359,194 +172,11 @@ export const SEED_MONTHLY_BUDGETS: MonthlyBudget[] = [
     swept_to_fund: '0.00',
     note: null,
   },
-  {
-    id: 5,
-    year_month: '2026-11',
-    pool_id: 'POOL_FUND',
-    base_allocation: '800.00',
-    rollover_from_prev: '0.00',
-    reserved_fixed: '0.00',
-    swept_to_fund: '0.00',
-    note: null,
-  },
-  {
-    id: 6,
-    year_month: '2026-11',
-    pool_id: 'POOL_ASSET',
-    base_allocation: '2000.00',
-    rollover_from_prev: '0.00',
-    reserved_fixed: '0.00',
-    swept_to_fund: '0.00',
-    note: null,
-  },
 ];
 
 // ----------------------------------------------------------------------------
 // 纯净初始账本种子配置常量（Stage 8 纯净初始化规范）
 // ----------------------------------------------------------------------------
-
-export const CLEAN_SEED_ACCOUNTS: Account[] = [
-  {
-    id: 'ACC_HUABEI',
-    name: '支付宝花呗',
-    account_role: 'CREDIT',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: '1500.00',
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: 1,
-    repayment_day: 10,
-    is_default_pay: true,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 10,
-  },
-  {
-    id: 'ACC_CC_MAIN',
-    name: '主力信用卡',
-    account_role: 'CREDIT',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: '5000.00',
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: 5,
-    repayment_day: 25,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 20,
-  },
-  {
-    id: 'ACC_UNION_MAIN',
-    name: '主力银联借记卡',
-    account_role: 'DEBIT_MAIN',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 30,
-  },
-  {
-    id: 'ACC_CAMPUS_CARD',
-    name: '校园饭卡(预充值)',
-    account_role: 'PREPAID',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 40,
-  },
-  {
-    id: 'ACC_MC_DEBIT_A',
-    name: '万事网联借记卡 A',
-    account_role: 'DEBIT_FX',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.020',
-    fx_cashback_rate: '0.0100',
-    fx_monthly_cap: '100.00',
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 50,
-  },
-  {
-    id: 'ACC_MC_DEBIT_B',
-    name: '万事网联借记卡 B',
-    account_role: 'DEBIT_FX',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.020',
-    fx_cashback_rate: '0.0100',
-    fx_monthly_cap: '100.00',
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 60,
-  },
-  {
-    id: 'ACC_ALIPAY_ETF',
-    name: '支付宝指数基金定投',
-    account_role: 'INVESTMENT',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: '0.00',
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: false,
-    include_in_networth: true,
-    sort_order: 70,
-  },
-  {
-    id: 'ACC_DORMANT_01',
-    name: '备用低频借记卡(折叠)',
-    account_role: 'DORMANT',
-    currency: 'CNY',
-    initial_balance: '0.00',
-    book_balance: '0.00',
-    frozen_amount: '0.00',
-    market_value: null,
-    credit_limit: null,
-    fx_hold_ratio: '1.000',
-    fx_cashback_rate: '0.0000',
-    fx_monthly_cap: null,
-    billing_day: null,
-    repayment_day: null,
-    is_default_pay: false,
-    is_folded: true,
-    include_in_networth: true,
-    sort_order: 99,
-  },
-];
 
 export const CLEAN_SEED_BUDGET_POOLS: BudgetPool[] = [
   {
@@ -645,11 +275,11 @@ export const SEED_VOUCHERS: Voucher[] = [
   },
   {
     id: 2,
-    title: '花呗还款5元立减券',
-    voucher_type: 'REPAY_COUPON',
+    title: '美团外卖5元无门槛优惠券',
+    voucher_type: 'FREE_COUPON',
     face_value: '5.00',
     acquire_cost: '0.00',
-    min_spend: '100.00',
+    min_spend: '0.00',
     status: 'AVAILABLE',
     purchase_tx_id: null,
     used_tx_id: null,
@@ -693,8 +323,6 @@ export const SEED_RECURRING_RULES: RecurringRule[] = [
     trigger_day: 1,
     currency: 'CNY',
     amount: '86.00',
-    account_id: 'ACC_UNION_MAIN',
-    target_account_id: null,
     category_id: 'CAT_TELECOM',
     budget_pool_id: 'POOL_FIXED',
     auto_reserve_budget: true,
@@ -702,29 +330,12 @@ export const SEED_RECURRING_RULES: RecurringRule[] = [
   },
   {
     id: 2,
-    title: '支付宝指数基金定投',
-    rule_type: 'AUTO_INVEST',
-    cron_cycle: 'MONTHLY',
-    trigger_day: 1,
-    currency: 'CNY',
-    amount: '60.00',
-    account_id: 'ACC_UNION_MAIN',
-    target_account_id: 'ACC_ALIPAY_ETF',
-    category_id: null,
-    budget_pool_id: 'POOL_FIXED',
-    auto_reserve_budget: true,
-    is_active: true,
-  },
-  {
-    id: 3,
     title: 'Porkbun域名续费',
     rule_type: 'FX_SUBSCRIPTION',
     cron_cycle: 'YEARLY',
     trigger_day: 1,
     currency: 'USD',
     amount: '10.37',
-    account_id: 'ACC_MC_DEBIT_A',
-    target_account_id: null,
     category_id: 'CAT_DIGITAL_SUB',
     budget_pool_id: 'POOL_FLEX',
     auto_reserve_budget: true,
@@ -868,6 +479,30 @@ export class LocalLedgerEngine {
         }
       }
     }
+
+    // 清理历史版本遗留的 accounts 状态与已废弃枚举 (REPAY_COUPON / AUTO_INVEST)
+    if ('accounts' in (target as any)) {
+      delete (target as any).accounts;
+      cleaned = true;
+    }
+    if (Array.isArray(target.vouchers)) {
+      for (const v of target.vouchers) {
+        if ((v as any).voucher_type === 'REPAY_COUPON') {
+          v.voucher_type = 'FREE_COUPON';
+          cleaned = true;
+        }
+      }
+    }
+    if (Array.isArray(target.recurringRules)) {
+      const nextRules = target.recurringRules.filter(
+        (r: any) => r?.rule_type !== 'AUTO_INVEST'
+      );
+      if (nextRules.length !== target.recurringRules.length) {
+        target.recurringRules = nextRules;
+        cleaned = true;
+      }
+    }
+
     return cleaned;
   }
 
@@ -952,7 +587,6 @@ export class LocalLedgerEngine {
       nodeId,
       isOfflineMode: false,
       serverEpochId: null,
-      accounts: JSON.parse(JSON.stringify(CLEAN_SEED_ACCOUNTS)),
       budgetPools: JSON.parse(JSON.stringify(CLEAN_SEED_BUDGET_POOLS)),
       categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
       monthlyBudgets: JSON.parse(JSON.stringify(CLEAN_SEED_MONTHLY_BUDGETS)),
@@ -979,7 +613,6 @@ export class LocalLedgerEngine {
       nodeId,
       isOfflineMode: false,
       serverEpochId: null,
-      accounts: JSON.parse(JSON.stringify(SEED_ACCOUNTS)),
       budgetPools: JSON.parse(JSON.stringify(SEED_BUDGET_POOLS)),
       categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
       monthlyBudgets: JSON.parse(JSON.stringify(SEED_MONTHLY_BUDGETS)),
@@ -1049,16 +682,13 @@ export class LocalLedgerEngine {
         (h.exchange_rate == null || h.exchange_rate === '') &&
         Number(h.total_net) === Number(h.original_amount)
       ) {
-        const acc = this.state.accounts.find((a) => a.id === h.account_id);
         const fxRate = DEFAULT_FX_RATES[h.original_currency] ?? '7.200000';
         const holdRatio =
-          this.state.fxConfig?.defaultHoldRatio || acc?.fx_hold_ratio || '1.020';
+          this.state.fxConfig?.defaultHoldRatio || '1.020';
         const cashbackRate =
           h.fx_cashback_rate !== undefined && h.fx_cashback_rate !== null && h.fx_cashback_rate !== ''
             ? h.fx_cashback_rate
-            : this.state.fxConfig?.defaultCashbackRate ??
-              acc?.fx_cashback_rate ??
-              '0.0100';
+            : this.state.fxConfig?.defaultCashbackRate ?? '0.0100';
         const holdAmountCny = formatCny(
           roundCny(toDecimal(h.original_amount).times(fxRate).times(holdRatio))
         );
@@ -1083,76 +713,10 @@ export class LocalLedgerEngine {
   }
 
   // --------------------------------------------------------------------------
-  // 核心财务确定性重算
+  // 核心财务确定性重算（仅修复历史外币预授权记录）
   // --------------------------------------------------------------------------
   public recalculateAllBalances(): void {
     this.repairBuggedFxTransactions();
-
-    const voucherCostMap = new Map<number, Decimal>();
-    for (const v of this.state.vouchers) {
-      voucherCostMap.set(v.id, toDecimal(v.acquire_cost ?? 0));
-    }
-
-    const accountMap = new Map<
-      string,
-      { book: Decimal; frozen: Decimal }
-    >();
-
-    for (const acc of this.state.accounts) {
-      accountMap.set(acc.id, {
-        book: toDecimal(acc.initial_balance ?? 0),
-        frozen: new Decimal(0),
-      });
-    }
-
-    // 依序遍历未软删除的交易
-    const sortedTxs = [...this.state.transactions]
-      .filter((tx) => !tx.header.is_deleted)
-      .sort((a, b) => {
-        const da = a.header.tx_date.localeCompare(b.header.tx_date);
-        if (da !== 0) return da;
-        return a.header.id.localeCompare(b.header.id);
-      });
-
-    for (const tx of sortedTxs) {
-      const h = tx.header;
-      const acc = accountMap.get(h.account_id);
-      if (!acc) continue;
-
-      if (h.tx_type === 'EXPENSE') {
-        if (h.settlement_status === 'PENDING_HOLD') {
-          acc.frozen = acc.frozen.plus(toDecimal(h.hold_amount_cny ?? 0));
-        } else if (h.settlement_status === 'SETTLED') {
-          let cashDeducted = toDecimal(h.total_net);
-          if (h.applied_voucher_id != null) {
-            const cost = voucherCostMap.get(h.applied_voucher_id) ?? new Decimal(0);
-            cashDeducted = cashDeducted.minus(cost);
-          }
-          acc.book = acc.book.minus(cashDeducted);
-        }
-      } else if (h.tx_type === 'INCOME' || h.tx_type === 'CASHBACK_OFFSET') {
-        acc.book = acc.book.plus(toDecimal(h.total_net));
-      } else if (h.tx_type === 'VOUCHER_BUY') {
-        acc.book = acc.book.minus(toDecimal(h.total_net));
-      } else if (h.tx_type === 'TRANSFER') {
-        acc.book = acc.book.minus(toDecimal(h.total_net));
-        if (h.target_account_id) {
-          const targetAcc = accountMap.get(h.target_account_id);
-          if (targetAcc) {
-            targetAcc.book = targetAcc.book.plus(toDecimal(h.total_gross));
-          }
-        }
-      }
-    }
-
-    // 写回账户对象
-    for (const acc of this.state.accounts) {
-      const state = accountMap.get(acc.id);
-      if (state) {
-        acc.book_balance = formatCny(state.book);
-        acc.frozen_amount = formatCny(state.frozen);
-      }
-    }
   }
 
   // --------------------------------------------------------------------------
@@ -1163,14 +727,13 @@ export class LocalLedgerEngine {
     appliedVoucherId?: number | null
   ): {
     parsed: ReturnType<typeof parseQuickInputDsl>;
-    should_wake_fx_account: boolean;
+    is_fx_detected: boolean;
     voucherSavings: string;
     effectiveNet: string;
     voucherInfo: Voucher | null;
   } {
     const parsed = parseQuickInputDsl(rawText, {
       categories: this.state.categories,
-      accounts: this.state.accounts,
       projectTags: this.state.projectTags,
       budgetPools: this.state.budgetPools,
       fxConfig: this.state.fxConfig,
@@ -1185,12 +748,6 @@ export class LocalLedgerEngine {
       if (v) {
         if (v.status !== 'AVAILABLE') {
           throw new Error(`优惠券「${v.title}」已被使用或已失效`);
-        }
-        if (parsed.tx_type === 'EXPENSE' && v.voucher_type === 'REPAY_COUPON') {
-          throw new Error('还款专用券仅限在「转账/还款」中使用');
-        }
-        if (parsed.tx_type === 'TRANSFER' && v.voucher_type !== 'REPAY_COUPON') {
-          throw new Error('转账/还款仅可使用「还款券」类型的优惠券');
         }
         if (parsed.tx_type === 'INCOME') {
           throw new Error('收入交易不可使用优惠券');
@@ -1241,24 +798,13 @@ export class LocalLedgerEngine {
             allocated_discount: it.allocated_discount,
             item_net: it.net,
           }));
-        } else if (parsed.tx_type === 'TRANSFER') {
-          if (toDecimal(parsed.payment_discount).isZero()) {
-            parsed.payment_discount = formatCny(v.face_value);
-          }
-          parsed.total_net = formatCny(
-            toDecimal(parsed.total_gross).minus(toDecimal(parsed.payment_discount))
-          );
-          voucherSavings = formatCny(
-            toDecimal(v.face_value).minus(toDecimal(v.acquire_cost))
-          );
-          effectiveNet = parsed.total_net;
         }
       }
     }
 
     return {
       parsed,
-      should_wake_fx_account: Boolean(parsed.should_wake_fx_account),
+      is_fx_detected: Boolean(parsed.is_fx_detected),
       voucherSavings,
       effectiveNet,
       voucherInfo,
@@ -1282,8 +828,6 @@ export class LocalLedgerEngine {
       tx_date: effectiveDate,
       tx_timestamp: nowIso,
       tx_type: parsed.tx_type,
-      account_id: parsed.account_id,
-      target_account_id: parsed.target_account_id,
       total_gross: parsed.total_gross,
       platform_discount: parsed.platform_discount,
       payment_discount: parsed.payment_discount,
@@ -1372,29 +916,20 @@ export class LocalLedgerEngine {
   // Stage 8: 可视化表单手工记账 (无需编写 DSL)
   // --------------------------------------------------------------------------
   public recordManualTransaction(params: {
-    tx_type: 'EXPENSE' | 'INCOME' | 'TRANSFER';
+    tx_type: 'EXPENSE' | 'INCOME';
     tx_date?: string;
-    account_id?: string;
-    target_account_id?: string | null;
-    amount: string; // gross amount (or transfer amount)
+    amount: string; // gross amount
     discount?: string; // optional platform/payment discount
     category_id?: string;
     budget_pool_id?: string;
     project_tag_id?: string | null;
     merchant_or_note: string;
     applied_voucher_id?: number | null;
-    currency?: string; // default 'CNY'; if 'USD' etc., support hold_amount_cny or 102% hold on DEBIT_FX
+    currency?: string; // default 'CNY'; if 'USD' etc., support hold_amount_cny or 102% hold
     hold_amount_cny?: string;
     fx_hold_ratio?: string;
     fx_cashback_rate?: string;
   }): TransactionAggregate {
-    const accountId =
-      params.account_id ||
-      this.state.accounts.find((a) => a.is_default_pay)?.id ||
-      this.state.accounts[0]?.id ||
-      'ACC_UNION_MAIN';
-    const acc = this.state.accounts.find((a) => a.id === accountId) || this.state.accounts[0];
-
     const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nowIso = new Date().toISOString();
     const effectiveDate = params.tx_date ?? getLocalTodayDateStr();
@@ -1423,12 +958,6 @@ export class LocalLedgerEngine {
       }
       if (v.status !== 'AVAILABLE') {
         throw new Error(`优惠券「${v.title}」已被使用或已失效`);
-      }
-      if (params.tx_type === 'EXPENSE' && v.voucher_type === 'REPAY_COUPON') {
-        throw new Error('还款专用券仅限在「转账/还款」中使用');
-      }
-      if (params.tx_type === 'TRANSFER' && v.voucher_type !== 'REPAY_COUPON') {
-        throw new Error('转账/还款仅可使用「还款券」类型的优惠券');
       }
       if (params.tx_type === 'INCOME') {
         throw new Error('收入交易不可使用优惠券');
@@ -1524,15 +1053,11 @@ export class LocalLedgerEngine {
         const holdRatio =
           params.fx_hold_ratio !== undefined && params.fx_hold_ratio !== ''
             ? params.fx_hold_ratio
-            : this.state.fxConfig?.defaultHoldRatio ??
-              acc?.fx_hold_ratio ??
-              '1.020';
+            : this.state.fxConfig?.defaultHoldRatio ?? '1.020';
         const cashbackRate =
           params.fx_cashback_rate !== undefined && params.fx_cashback_rate !== ''
             ? params.fx_cashback_rate
-            : this.state.fxConfig?.defaultCashbackRate ??
-              acc?.fx_cashback_rate ??
-              '0.0100';
+            : this.state.fxConfig?.defaultCashbackRate ?? '0.0100';
         fxCashbackRateToStore = Number(cashbackRate).toFixed(4);
 
         if (params.hold_amount_cny && Number(params.hold_amount_cny) > 0) {
@@ -1561,15 +1086,6 @@ export class LocalLedgerEngine {
           items[0].item_net = fxResult.total_net;
         }
       }
-    } else if (params.tx_type === 'TRANSFER') {
-      let discountDec = toDecimal(params.discount ?? 0);
-      if (appliedVoucher) {
-        discountDec = discountDec.plus(toDecimal(appliedVoucher.face_value));
-      }
-      paymentDiscount = formatCny(discountDec);
-      totalNet = formatCny(
-        Decimal.max(0, toDecimal(totalGross).minus(discountDec))
-      );
     } else if (params.tx_type === 'INCOME') {
       paymentDiscount = '0.00';
       totalNet = totalGross;
@@ -1581,8 +1097,6 @@ export class LocalLedgerEngine {
       tx_date: effectiveDate,
       tx_timestamp: nowIso,
       tx_type: params.tx_type,
-      account_id: accountId,
-      target_account_id: params.target_account_id ?? null,
       total_gross: totalGross,
       platform_discount: platformDiscount,
       payment_discount: paymentDiscount,
@@ -1636,8 +1150,6 @@ export class LocalLedgerEngine {
     txId: string,
     patch: {
       tx_date?: string;
-      account_id?: string;
-      target_account_id?: string | null;
       total_gross?: string;
       payment_discount?: string;
       total_net?: string;
@@ -1666,8 +1178,6 @@ export class LocalLedgerEngine {
     const prevNet = h.total_net;
 
     if (patch.tx_date !== undefined) h.tx_date = patch.tx_date;
-    if (patch.account_id !== undefined) h.account_id = patch.account_id;
-    if (patch.target_account_id !== undefined) h.target_account_id = patch.target_account_id;
     if (patch.merchant_or_note !== undefined) h.merchant_or_note = patch.merchant_or_note;
 
     if (patch.total_gross !== undefined) {
@@ -1832,125 +1342,6 @@ export class LocalLedgerEngine {
     this.saveToStorage();
 
     return tx;
-  }
-
-  // --------------------------------------------------------------------------
-  // Stage 8: 账户矩阵 CRUD 与余额校准
-  // --------------------------------------------------------------------------
-  public upsertAccount(
-    account: Partial<Account> & { name: string; account_role: AccountRole }
-  ): Account {
-    let target = this.state.accounts.find((a) => a.id === account.id);
-
-    if (target) {
-      target.name = account.name;
-      target.account_role = account.account_role;
-      if (account.currency !== undefined) target.currency = account.currency;
-      if (account.credit_limit !== undefined) {
-        target.credit_limit = account.credit_limit ? formatCny(account.credit_limit) : null;
-      }
-      if (account.billing_day !== undefined) target.billing_day = account.billing_day;
-      if (account.repayment_day !== undefined) target.repayment_day = account.repayment_day;
-      if (account.fx_hold_ratio !== undefined) target.fx_hold_ratio = account.fx_hold_ratio;
-      if (account.fx_cashback_rate !== undefined) target.fx_cashback_rate = account.fx_cashback_rate;
-      if (account.fx_monthly_cap !== undefined) {
-        target.fx_monthly_cap = account.fx_monthly_cap ? formatCny(account.fx_monthly_cap) : null;
-      }
-      if (account.is_default_pay !== undefined) target.is_default_pay = Boolean(account.is_default_pay);
-      if (account.is_folded !== undefined) target.is_folded = Boolean(account.is_folded);
-      if (account.include_in_networth !== undefined) {
-        target.include_in_networth = Boolean(account.include_in_networth);
-      }
-      if (account.initial_balance !== undefined) {
-        target.initial_balance = formatCny(account.initial_balance);
-      }
-      if (account.market_value !== undefined) {
-        target.market_value = account.market_value ? formatCny(account.market_value) : null;
-      }
-      if (account.sort_order !== undefined) target.sort_order = account.sort_order;
-    } else {
-      const id = account.id || `ACC_CUSTOM_${Date.now()}`;
-      const initBal = formatCny(account.initial_balance ?? '0.00');
-      target = {
-        id,
-        name: account.name,
-        account_role: account.account_role,
-        currency: account.currency ?? 'CNY',
-        initial_balance: initBal,
-        book_balance: initBal,
-        frozen_amount: '0.00',
-        market_value: account.market_value
-          ? formatCny(account.market_value)
-          : account.account_role === 'INVESTMENT'
-            ? '0.00'
-            : null,
-        credit_limit: account.credit_limit ? formatCny(account.credit_limit) : null,
-        fx_hold_ratio: account.fx_hold_ratio ?? (account.account_role === 'DEBIT_FX' ? '1.020' : '1.000'),
-        fx_cashback_rate: account.fx_cashback_rate ?? (account.account_role === 'DEBIT_FX' ? '0.0100' : '0.0000'),
-        fx_monthly_cap: account.fx_monthly_cap ? formatCny(account.fx_monthly_cap) : null,
-        billing_day: account.billing_day ?? null,
-        repayment_day: account.repayment_day ?? null,
-        is_default_pay: Boolean(account.is_default_pay),
-        is_folded: Boolean(account.is_folded),
-        include_in_networth: account.include_in_networth ?? true,
-        sort_order: account.sort_order ?? 100,
-      };
-      this.state.accounts.push(target);
-    }
-
-    if (account.is_default_pay) {
-      for (const a of this.state.accounts) {
-        if (a.id !== target.id) {
-          a.is_default_pay = false;
-        }
-      }
-    }
-
-    target.updated_hlc = this.hlc.now();
-    this.appendOpLog('ACCOUNT', target.id, 'UPSERT', target);
-    this.recalculateAllBalances();
-    this.saveToStorage();
-
-    return target;
-  }
-
-  public calibrateAccountBalance(
-    accountId: string,
-    targetBookBalance: string
-  ): Account {
-    const acc = this.state.accounts.find((a) => a.id === accountId);
-    if (!acc) {
-      throw new Error(`Account "${accountId}" not found`);
-    }
-
-    const delta = toDecimal(targetBookBalance).minus(toDecimal(acc.book_balance));
-    acc.initial_balance = formatCny(toDecimal(acc.initial_balance ?? 0).plus(delta));
-    acc.updated_hlc = this.hlc.now();
-
-    this.appendOpLog('ACCOUNT', acc.id, 'UPSERT', acc);
-    this.recalculateAllBalances();
-    this.saveToStorage();
-
-    return acc;
-  }
-
-  public deleteAccount(accountId: string): void {
-    const hasActiveTx = this.state.transactions.some(
-      (tx) =>
-        !tx.header.is_deleted &&
-        (tx.header.account_id === accountId || tx.header.target_account_id === accountId)
-    );
-
-    if (hasActiveTx) {
-      throw new Error('账户存在关联交易流水，无法直接删除。请先清理或归档相关交易！');
-    }
-
-    const idx = this.state.accounts.findIndex((a) => a.id === accountId);
-    if (idx !== -1) {
-      this.state.accounts.splice(idx, 1);
-      this.appendOpLog('ACCOUNT', accountId, 'DELETE', { id: accountId });
-      this.saveToStorage();
-    }
   }
 
   // --------------------------------------------------------------------------
@@ -2179,7 +1570,6 @@ export class LocalLedgerEngine {
     min_spend: string;
     expire_date?: string | null;
     status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
-    accountId?: string;
   }): { voucher: Voucher; tx?: TransactionAggregate } {
     const finalTitle =
       params.title?.trim() ||
@@ -2197,7 +1587,6 @@ export class LocalLedgerEngine {
         face_value: params.face_value,
         acquire_cost: params.acquire_cost,
         min_spend: params.min_spend,
-        accountId: params.accountId ?? 'ACC_UNION_MAIN',
         expire_date: params.expire_date,
       });
     }
@@ -2265,19 +1654,17 @@ export class LocalLedgerEngine {
   }
 
   public upsertRecurringRule(
-    rule: Partial<RecurringRule> & { title: string; amount: string; account_id?: string }
+    rule: Partial<RecurringRule> & { title: string; amount: string }
   ): RecurringRule {
     let target = this.state.recurringRules.find((r) => r.id === rule.id);
 
     if (target) {
       target.title = rule.title;
       target.amount = formatCny(rule.amount);
-      if (rule.account_id !== undefined) target.account_id = rule.account_id;
       if (rule.rule_type !== undefined) target.rule_type = rule.rule_type;
       if (rule.cron_cycle !== undefined) target.cron_cycle = rule.cron_cycle;
       if (rule.trigger_day !== undefined) target.trigger_day = rule.trigger_day;
       if (rule.currency !== undefined) target.currency = rule.currency;
-      if (rule.target_account_id !== undefined) target.target_account_id = rule.target_account_id;
       if (rule.category_id !== undefined) target.category_id = rule.category_id;
       if (rule.budget_pool_id !== undefined) target.budget_pool_id = rule.budget_pool_id;
       if (rule.auto_reserve_budget !== undefined) {
@@ -2295,8 +1682,6 @@ export class LocalLedgerEngine {
         trigger_day: rule.trigger_day ?? 1,
         currency: rule.currency ?? 'CNY',
         amount: formatCny(rule.amount),
-        account_id: rule.account_id ?? 'ACC_UNION_MAIN',
-        target_account_id: rule.target_account_id ?? null,
         category_id: rule.category_id ?? null,
         budget_pool_id: rule.budget_pool_id ?? null,
         auto_reserve_budget: rule.auto_reserve_budget ?? true,
@@ -2329,25 +1714,10 @@ export class LocalLedgerEngine {
       throw new Error(`Recurring rule "${id}" not found`);
     }
 
-    if (rule.rule_type === 'AUTO_INVEST') {
-      return this.recordManualTransaction({
-        tx_type: 'TRANSFER',
-        tx_date: txDate,
-        account_id: rule.account_id,
-        target_account_id: rule.target_account_id,
-        amount: rule.amount,
-        category_id: rule.category_id ?? undefined,
-        budget_pool_id: rule.budget_pool_id ?? 'POOL_FIXED',
-        merchant_or_note: rule.title,
-        currency: rule.currency,
-      });
-    }
-
     if (rule.rule_type === 'FX_SUBSCRIPTION') {
       return this.recordManualTransaction({
         tx_type: 'EXPENSE',
         tx_date: txDate,
-        account_id: rule.account_id,
         amount: rule.amount,
         category_id: rule.category_id ?? 'CAT_DIGITAL_SUB',
         budget_pool_id: rule.budget_pool_id ?? 'POOL_FLEX',
@@ -2359,7 +1729,6 @@ export class LocalLedgerEngine {
     return this.recordManualTransaction({
       tx_type: 'EXPENSE',
       tx_date: txDate,
-      account_id: rule.account_id,
       amount: rule.amount,
       category_id: rule.category_id ?? 'CAT_TELECOM',
       budget_pool_id: rule.budget_pool_id ?? 'POOL_FIXED',
@@ -2450,7 +1819,6 @@ export class LocalLedgerEngine {
     face_value: string;
     acquire_cost: string;
     min_spend: string;
-    accountId?: string;
     expire_date?: string | null;
   }): { voucher: Voucher; tx: TransactionAggregate } {
     const finalTitle =
@@ -2467,7 +1835,6 @@ export class LocalLedgerEngine {
     const today = nowIso.slice(0, 10);
     const txId = `tx_buy_voucher_${Date.now()}`;
     const hlc = this.hlc.now();
-    const accountId = params.accountId || 'ACC_UNION_MAIN';
 
     const newVoucher: Voucher = {
       id: nextId,
@@ -2487,8 +1854,6 @@ export class LocalLedgerEngine {
       tx_date: today,
       tx_timestamp: nowIso,
       tx_type: 'VOUCHER_BUY',
-      account_id: accountId,
-      target_account_id: null,
       total_gross: formatCny(params.acquire_cost),
       platform_discount: '0.00',
       payment_discount: '0.00',
@@ -2545,103 +1910,6 @@ export class LocalLedgerEngine {
   }
 
   // --------------------------------------------------------------------------
-  // 指数基金市值更新
-  // --------------------------------------------------------------------------
-  public updateEtfMarketValue(
-    accountId: string,
-    marketValue: string
-  ): Account {
-    const acc = this.state.accounts.find((it) => it.id === accountId);
-    if (!acc) throw new Error(`Account "${accountId}" not found`);
-
-    acc.market_value = formatCny(marketValue);
-    const hlc = this.hlc.now();
-    acc.updated_hlc = hlc;
-
-    const op: SyncOpLogEntry = {
-      hlc,
-      node_id: this.state.nodeId,
-      entity_type: 'ACCOUNT',
-      entity_id: acc.id,
-      op_type: 'UPSERT',
-      payload_json: JSON.stringify(acc),
-      created_at: new Date().toISOString(),
-    };
-    this.state.oplogs.push(op);
-    this.state.pendingSyncOps.push(op);
-
-    this.saveToStorage();
-    return acc;
-  }
-
-  // --------------------------------------------------------------------------
-  // 高频生活池月末正结余划入专项考证基金池
-  // --------------------------------------------------------------------------
-  public sweepDailyToFund(yearMonth: string): {
-    sweptAmount: string;
-    yearMonth: string;
-  } {
-    const statusRows = this.getMonthlyBudgetStatus(yearMonth);
-    const dailyRow = statusRows.find((r) => r.pool_id === 'POOL_DAILY');
-    if (!dailyRow) {
-      throw new Error(`Budget status for POOL_DAILY in ${yearMonth} not found`);
-    }
-
-    const remainingDec = toDecimal(dailyRow.remaining_budget);
-    if (remainingDec.lessThanOrEqualTo(0)) {
-      throw new Error(
-        `POOL_DAILY in ${yearMonth} has no surplus to sweep (remaining: ${dailyRow.remaining_budget})`
-      );
-    }
-
-    const sweptAmount = formatCny(remainingDec);
-    const dailyBudget = this.state.monthlyBudgets.find(
-      (b) => b.year_month === yearMonth && b.pool_id === 'POOL_DAILY'
-    );
-    if (dailyBudget) {
-      dailyBudget.swept_to_fund = formatCny(
-        toDecimal(dailyBudget.swept_to_fund).plus(remainingDec)
-      );
-    }
-
-    const fundBudget = this.state.monthlyBudgets.find(
-      (b) => b.year_month === yearMonth && b.pool_id === 'POOL_FUND'
-    );
-    if (fundBudget) {
-      fundBudget.rollover_from_prev = formatCny(
-        toDecimal(fundBudget.rollover_from_prev).plus(remainingDec)
-      );
-    }
-
-    const hlc = this.hlc.now();
-    const op: SyncOpLogEntry = {
-      hlc,
-      node_id: this.state.nodeId,
-      entity_type: 'MONTHLY_BUDGET',
-      entity_id: `${yearMonth}:SWEEP`,
-      op_type: 'UPSERT',
-      payload_json: JSON.stringify({ yearMonth, sweptAmount }),
-      created_at: new Date().toISOString(),
-    };
-    this.state.oplogs.push(op);
-    this.state.pendingSyncOps.push(op);
-
-    this.saveToStorage();
-    return { sweptAmount, yearMonth };
-  }
-
-  // --------------------------------------------------------------------------
-  // 睡眠卡折叠切换
-  // --------------------------------------------------------------------------
-  public toggleAccountFolded(accountId: string): Account {
-    const acc = this.state.accounts.find((a) => a.id === accountId);
-    if (!acc) throw new Error(`Account "${accountId}" not found`);
-    acc.is_folded = !acc.is_folded;
-    this.saveToStorage();
-    return acc;
-  }
-
-  // --------------------------------------------------------------------------
   // 二手回血冲抵固定资产
   // --------------------------------------------------------------------------
   public recordAssetResale(
@@ -2675,30 +1943,6 @@ export class LocalLedgerEngine {
   // --------------------------------------------------------------------------
   // 看板与统计查询方法
   // --------------------------------------------------------------------------
-  public getAccountDashboard(): AccountDashboardRow[] {
-    return this.state.accounts.map((acc) => {
-      const book = toDecimal(acc.book_balance);
-      const frozen = toDecimal(acc.frozen_amount);
-      const available = book.minus(frozen);
-      let pnl = '0.00';
-      if (acc.account_role === 'INVESTMENT' && acc.market_value != null) {
-        pnl = formatCny(toDecimal(acc.market_value).minus(book));
-      }
-      return {
-        id: acc.id,
-        name: acc.name,
-        account_role: acc.account_role,
-        currency: acc.currency,
-        book_balance: acc.book_balance,
-        frozen_amount: acc.frozen_amount,
-        available_balance: formatCny(available),
-        market_value: acc.market_value,
-        unrealized_pnl: pnl,
-        is_folded: acc.is_folded,
-      };
-    });
-  }
-
   public getPendingFxTransactions(): TransactionAggregate[] {
     return this.state.transactions.filter(
       (tx) =>
@@ -2983,7 +2227,8 @@ export class LocalLedgerEngine {
           const t = this.state.transactions.find((tx) => tx.header.id === entityId);
           if (t) t.header.is_deleted = true;
         } else if (entityType === 'ACCOUNT') {
-          this.state.accounts = this.state.accounts.filter((a) => a.id !== entityId);
+          // 账户体系已彻底移除，兼容忽略历史遗留的 ACCOUNT 同步日志
+          continue;
         } else if (entityType === 'VOUCHER') {
           this.state.vouchers = this.state.vouchers.filter((v) => String(v.id) !== entityId);
         } else if (entityType === 'BUDGET_POOL') {
@@ -3025,13 +2270,8 @@ export class LocalLedgerEngine {
             this.state.vouchers.unshift(v);
           }
         } else if (entityType === 'ACCOUNT') {
-          const acc = payload as Account;
-          const idx = this.state.accounts.findIndex((it) => it.id === acc.id);
-          if (idx !== -1) {
-            this.state.accounts[idx] = { ...this.state.accounts[idx], ...acc };
-          } else {
-            this.state.accounts.push(acc);
-          }
+          // 账户体系已彻底移除，兼容忽略历史遗留的 ACCOUNT 同步日志
+          continue;
         } else if (entityType === 'BUDGET_POOL') {
           const pool = payload as BudgetPool;
           const idx = this.state.budgetPools.findIndex((p) => p.id === pool.id);
@@ -3194,7 +2434,7 @@ export class LocalLedgerEngine {
   public async simulateServerCrashAndRecover(apiBaseUrl = ''): Promise<{
     crashed: boolean;
     restored: boolean;
-    restoredAccounts: number;
+    restoredTransactions: number;
     restoredOpLogs: number;
   }> {
     // 1. 调用服务端炸机演示接口
@@ -3226,7 +2466,7 @@ export class LocalLedgerEngine {
     return {
       crashed: true,
       restored: true,
-      restoredAccounts: bundle.accounts.length,
+      restoredTransactions: (bundle.transactions ?? []).length,
       restoredOpLogs: bundle.oplogs.length,
     };
   }
@@ -3285,7 +2525,6 @@ export class LocalLedgerEngine {
     const cloneOrFallback = <T>(val: T[] | undefined, fallback: T[]): T[] =>
       Array.isArray(val) ? JSON.parse(JSON.stringify(val)) : JSON.parse(JSON.stringify(fallback));
 
-    this.state.accounts = cloneOrFallback(bundle.accounts, CLEAN_SEED_ACCOUNTS);
     this.state.budgetPools = cloneOrFallback(bundle.budgetPools, CLEAN_SEED_BUDGET_POOLS);
     this.state.categories = cloneOrFallback(bundle.categories, DEFAULT_CATEGORIES);
     this.state.projectTags = cloneOrFallback(bundle.projectTags, []);
@@ -3294,7 +2533,9 @@ export class LocalLedgerEngine {
     this.state.vouchers = cloneOrFallback(bundle.vouchers, []);
     this.state.monthlyBudgets = cloneOrFallback(bundle.monthlyBudgets, CLEAN_SEED_MONTHLY_BUDGETS);
     this.state.transactions = cloneOrFallback(bundle.transactions, []);
-    this.state.oplogs = cloneOrFallback(bundle.oplogs, []);
+    this.state.oplogs = cloneOrFallback(bundle.oplogs, []).filter(
+      (op: any) => op?.entity_type !== 'ACCOUNT'
+    );
 
     this.cleanupDeprecatedPoolsFromState(this.state);
 
@@ -3323,7 +2564,6 @@ export class LocalLedgerEngine {
     return {
       nodeId: this.state.nodeId,
       exportedAt: new Date().toISOString(),
-      accounts: this.state.accounts,
       budgetPools: this.state.budgetPools,
       categories: this.state.categories,
       projectTags: this.state.projectTags,

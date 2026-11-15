@@ -314,8 +314,6 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
         trigger_day: parsedDay,
         currency: ruleForm.currency,
         amount: ruleForm.amount,
-        account_id: 'ACC_UNION_MAIN',
-        target_account_id: null,
         budget_pool_id: ruleForm.budget_pool_id || null,
         category_id: null,
         auto_reserve_budget: ruleForm.auto_reserve_budget,

@@ -152,7 +152,6 @@ export function createLedgerServer(
           serverEpochId,
           yearMonth: ym,
           currentDate: cd,
-          accounts: repo.getAccountDashboard(),
           budgetStatus: repo.getMonthlyBudgetStatus(ym, cd),
           transactions: repo.getRecentTransactions(100),
           pendingFxTransactions: repo.getPendingFxTransactions(),
@@ -176,23 +175,12 @@ export function createLedgerServer(
         const categories = repo.db
           .prepare('SELECT * FROM categories')
           .all() as unknown as Category[];
-        const accounts = (
-          repo.db
-            .prepare(
-              'SELECT id, name, account_role, is_default_pay FROM accounts'
-            )
-            .all() as any[]
-        ).map((a) => ({
-          ...a,
-          is_default_pay: Boolean(a.is_default_pay),
-        }));
         const projectTags = repo.db
           .prepare('SELECT * FROM projects_and_tags')
           .all() as unknown as ProjectTag[];
 
         const parsed = parseQuickInputDsl(rawText, {
           categories,
-          accounts,
           projectTags,
           txDate,
         });
@@ -244,13 +232,6 @@ export function createLedgerServer(
                 allocated_discount: alloc.items[idx].allocated_discount,
                 item_net: alloc.items[idx].net,
               }));
-            } else if (parsed.tx_type === 'TRANSFER') {
-              if (toDecimal(paymentDiscount).isZero()) {
-                paymentDiscount = formatCny(voucher.face_value);
-              }
-              totalNet = formatCny(
-                toDecimal(totalGross).minus(toDecimal(paymentDiscount))
-              );
             }
           }
         }
@@ -337,71 +318,10 @@ export function createLedgerServer(
       }
     }
 
-    // 7. POST /api/accounts/:id/initial-balance
-    m = pathname.match(/^\/api\/accounts\/([^/]+)\/initial-balance$/);
-    if (method === 'POST' && m) {
-      const id = decodeURIComponent(m[1]);
-      const { initialBalance } = (body as any) || {};
-      if (initialBalance === undefined || initialBalance === null) {
-        return {
-          statusCode: 400,
-          body: { error: 'initialBalance is required' },
-        };
-      }
-      try {
-        repo.setAccountInitialBalance(id, String(initialBalance));
-        return {
-          statusCode: 200,
-          body: { accounts: repo.getAccountDashboard() },
-        };
-      } catch (err) {
-        return {
-          statusCode: 400,
-          body: { error: err instanceof Error ? err.message : String(err) },
-        };
-      }
-    }
-
-    // 8. POST /api/accounts/:id/market-value
-    m = pathname.match(/^\/api\/accounts\/([^/]+)\/market-value$/);
-    if (method === 'POST' && m) {
-      const id = decodeURIComponent(m[1]);
-      const { marketValue } = (body as any) || {};
-      if (marketValue === undefined || marketValue === null) {
-        return { statusCode: 400, body: { error: 'marketValue is required' } };
-      }
-      try {
-        const account = repo.updateInvestmentMarketValue(id, String(marketValue));
-        return { statusCode: 200, body: { account } };
-      } catch (err) {
-        return {
-          statusCode: 400,
-          body: { error: err instanceof Error ? err.message : String(err) },
-        };
-      }
-    }
-
     // 9. POST /api/vouchers/buy
     if (method === 'POST' && pathname === '/api/vouchers/buy') {
       try {
         const result = repo.buyVoucher(body as any);
-        return { statusCode: 200, body: result };
-      } catch (err) {
-        return {
-          statusCode: 400,
-          body: { error: err instanceof Error ? err.message : String(err) },
-        };
-      }
-    }
-
-    // 10. POST /api/budgets/sweep-to-fund
-    if (method === 'POST' && pathname === '/api/budgets/sweep-to-fund') {
-      const { yearMonth } = (body as any) || {};
-      if (!yearMonth) {
-        return { statusCode: 400, body: { error: 'yearMonth is required' } };
-      }
-      try {
-        const result = repo.sweepDailyPoolToSinkingFund(yearMonth);
         return { statusCode: 200, body: result };
       } catch (err) {
         return {
@@ -512,10 +432,10 @@ export function createLedgerServer(
     // 15. POST /api/sync/reseed
     if (method === 'POST' && pathname === '/api/sync/reseed') {
       const { bundle } = (body as any) || {};
-      if (!bundle) {
+      if (!bundle || !Array.isArray(bundle.oplogs)) {
         return {
           statusCode: 400,
-          body: { error: 'Missing bundle in request body' },
+          body: { error: 'Missing valid bundle in request body' },
         };
       }
       try {
@@ -525,7 +445,6 @@ export function createLedgerServer(
           body: {
             restored: true,
             oplogCount: repo.getOpLogs().length,
-            accounts: repo.getAccountDashboard(),
           },
         };
       } catch (err) {
@@ -590,9 +509,6 @@ export function createLedgerServer(
     if (method === 'GET' && pathname === '/api/vouchers') {
       return { statusCode: 200, body: repo.getVouchers() };
     }
-    if (method === 'GET' && pathname === '/api/accounts') {
-      return { statusCode: 200, body: repo.getAccountDashboard() };
-    }
 
     // ========================================================================
     // Stage 8: 全生命周期 CRUD REST Endpoints
@@ -626,44 +542,6 @@ export function createLedgerServer(
       try {
         const tx = repo.deleteTransaction(id);
         return { statusCode: 200, body: { transaction: tx, deleted: true } };
-      } catch (err) {
-        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
-      }
-    }
-
-    // 21. POST /api/accounts
-    if (method === 'POST' && pathname === '/api/accounts') {
-      try {
-        const account = repo.upsertAccount(body as any);
-        return { statusCode: 200, body: { account, accounts: repo.getAccountDashboard() } };
-      } catch (err) {
-        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
-      }
-    }
-
-    // 22. POST /api/accounts/:id/calibrate
-    let accCalibMatch = pathname.match(/^\/api\/accounts\/([^/]+)\/calibrate$/);
-    if (method === 'POST' && accCalibMatch) {
-      const id = decodeURIComponent(accCalibMatch[1]);
-      const { targetBookBalance } = (body as any) || {};
-      if (targetBookBalance === undefined || targetBookBalance === null) {
-        return { statusCode: 400, body: { error: 'targetBookBalance is required' } };
-      }
-      try {
-        const account = repo.calibrateAccountBalance(id, String(targetBookBalance));
-        return { statusCode: 200, body: { account, accounts: repo.getAccountDashboard() } };
-      } catch (err) {
-        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
-      }
-    }
-
-    // 23. DELETE /api/accounts/:id
-    let accMatch = pathname.match(/^\/api\/accounts\/([^/]+)$/);
-    if (method === 'DELETE' && accMatch) {
-      const id = decodeURIComponent(accMatch[1]);
-      try {
-        repo.deleteAccount(id);
-        return { statusCode: 200, body: { success: true, accounts: repo.getAccountDashboard() } };
       } catch (err) {
         return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
       }

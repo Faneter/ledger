@@ -1,104 +1,28 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { describe, it, expect } from 'vitest';
 import { LedgerRepository } from '../src/ledger-repository.js';
 import { Decimal, roundCny, formatCny } from '@ledger/core';
 
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require('node:sqlite') as {
+  DatabaseSync: typeof DatabaseSyncType;
+};
+
 describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests', () => {
   // --------------------------------------------------------------------------
-  // 测试 1：TRANSFER 隔离定律与指数基金浮动盈亏
+  // 测试 1：万事达外币预授权与返现清算生命周期
   // --------------------------------------------------------------------------
-  describe('1. TRANSFER Isolation Law & Investment Unrealized PnL', () => {
-    it('should NOT deduct monthly budget pools when executing transfers (repay credit, recharge card, ETF invest), while correctly accumulating cost basis and unrealized PnL', () => {
-      const repo = new LedgerRepository(':memory:', 'node-transfer-test');
-
-      // 初始化各账户本金
-      repo.setAccountInitialBalance('ACC_UNION_MAIN', '2000.00');
-      repo.setAccountInitialBalance('ACC_HUABEI', '-500.00'); // 花呗待还负债 500 元
-      repo.setAccountInitialBalance('ACC_CAMPUS_CARD', '0.00');
-      repo.setAccountInitialBalance('ACC_ALIPAY_ETF', '0.00');
-
-      // 1. 偿还花呗：使用 5 元还款券（券 ID 2）
-      // 银联卡实际出资 495.00，花呗负债冲销 500.00
-      const repayTx = repo.recordFromDsl(
-        '还款 @花呗 500 - 还款券 5 从 @主力银联卡',
-        '2026-11-02',
-        2
-      );
-      expect(repayTx.header.tx_type).toBe('TRANSFER');
-      expect(repayTx.header.total_gross).toBe('500.00');
-      expect(repayTx.header.payment_discount).toBe('5.00');
-      expect(repayTx.header.total_net).toBe('495.00');
-
-      // 2. 充值校园饭卡 100 元
-      const rechargeTx = repo.recordFromDsl(
-        '转账 @校园饭卡 100 从 @主力银联卡',
-        '2026-11-03'
-      );
-      expect(rechargeTx.header.tx_type).toBe('TRANSFER');
-      expect(rechargeTx.header.total_net).toBe('100.00');
-
-      // 3. 支付宝指数基金定投 60 元
-      const investTx = repo.recordFromDsl(
-        '转账 @支付宝指数基金定投 60 从 @主力银联卡',
-        '2026-11-04'
-      );
-      expect(investTx.header.tx_type).toBe('TRANSFER');
-      expect(investTx.header.total_gross).toBe('60.00');
-      expect(investTx.header.total_net).toBe('60.00');
-
-      // 验证账户看板：银联卡余额 = 2000 - 495 - 100 - 60 = 1345.00
-      // 花呗余额 = -500 + 500 = 0.00
-      // 饭卡余额 = 0 + 100 = 100.00
-      // 指数基金本金 = 0 + 60 = 60.00
-      const dashboard1 = repo.getAccountDashboard();
-      const unionAcc = dashboard1.find((a) => a.id === 'ACC_UNION_MAIN')!;
-      const huabeiAcc = dashboard1.find((a) => a.id === 'ACC_HUABEI')!;
-      const campusAcc = dashboard1.find((a) => a.id === 'ACC_CAMPUS_CARD')!;
-      const etfAcc = dashboard1.find((a) => a.id === 'ACC_ALIPAY_ETF')!;
-
-      expect(unionAcc.book_balance).toBe('1345.00');
-      expect(huabeiAcc.book_balance).toBe('0.00');
-      expect(campusAcc.book_balance).toBe('100.00');
-      expect(etfAcc.book_balance).toBe('60.00');
-      expect(etfAcc.unrealized_pnl).toBe('0.00'); // 尚未更新市值
-
-      // 月底手动更新指数基金市值为 65.00 元（浮盈 5.00 元）
-      const updatedEtf = repo.updateInvestmentMarketValue(
-        'ACC_ALIPAY_ETF',
-        '65.00'
-      );
-      expect(updatedEtf.market_value).toBe('65.00');
-      expect(updatedEtf.unrealized_pnl).toBe('5.00');
-
-      // 严格验证 PRD 1.2「收支与转账隔离原则」：
-      // 内部转账绝不二次扣减常规消费预算，常规月度池 spent_net 严格为 "0.00"！
-      const budgetStatus = repo.getMonthlyBudgetStatus('2026-11');
-      const regularPools = budgetStatus.pools.filter((p) =>
-        ['POOL_FIXED', 'POOL_DAILY', 'POOL_FLEX', 'POOL_EMERGENCY'].includes(
-          p.pool_id
-        )
-      );
-
-      for (const pool of regularPools) {
-        expect(pool.spent_net).toBe('0.00');
-        expect(pool.spent_gross).toBe('0.00');
-      }
-      expect(budgetStatus.totalMonthlySpent).toBe('0.00');
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // 测试 2：万事达外币预授权双轨余额流转
-  // --------------------------------------------------------------------------
-  describe('2. Mastercard CN Debit FX Dual-Track Balance & Lifecycle', () => {
-    it('should maintain book_balance unchanged and freeze 102% in PENDING_HOLD, then release freeze and deduct settled net with 1% cashback in SETTLED', () => {
+  describe('1. Mastercard CN Debit FX Pre-Auth & Settlement Lifecycle', () => {
+    it('should record 102% hold in PENDING_HOLD, then settle net with 1% cashback in SETTLED', () => {
       const repo = new LedgerRepository(':memory:', 'node-mc-fx-test');
 
-      // 设置万事达借记卡 A 初始余额 200.00
-      repo.setAccountInitialBalance('ACC_MC_DEBIT_A', '200.00');
-
-      // 1. 录入外币预授权消费：Porkbun域名 $4.35 冻结31.95 #数字服务 @万事达A
+      // 1. 录入外币预授权消费：Porkbun域名 $4.35 冻结31.95 #数字服务
       const holdTx = repo.recordFromDsl(
-        'Porkbun域名 $4.35 冻结31.95 #数字服务 @万事达A',
+        'Porkbun域名 $4.35 冻结31.95 #数字服务',
         '2026-11-08'
       );
 
@@ -110,14 +34,6 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       expect(holdTx.header.total_gross).toBe('31.32');
       expect(holdTx.header.payment_discount).toBe('0.31');
       expect(holdTx.header.total_net).toBe('31.01');
-
-      // 验证挂起态账户双轨余额：
-      // book_balance 保持 200.00 不变，frozen_amount = 31.95，available_balance = 200 - 31.95 = 168.05
-      const dashboardHold = repo.getAccountDashboard();
-      const mcHold = dashboardHold.find((a) => a.id === 'ACC_MC_DEBIT_A')!;
-      expect(mcHold.book_balance).toBe('200.00');
-      expect(mcHold.frozen_amount).toBe('31.95');
-      expect(mcHold.available_balance).toBe('168.05');
 
       // 验证挂起态弹性预算池暂扣 31.01
       const budgetHold = repo.getMonthlyBudgetStatus('2026-11');
@@ -141,14 +57,6 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       // 最终结算汇率 = 31.20 / 4.35 = 7.172414
       expect(settledTx.header.exchange_rate).toBe('7.172414');
 
-      // 验证清算后账户状态：
-      // frozen_amount 彻底释放为 0.00，book_balance = 200.00 - 30.89 = 169.11，available_balance = 169.11
-      const dashboardSettled = repo.getAccountDashboard();
-      const mcSettled = dashboardSettled.find((a) => a.id === 'ACC_MC_DEBIT_A')!;
-      expect(mcSettled.frozen_amount).toBe('0.00');
-      expect(mcSettled.book_balance).toBe('169.11');
-      expect(mcSettled.available_balance).toBe('169.11');
-
       // 验证预算池净支出自动修正为 30.89
       const budgetSettled = repo.getMonthlyBudgetStatus('2026-11');
       const flexSettled = budgetSettled.pools.find(
@@ -159,18 +67,14 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
   });
 
   // --------------------------------------------------------------------------
-  // 测试 3：有偿立减金购券入库与食堂消费核销闭环
+  // 测试 2：有偿立减金购券入库与食堂消费核销闭环
   // --------------------------------------------------------------------------
-  describe('3. Prepaid Voucher Buying and Canteen Redemption Closed-Loop', () => {
+  describe('2. Prepaid Voucher Buying and Canteen Redemption Closed-Loop', () => {
     it('should accurately carry over acquire cost (5.99) with cash (5.00) totaling 10.99 net spent, while crediting 4.01 savings', () => {
       const repo = new LedgerRepository(':memory:', 'node-voucher-test');
 
-      // 设置银联卡初始余额 500.00
-      repo.setAccountInitialBalance('ACC_UNION_MAIN', '500.00');
-
       // 1. 花费 5.99 元购买一张面值 10.00 元的微信立减金（门槛 10.01 元）
-      const { voucher } = repo.buyVoucher({
-        accountId: 'ACC_UNION_MAIN',
+      const { voucher, transaction: buyTx } = repo.buyVoucher({
         title: '微信支付10元立减金',
         voucherType: 'PREPAID_COUPON',
         faceValue: '10.00',
@@ -182,13 +86,8 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       expect(voucher.status).toBe('AVAILABLE');
       expect(voucher.face_value).toBe('10.00');
       expect(voucher.acquire_cost).toBe('5.99');
-
-      // 验证购券后银联卡账户已扣款 5.99 元：500.00 - 5.99 = 494.01
-      const dashAfterBuy = repo.getAccountDashboard();
-      const unionAfterBuy = dashAfterBuy.find(
-        (a) => a.id === 'ACC_UNION_MAIN'
-      )!;
-      expect(unionAfterBuy.book_balance).toBe('494.01');
+      expect(buyTx.header.tx_type).toBe('VOUCHER_BUY');
+      expect(buyTx.header.total_net).toBe('5.99');
 
       // 验证购券不占用月度餐饮预算池
       const budgetAfterBuy = repo.getMonthlyBudgetStatus('2026-11');
@@ -199,7 +98,7 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
 
       // 2. 在食堂消费原价 15.00 元，现场勾选核销该 10 元立减金（现场微信实付 5.00 元）
       const canteenTx = repo.recordFromDsl(
-        '食堂 15 #饮食 @主力银联卡',
+        '食堂 15 #饮食',
         '2026-11-06',
         voucher.id
       );
@@ -218,14 +117,6 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       expect(canteenTx.items[0].item_gross).toBe('15.00');
       expect(canteenTx.items[0].allocated_discount).toBe('4.01');
       expect(canteenTx.items[0].item_net).toBe('10.99');
-
-      // 验证账户余额闭环：
-      // 购券扣 5.99，本次食堂现场扣 5.00，累计共扣 10.99，账户最终余额 = 500.00 - 10.99 = 489.01！
-      const dashAfterSpend = repo.getAccountDashboard();
-      const unionAfterSpend = dashAfterSpend.find(
-        (a) => a.id === 'ACC_UNION_MAIN'
-      )!;
-      expect(unionAfterSpend.book_balance).toBe('489.01');
 
       // 验证预算池与薅羊毛省钱榜：
       // 餐饮高频池 spent_net = 10.99, total_saved_discount = 4.01
@@ -247,11 +138,23 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
   });
 
   // --------------------------------------------------------------------------
-  // 测试 4：高频池今日动态日均可用额度与月末一键归集 (SWEEP_TO_FUND)
+  // 测试 3：高频池今日动态日均可用额度与跨月结余滚存
   // --------------------------------------------------------------------------
-  describe('4. Dynamic Daily Remaining Budget & Sweep to Sinking Fund', () => {
-    it('should compute remaining daily budget correctly based on current date, and sweep positive balance into POOL_FUND', () => {
-      const repo = new LedgerRepository(':memory:', 'node-daily-sweep-test');
+  describe('3. Dynamic Daily Remaining Budget & Month Rollover', () => {
+    it('should compute remaining daily budget correctly based on current date, and execute month rollover for the 4 core pools', () => {
+      const repo = new LedgerRepository(':memory:', 'node-daily-rollover-test');
+
+      // 仅初始化四大核心预算池，且无废置池/规则
+      const pools = repo.db
+        .prepare('SELECT id FROM budget_pools ORDER BY sort_order ASC')
+        .all() as Array<{ id: string }>;
+      expect(pools.map((p) => p.id)).toEqual([
+        'POOL_FIXED',
+        'POOL_DAILY',
+        'POOL_FLEX',
+        'POOL_EMERGENCY',
+      ]);
+      expect(repo.getMetadata().recurringRules).toHaveLength(2);
 
       // 2026-11 共有 30 天。假设当前日期为 2026-11-12，本月剩余天数（含今日）= 30 - 12 + 1 = 19 天。
       // 初始高频池总额 = 650.00 元。
@@ -273,37 +176,22 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       );
       expect(statusDay12After.dailyPoolRemainingPerDay).toBe('30.00');
 
-      // 假设月末结算，饮食池最终结余 570.00 元，执行一键划入「年度专项基金池 (POOL_FUND)」
-      const sweepResult = repo.sweepDailyPoolToSinkingFund('2026-11');
-      expect(sweepResult.sweptAmount).toBe('570.00');
-      expect(sweepResult.dailyPoolRemaining).toBe('0.00');
-      // 原专项基金初始 800.00，归集后总可用 = 800 + 570 = 1370.00
-      expect(sweepResult.fundPoolTotal).toBe('1370.00');
-
-      // 验证归集后 11 月看板状态：高频生活池剩余清零，专项基金池水位上涨
-      const statusAfterSweep = repo.getMonthlyBudgetStatus('2026-11');
-      const dailyPoolAfter = statusAfterSweep.pools.find(
-        (p) => p.pool_id === 'POOL_DAILY'
-      )!;
-      const fundPoolAfter = statusAfterSweep.pools.find(
-        (p) => p.pool_id === 'POOL_FUND'
-      )!;
-
-      expect(dailyPoolAfter.remaining_budget).toBe('0.00');
-      expect(fundPoolAfter.total_available_budget).toBe('1370.00');
-
       // 执行跨月结转至 2026-12：
-      // POOL_DAILY (已全额划转清零，剩余 0.00): 滚入 0.00
-      // POOL_FIXED (默认 ACCUMULATE，剩余 204.00): 滚入 204.00
-      // POOL_FLEX (ACCUMULATE，剩余 450.00): 滚入 450.00
+      // 四大初始预算池默认均为 ACCUMULATE：
+      // POOL_DAILY (剩余 570.00): 滚入 570.00
+      // POOL_FIXED (剩余 204.00): 滚入 204.00
+      // POOL_FLEX (剩余 450.00): 滚入 450.00
+      // POOL_EMERGENCY (剩余 196.00): 滚入 196.00
       const nextMonthPools = repo.executeMonthRollover('2026-11', '2026-12');
       const decDaily = nextMonthPools.find((p) => p.pool_id === 'POOL_DAILY')!;
       const decFixed = nextMonthPools.find((p) => p.pool_id === 'POOL_FIXED')!;
       const decFlex = nextMonthPools.find((p) => p.pool_id === 'POOL_FLEX')!;
+      const decEmerg = nextMonthPools.find((p) => p.pool_id === 'POOL_EMERGENCY')!;
 
-      expect(decDaily.rollover_from_prev).toBe('0.00');
+      expect(decDaily.rollover_from_prev).toBe('570.00');
       expect(decFixed.rollover_from_prev).toBe('204.00');
       expect(decFlex.rollover_from_prev).toBe('450.00');
+      expect(decEmerg.rollover_from_prev).toBe('196.00');
 
       // 验证显式设为 RESET 的池子在跨月结转时仍清零
       repo.upsertBudgetPool({
@@ -318,24 +206,21 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
   });
 
   // --------------------------------------------------------------------------
-  // 测试 5：双节点离线因果一致性收敛与全量冷备恢复
+  // 测试 4：双节点离线因果一致性收敛与全量冷备恢复
   // --------------------------------------------------------------------------
-  describe('5. Multi-Node Offline Sync Convergence & Reseed From Bundle', () => {
+  describe('4. Multi-Node Offline Sync Convergence & Reseed From Bundle', () => {
     it('should converge to 100% identical state regardless of message delivery order, and support complete disaster recovery via reseedFromBundle', () => {
       // 创建两个独立节点
       const repoA = new LedgerRepository(':memory:', 'node-alpha');
       const repoB = new LedgerRepository(':memory:', 'node-beta');
 
-      repoA.setAccountInitialBalance('ACC_UNION_MAIN', '1000.00');
-      repoB.setAccountInitialBalance('ACC_UNION_MAIN', '1000.00');
-
       // 节点 A 离线记账两笔
-      repoA.recordFromDsl('华莱士 30 #饮食 @主力银联卡', '2026-11-05');
-      repoA.recordFromDsl('短袖 50 #服饰 @主力银联卡', '2026-11-06');
+      repoA.recordFromDsl('华莱士 30 #饮食', '2026-11-05');
+      repoA.recordFromDsl('短袖 50 #服饰', '2026-11-06');
 
       // 节点 B 离线记账两笔
-      repoB.recordFromDsl('理发 20 #通信 @主力银联卡', '2026-11-07');
-      repoB.recordFromDsl('开发板 60 #电子 @主力银联卡', '2026-11-08');
+      repoB.recordFromDsl('理发 20 #通信', '2026-11-07');
+      repoB.recordFromDsl('开发板 60 #电子', '2026-11-08');
 
       // 互相交换操作日志（A 按反向顺序应用 B 的操作，B 正常应用 A 的操作）
       const opsA = repoA.getOpLogs();
@@ -346,15 +231,14 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       repoB.applyRemoteOpLogs(opsA);
 
       // 验证双节点达到 100% 强一致性收敛！
-      const dashA = repoA.getAccountDashboard();
-      const dashB = repoB.getAccountDashboard();
-      expect(dashA).toEqual(dashB);
-
       const budgetA = repoA.getMonthlyBudgetStatus('2026-11');
       const budgetB = repoB.getMonthlyBudgetStatus('2026-11');
       expect(budgetA.totalMonthlySpent).toBe('160.00'); // 30 + 50 + 20 + 60 = 160.00
       expect(budgetA.totalMonthlySpent).toBe(budgetB.totalMonthlySpent);
       expect(budgetA.pools).toEqual(budgetB.pools);
+      expect(repoA.getRecentTransactions(50).map((t) => t.header.id)).toEqual(
+        repoB.getRecentTransactions(50).map((t) => t.header.id)
+      );
 
       // 模拟服务器炸机空库后从客户端完整快照包 100% 恢复
       const bundle = repoA.exportFullSyncBundle();
@@ -362,15 +246,17 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
 
       freshRepo.reseedFromBundle(bundle);
 
-      expect(freshRepo.getAccountDashboard()).toEqual(dashA);
       expect(freshRepo.getMonthlyBudgetStatus('2026-11')).toEqual(budgetA);
+      expect(freshRepo.getRecentTransactions(50).map((t) => t.header.id)).toEqual(
+        repoA.getRecentTransactions(50).map((t) => t.header.id)
+      );
     });
   });
 
   // --------------------------------------------------------------------------
   // 额外测试：固定资产日均成本追踪与守恒定律断言防御
   // --------------------------------------------------------------------------
-  describe('6. Fixed Asset Cost Per Day & Conservation Defense', () => {
+  describe('5. Fixed Asset Cost Per Day & Conservation Defense', () => {
     it('should compute cost per day for iPhone 13 mini and monitor hard drive', () => {
       const repo = new LedgerRepository(':memory:', 'node-assets-test');
 
@@ -394,8 +280,6 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
           header: {
             tx_date: '2026-11-12',
             tx_type: 'EXPENSE',
-            account_id: 'ACC_UNION_MAIN',
-            target_account_id: null,
             total_gross: '100.00',
             platform_discount: '0.00',
             payment_discount: '0.00',
@@ -482,6 +366,284 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       expect(reloaded.items[1].item_name).toBe('测试2');
       expect(reloaded.items[1].item_net).toBe('5.00');
       expect(reloaded.items[1].budget_pool_id).toBe('POOL_DAILY');
+    });
+  });
+
+  // =========================================================================
+  // Test 6: Legacy Schema In-Place Migration
+  // =========================================================================
+  describe('6. Legacy Schema In-Place Migration', () => {
+    it('should migrate legacy schema database with accounts, REPAY_COUPON, AUTO_INVEST, POOL_FUND/POOL_ASSET in-place preserving rows and server_epoch_id', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-migration-'));
+      const tmpDbPath = path.join(tmpDir, 'legacy.db');
+
+      try {
+        const legacyDb = new DatabaseSync(tmpDbPath);
+        legacyDb.exec(`
+          PRAGMA foreign_keys = ON;
+          CREATE TABLE accounts (
+            id VARCHAR(32) PRIMARY KEY,
+            name VARCHAR(64) NOT NULL,
+            account_role VARCHAR(16) NOT NULL,
+            currency VARCHAR(8) NOT NULL DEFAULT 'CNY',
+            book_balance NUMERIC(12, 2) NOT NULL DEFAULT 0.00
+          );
+          CREATE TABLE budget_pools (
+            id VARCHAR(32) PRIMARY KEY,
+            name VARCHAR(64) NOT NULL,
+            pool_type VARCHAR(24) NOT NULL,
+            is_monthly_budget BOOLEAN NOT NULL DEFAULT 1,
+            rollover_strategy VARCHAR(24) NOT NULL DEFAULT 'ACCUMULATE',
+            description TEXT,
+            sort_order SMALLINT NOT NULL DEFAULT 100
+          );
+          CREATE TABLE monthly_budgets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year_month CHAR(7) NOT NULL,
+            pool_id VARCHAR(32) NOT NULL REFERENCES budget_pools(id),
+            base_allocation NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+            rollover_from_prev NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+            reserved_fixed NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+            swept_to_fund NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+            note TEXT,
+            UNIQUE (year_month, pool_id)
+          );
+          CREATE TABLE categories (
+            id VARCHAR(32) PRIMARY KEY,
+            parent_id VARCHAR(32) REFERENCES categories(id),
+            name VARCHAR(64) NOT NULL,
+            default_pool_id VARCHAR(32) NOT NULL REFERENCES budget_pools(id),
+            icon_name VARCHAR(32),
+            keywords TEXT,
+            sort_order SMALLINT NOT NULL DEFAULT 100
+          );
+          CREATE TABLE projects_and_tags (
+            id VARCHAR(32) PRIMARY KEY,
+            name VARCHAR(64) NOT NULL UNIQUE,
+            tag_type VARCHAR(24) NOT NULL CHECK (tag_type IN ('PROJECT', 'SCENE', 'STOCK_CONSUME')),
+            target_budget NUMERIC(10, 2) DEFAULT NULL,
+            linked_pool_id VARCHAR(32) REFERENCES budget_pools(id),
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE vouchers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title VARCHAR(128) NOT NULL,
+            voucher_type VARCHAR(24) NOT NULL CHECK (voucher_type IN ('PREPAID_COUPON', 'FREE_COUPON', 'REPAY_COUPON')),
+            face_value NUMERIC(10, 2) NOT NULL,
+            acquire_cost NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+            min_spend NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+            status VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE',
+            purchase_tx_id VARCHAR(36) DEFAULT NULL,
+            used_tx_id VARCHAR(36) DEFAULT NULL,
+            expire_date DATE DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE transaction_headers (
+            id VARCHAR(36) PRIMARY KEY,
+            tx_date DATE NOT NULL,
+            tx_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            tx_type VARCHAR(24) NOT NULL CHECK (tx_type IN ('EXPENSE', 'INCOME', 'TRANSFER', 'VOUCHER_BUY', 'VOUCHER_EXPIRE')),
+            account_id VARCHAR(32) REFERENCES accounts(id),
+            target_account_id VARCHAR(32) REFERENCES accounts(id),
+            total_gross NUMERIC(12, 2) NOT NULL,
+            platform_discount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+            payment_discount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+            total_net NUMERIC(12, 2) NOT NULL,
+            allocation_mode VARCHAR(20) NOT NULL DEFAULT 'PROPORTIONAL',
+            original_currency VARCHAR(8) NOT NULL DEFAULT 'CNY',
+            original_amount NUMERIC(12, 2) DEFAULT NULL,
+            exchange_rate NUMERIC(12, 6) DEFAULT 1.000000,
+            settlement_status VARCHAR(20) NOT NULL DEFAULT 'SETTLED',
+            hold_amount_cny NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+            settled_at TIMESTAMP DEFAULT NULL,
+            raw_input_text TEXT,
+            merchant_or_note TEXT,
+            applied_voucher_id INTEGER DEFAULT NULL REFERENCES vouchers(id),
+            is_deleted INTEGER NOT NULL DEFAULT 0,
+            updated_hlc VARCHAR(64) DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE transaction_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            header_id VARCHAR(36) NOT NULL REFERENCES transaction_headers(id) ON DELETE CASCADE,
+            item_name VARCHAR(128) NOT NULL,
+            category_id VARCHAR(32) NOT NULL REFERENCES categories(id),
+            budget_pool_id VARCHAR(32) NOT NULL REFERENCES budget_pools(id),
+            project_tag_id VARCHAR(32) REFERENCES projects_and_tags(id),
+            item_gross NUMERIC(12, 2) NOT NULL,
+            allocated_discount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+            item_net NUMERIC(12, 2) NOT NULL,
+            is_primary_item BOOLEAN NOT NULL DEFAULT 0,
+            raw_formula_expr VARCHAR(64) DEFAULT NULL
+          );
+          CREATE TABLE fixed_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_name VARCHAR(128) NOT NULL,
+            purchase_item_id INT REFERENCES transaction_items(id),
+            purchase_date DATE NOT NULL,
+            purchase_net_cost NUMERIC(10, 2) NOT NULL,
+            target_daily_cost NUMERIC(8, 2) DEFAULT 2.00,
+            status VARCHAR(16) NOT NULL DEFAULT 'IN_USE',
+            resale_date DATE DEFAULT NULL,
+            resale_recovery NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+            note TEXT
+          );
+          CREATE TABLE recurring_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title VARCHAR(64) NOT NULL,
+            rule_type VARCHAR(24) NOT NULL CHECK (rule_type IN ('FIXED_EXPENSE', 'FX_SUBSCRIPTION', 'AUTO_INVEST')),
+            cron_cycle VARCHAR(16) NOT NULL,
+            trigger_day SMALLINT NOT NULL,
+            currency VARCHAR(8) NOT NULL DEFAULT 'CNY',
+            amount NUMERIC(10, 2) NOT NULL,
+            account_id VARCHAR(32) REFERENCES accounts(id),
+            target_account_id VARCHAR(32) REFERENCES accounts(id),
+            category_id VARCHAR(32) REFERENCES categories(id),
+            budget_pool_id VARCHAR(32) REFERENCES budget_pools(id),
+            auto_reserve_budget BOOLEAN NOT NULL DEFAULT 1,
+            is_active BOOLEAN NOT NULL DEFAULT 1
+          );
+          CREATE TABLE sync_oplog (
+            hlc VARCHAR(64) PRIMARY KEY,
+            node_id VARCHAR(64) NOT NULL,
+            entity_type VARCHAR(32) NOT NULL,
+            entity_id VARCHAR(64) NOT NULL,
+            op_type VARCHAR(16) NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE sync_meta (
+            key VARCHAR(64) PRIMARY KEY,
+            value TEXT NOT NULL
+          );
+          CREATE TABLE sync_conflicts (
+            id VARCHAR(128) PRIMARY KEY,
+            conflict_type VARCHAR(32) NOT NULL,
+            entity_id VARCHAR(64) NOT NULL,
+            winner_hlc VARCHAR(64) NOT NULL,
+            loser_hlc VARCHAR(64) NOT NULL,
+            winner_summary TEXT NOT NULL,
+            loser_summary TEXT NOT NULL,
+            loser_payload_json TEXT NOT NULL,
+            status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE VIEW v_account_dashboard AS SELECT id, name, book_balance FROM accounts;
+
+          INSERT INTO accounts (id, name, account_role, book_balance) VALUES
+            ('ACC_UNION_MAIN', '银联卡', 'DEBIT_MAIN', 5000.00),
+            ('ACC_HUABEI', '花呗', 'CREDIT', -100.00);
+          INSERT INTO budget_pools (id, name, pool_type, is_monthly_budget, rollover_strategy, sort_order) VALUES
+            ('POOL_FIXED', '刚性固定', 'FIXED', 1, 'ACCUMULATE', 1),
+            ('POOL_DAILY', '日常餐饮', 'DAILY', 1, 'ACCUMULATE', 2),
+            ('POOL_FLEX', '机动灵活', 'FLEX', 1, 'ACCUMULATE', 3),
+            ('POOL_EMERGENCY', '紧急备用', 'EMERGENCY', 1, 'ACCUMULATE', 4),
+            ('POOL_FUND', '旧基金池', 'SINKING_FUND', 0, 'ACCUMULATE', 5),
+            ('POOL_ASSET', '旧大额池', 'CAPITAL_ASSET', 0, 'ACCUMULATE', 6);
+          INSERT INTO monthly_budgets (year_month, pool_id, base_allocation) VALUES
+            ('2026-11', 'POOL_FUND', 0.00),
+            ('2026-11', 'POOL_ASSET', 0.00);
+          INSERT INTO categories (id, name, default_pool_id) VALUES
+            ('CAT_FOOD', '饮食', 'POOL_DAILY'),
+            ('CAT_EXAM_CERT', '考证教育', 'POOL_FUND');
+          INSERT INTO projects_and_tags (id, name, tag_type, linked_pool_id, target_budget) VALUES
+            ('TAG_JLPT_N2', 'JLPT N2', 'PROJECT', 'POOL_FUND', 600.00);
+          INSERT INTO vouchers (id, title, voucher_type, face_value, acquire_cost, min_spend, status) VALUES
+            (1, '旧还款券', 'REPAY_COUPON', 5.00, 0.00, 50.00, 'AVAILABLE');
+          INSERT INTO transaction_headers (id, tx_date, tx_type, account_id, total_gross, total_net, merchant_or_note) VALUES
+            ('tx_legacy_expense', '2026-11-10', 'EXPENSE', 'ACC_UNION_MAIN', 30.00, 30.00, '历史午餐'),
+            ('tx_legacy_transfer', '2026-11-10', 'TRANSFER', 'ACC_UNION_MAIN', 100.00, 100.00, '历史还款');
+          INSERT INTO transaction_items (header_id, item_name, category_id, budget_pool_id, item_gross, allocated_discount, item_net, is_primary_item) VALUES
+            ('tx_legacy_expense', '午餐', 'CAT_FOOD', 'POOL_DAILY', 30.00, 0.00, 30.00, 1);
+          INSERT INTO recurring_rules (id, title, rule_type, cron_cycle, trigger_day, amount, account_id, budget_pool_id) VALUES
+            (1, '房租', 'FIXED_EXPENSE', 'MONTHLY', 1, 500.00, 'ACC_UNION_MAIN', 'POOL_FIXED'),
+            (2, '定投基金', 'AUTO_INVEST', 'MONTHLY', 10, 300.00, 'ACC_UNION_MAIN', 'POOL_FUND');
+          INSERT INTO sync_oplog (hlc, node_id, entity_type, entity_id, op_type, payload_json) VALUES
+            ('000000000001000-0000-n1', 'n1', 'ACCOUNT', 'ACC_UNION_MAIN', 'UPSERT', '{}'),
+            ('000000000001001-0000-n1', 'n1', 'TRANSACTION', 'tx_legacy_expense', 'UPSERT', '{}');
+          INSERT INTO sync_meta (key, value) VALUES
+            ('server_epoch_id', 'epoch_legacy_preserved_999');
+        `);
+        legacyDb.close();
+
+        const repo = new LedgerRepository(tmpDbPath, 'migration-test-node');
+        try {
+          const tables = repo.db
+            .prepare("SELECT name, type FROM sqlite_master WHERE name IN ('accounts', 'v_account_dashboard')")
+            .all();
+          expect(tables).toHaveLength(0);
+
+          const txCols = (repo.db.prepare('PRAGMA table_info(transaction_headers)').all() as Array<{ name: string }>).map(
+            (c) => c.name
+          );
+          expect(txCols).not.toContain('account_id');
+          expect(txCols).not.toContain('target_account_id');
+
+          const ruleCols = (repo.db.prepare('PRAGMA table_info(recurring_rules)').all() as Array<{ name: string }>).map(
+            (c) => c.name
+          );
+          expect(ruleCols).not.toContain('account_id');
+          expect(ruleCols).not.toContain('target_account_id');
+
+          const txs = repo.db.prepare('SELECT id, merchant_or_note FROM transaction_headers').all() as Array<{
+            id: string;
+            merchant_or_note: string;
+          }>;
+          expect(txs).toHaveLength(1);
+          expect(txs[0].id).toBe('tx_legacy_expense');
+          expect(txs[0].merchant_or_note).toBe('历史午餐');
+
+          const vouchers = repo.db.prepare('SELECT id, voucher_type FROM vouchers WHERE id = 1').get() as {
+            id: number;
+            voucher_type: string;
+          };
+          expect(vouchers.voucher_type).toBe('FREE_COUPON');
+
+          const rules = repo.db.prepare('SELECT id, rule_type FROM recurring_rules').all() as Array<{
+            id: number;
+            rule_type: string;
+          }>;
+          expect(rules.some((r) => r.rule_type === 'AUTO_INVEST')).toBe(false);
+          expect(rules.some((r) => r.id === 1 && r.rule_type === 'FIXED_EXPENSE')).toBe(true);
+
+          const pools = repo.db.prepare('SELECT id FROM budget_pools').all() as Array<{ id: string }>;
+          expect(pools.map((p) => p.id).sort()).toEqual([
+            'POOL_DAILY',
+            'POOL_EMERGENCY',
+            'POOL_FIXED',
+            'POOL_FLEX',
+          ]);
+
+          const tag = repo.db
+            .prepare("SELECT linked_pool_id FROM projects_and_tags WHERE id = 'TAG_JLPT_N2'")
+            .get() as { linked_pool_id: string };
+          expect(tag.linked_pool_id).toBe('POOL_FLEX');
+
+          const oplogs = repo.db.prepare('SELECT entity_type, entity_id FROM sync_oplog').all() as Array<{
+            entity_type: string;
+            entity_id: string;
+          }>;
+          expect(oplogs.some((o) => o.entity_type === 'ACCOUNT')).toBe(false);
+          expect(oplogs.some((o) => o.entity_id === 'tx_legacy_expense')).toBe(true);
+
+          const epoch = repo.db
+            .prepare("SELECT value FROM sync_meta WHERE key = 'server_epoch_id'")
+            .get() as { value: string };
+          expect(epoch.value).toBe('epoch_legacy_preserved_999');
+
+          const fkErrors = repo.db.prepare('PRAGMA foreign_key_check').all();
+          expect(fkErrors).toHaveLength(0);
+        } finally {
+          repo.db.close();
+        }
+      } finally {
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        } catch {
+          // Windows/sandbox temp dir handle cleanup fallback
+        }
+      }
     });
   });
 });

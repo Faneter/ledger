@@ -12,20 +12,15 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
   });
 
   describe('1. 纯净初始账本与演示数据加载切换', () => {
-    it('resetToCleanState 应该重置为 0 交易流水、0 优惠券与 0 初始余额', () => {
+    it('resetToCleanState 应该重置为 0 交易流水与 0 优惠券', () => {
       engine.resetToCleanState();
 
       expect(engine.state.transactions.length).toBe(0);
       expect(engine.state.vouchers.length).toBe(0);
       expect(engine.state.projectTags.length).toBe(0);
 
-      // 所有账户余额为 0.00
-      for (const acc of engine.state.accounts) {
-        expect(acc.book_balance).toBe('0.00');
-      }
-
-      // 保留常规 4 大月度预算池与年度专项基金
-      expect(engine.state.budgetPools.length).toBeGreaterThanOrEqual(4);
+      // 保留常规 4 大月度预算池
+      expect(engine.state.budgetPools.length).toBe(4);
       const monthlyPools = engine.state.budgetPools.filter((p) => p.is_monthly_budget);
       expect(monthlyPools.length).toBe(4);
     });
@@ -34,18 +29,13 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
       engine.resetToCleanState();
       engine.loadDemoData();
 
-      expect(engine.state.accounts.length).toBe(8);
-      const union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
-      expect(union?.book_balance).toBe('3000.00');
-
       expect(engine.state.vouchers.length).toBe(2);
-      expect(engine.state.recurringRules.length).toBe(3);
+      expect(engine.state.recurringRules.length).toBe(2);
     });
 
     it('exportFullSyncBundle 能正常导出完整 JSON 备份包', () => {
       const bundle = engine.exportFullSyncBundle();
       expect(bundle.nodeId).toBe(engine.state.nodeId);
-      expect(bundle.accounts.length).toBe(engine.state.accounts.length);
       expect(bundle.monthlyBudgets.length).toBe(engine.state.monthlyBudgets.length);
       expect(Array.isArray(bundle.oplogs)).toBe(true);
     });
@@ -115,61 +105,39 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
     });
   });
 
-  describe('3. 账户、优惠券与周期规则管理操作', () => {
+  describe('3. 优惠券与周期规则管理操作', () => {
     beforeEach(() => {
       engine.resetToCleanState();
-    });
-
-    it('校准账户余额 (calibrateAccountBalance)', () => {
-      const union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
-      expect(union?.book_balance).toBe('0.00');
-
-      engine.calibrateAccountBalance('ACC_UNION_MAIN', '1500.00');
-
-      const calibrated = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
-      expect(calibrated?.book_balance).toBe('1500.00');
-    });
-
-    it('更新 ETF 最新总市值 (updateEtfMarketValue)', () => {
-      engine.updateEtfMarketValue('ACC_ALIPAY_ETF', '688.50');
-      const etf = engine.state.accounts.find((a) => a.id === 'ACC_ALIPAY_ETF');
-      expect(etf?.market_value).toBe('688.50');
     });
 
     it('优惠券登记与购券 (upsertVoucher + buyVoucher)', () => {
       // 1. 免费领券登记
       const free = engine.upsertVoucher({
-        title: '银行信用卡还款5元立减券',
-        voucher_type: 'REPAY_COUPON',
+        title: '满50减5元优惠券',
+        voucher_type: 'FREE_COUPON',
         face_value: '5.00',
         acquire_cost: '0.00',
         min_spend: '50.00',
       });
-      expect(free.voucher.title).toBe('银行信用卡还款5元立减券');
+      expect(free.voucher.title).toBe('满50减5元优惠券');
       expect(engine.state.vouchers.length).toBe(1);
 
-      // 2. 有偿购券入库（扣除主力账户现金）
-      engine.calibrateAccountBalance('ACC_UNION_MAIN', '100.00');
+      // 2. 有偿购券入库（生成 VOUCHER_BUY 购买成本流水）
       const buyRes = engine.buyVoucher({
         title: '微信支付10元立减金',
         voucher_type: 'PREPAID_COUPON',
         face_value: '10.00',
         acquire_cost: '5.99',
         min_spend: '10.01',
-        accountId: 'ACC_UNION_MAIN',
       });
 
       expect(buyRes.voucher.face_value).toBe('10.00');
+      expect(buyRes.tx.header.tx_type).toBe('VOUCHER_BUY');
+      expect(buyRes.tx.header.total_net).toBe('5.99');
       expect(engine.state.vouchers.length).toBe(2);
-
-      // 主力账户应扣除 5.99
-      const union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
-      expect(union?.book_balance).toBe('94.01');
     });
 
     it('周期性规则执行记账 (upsertRecurringRule + executeRecurringRule)', () => {
-      engine.calibrateAccountBalance('ACC_UNION_MAIN', '200.00');
-
       const rule = engine.upsertRecurringRule({
         title: '测试宽带月租',
         rule_type: 'FIXED_EXPENSE',
@@ -177,7 +145,6 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
         trigger_day: 1,
         currency: 'CNY',
         amount: '30.00',
-        account_id: 'ACC_UNION_MAIN',
         budget_pool_id: 'POOL_FIXED',
       });
 
@@ -188,10 +155,6 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
       const tx = engine.executeRecurringRule(rule.id, '2026-11-01');
       expect(tx.header.total_net).toBe('30.00');
       expect(engine.state.transactions.length).toBe(1);
-
-      // 账户余额扣减至 170.00
-      const union = engine.state.accounts.find((a) => a.id === 'ACC_UNION_MAIN');
-      expect(union?.book_balance).toBe('170.00');
     });
   });
 });

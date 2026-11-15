@@ -366,7 +366,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       tag_type: tag.tag_type,
       start_date: tag.start_date || '',
       end_date: tag.end_date || '',
-      linked_pool_id: tag.linked_pool_id || 'POOL_FUND',
+      linked_pool_id: tag.linked_pool_id || 'POOL_FLEX',
       is_active: tag.is_active,
     });
     setWishModalOpen(true);

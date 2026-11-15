@@ -3,70 +3,6 @@
  * 所有金额字段统一采用 string 表示两位小数精确金额（如 "31.95"），避免 JSON/浮点数序列化精度丢失。
  */
 
-// ============================================================================
-// 1. 账户矩阵相关类型定义
-// ============================================================================
-
-/**
- * 账户职能角色
- * - CREDIT: 信用账户（花呗/信用卡）
- * - DEBIT_MAIN: 核心借记卡/微信零钱
- * - DEBIT_FX: 万事网联外币借记卡（支持 102% 预授权冻结与 1% 返现）
- * - PREPAID: 预付囤货账户（校园饭卡）
- * - INVESTMENT: 投资账户（支付宝指数基金）
- * - DORMANT: 低频睡眠借记卡（默认折叠）
- */
-export type AccountRole =
-  | 'CREDIT'
-  | 'DEBIT_MAIN'
-  | 'DEBIT_FX'
-  | 'PREPAID'
-  | 'INVESTMENT'
-  | 'DORMANT';
-
-/**
- * 资金账户实体接口 (accounts)
- */
-export interface Account {
-  id: string;
-  name: string;
-  account_role: AccountRole;
-  currency: string;
-  book_balance: string;
-  frozen_amount: string;
-  market_value: string | null;
-  credit_limit: string | null;
-  fx_hold_ratio: string;
-  fx_cashback_rate: string;
-  fx_monthly_cap: string | null;
-  billing_day: number | null;
-  repayment_day: number | null;
-  is_default_pay: boolean;
-  is_folded: boolean;
-  include_in_networth: boolean;
-  sort_order: number;
-  initial_balance?: string;
-  updated_hlc?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-/**
- * 账户实时看板行数据 (v_account_dashboard)
- */
-export interface AccountDashboardRow {
-  id: string;
-  name: string;
-  account_role: AccountRole;
-  currency: string;
-  book_balance: string;
-  frozen_amount: string;
-  available_balance: string;
-  market_value: string | null;
-  unrealized_pnl: string;
-  is_folded: boolean;
-}
-
 /**
  * 外币预授权与返现全局偏好配置
  */
@@ -76,7 +12,7 @@ export interface FxPreferenceConfig {
 }
 
 // ============================================================================
-// 2. 预算池与分类相关类型定义
+// 1. 预算池与分类相关类型定义
 // ============================================================================
 
 /**
@@ -197,9 +133,8 @@ export interface ProjectTag {
  * 优惠券类型
  * - PREPAID_COUPON: 有偿购入立减金（如 5.99 买 10 元立减金）
  * - FREE_COUPON: 免费领取立减券/满减券
- * - REPAY_COUPON: 信用卡/花呗还款抵扣券
  */
-export type VoucherType = 'PREPAID_COUPON' | 'FREE_COUPON' | 'REPAY_COUPON';
+export type VoucherType = 'PREPAID_COUPON' | 'FREE_COUPON';
 
 /**
  * 优惠券核销状态
@@ -233,9 +168,7 @@ export function generateVoucherTitle(
   _acquireCost?: string | number
 ): string {
   let typeLabel = '优惠券';
-  if (voucherType === 'REPAY_COUPON') {
-    typeLabel = '还款券';
-  } else if (voucherType === 'PREPAID_COUPON') {
+  if (voucherType === 'PREPAID_COUPON') {
     typeLabel = '立减金';
   } else if (voucherType === 'FREE_COUPON') {
     typeLabel = '优惠券';
@@ -276,16 +209,14 @@ export function getLocalYearMonthStr(now: Date = new Date()): string {
  * 交易类型
  * - EXPENSE: 常规/专项支出
  * - INCOME: 收入（生活费/兼职/奖学金）
- * - TRANSFER: 内部转账（信用卡还款/饭卡充值/基金定投）
  * - VOUCHER_BUY: 购买立减金（资金转入虚拟卡包）
- * - CASHBACK_OFFSET: 信用卡独立返现冲抵
+ * - VOUCHER_EXPIRE: 购入立减金过期损耗
  */
 export type TransactionType =
   | 'EXPENSE'
   | 'INCOME'
-  | 'TRANSFER'
   | 'VOUCHER_BUY'
-  | 'CASHBACK_OFFSET';
+  | 'VOUCHER_EXPIRE';
 
 /**
  * 凑单满减分摊模式
@@ -316,8 +247,6 @@ export interface TransactionHeader {
   tx_date: string;
   tx_timestamp: string;
   tx_type: TransactionType;
-  account_id: string;
-  target_account_id: string | null;
   total_gross: string;
   platform_discount: string;
   payment_discount: string;
@@ -401,10 +330,7 @@ export interface FixedAssetWithCost extends FixedAsset {
 /**
  * 周期性规则触发类型
  */
-export type RecurringRuleType =
-  | 'FIXED_EXPENSE'
-  | 'AUTO_INVEST'
-  | 'FX_SUBSCRIPTION';
+export type RecurringRuleType = 'FIXED_EXPENSE' | 'FX_SUBSCRIPTION';
 
 /**
  * 周期频次
@@ -412,7 +338,7 @@ export type RecurringRuleType =
 export type CronCycle = 'MONTHLY' | 'YEARLY';
 
 /**
- * 周期性账单与自动定投规则 (recurring_rules)
+ * 周期性账单与自动订阅规则 (recurring_rules)
  */
 export interface RecurringRule {
   id: number;
@@ -422,8 +348,6 @@ export interface RecurringRule {
   trigger_day: number;
   currency: string;
   amount: string;
-  account_id: string;
-  target_account_id: string | null;
   category_id: string | null;
   budget_pool_id: string | null;
   auto_reserve_budget: boolean;
@@ -439,7 +363,6 @@ export interface RecurringRule {
  */
 export type SyncEntityType =
   | 'TRANSACTION'
-  | 'ACCOUNT'
   | 'BUDGET'
   | 'BUDGET_POOL'
   | 'CATEGORY'
@@ -505,7 +428,6 @@ export interface SyncConflict {
 export interface FullSyncBundle {
   nodeId: string;
   exportedAt: string;
-  accounts: Account[];
   oplogs: SyncOpLogEntry[];
   vouchers: Voucher[];
   monthlyBudgets: MonthlyBudget[];

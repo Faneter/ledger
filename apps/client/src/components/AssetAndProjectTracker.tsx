@@ -93,7 +93,7 @@ export const AssetAndProjectTracker: React.FC<AssetAndProjectTrackerProps> = ({
                         #{proj.name}
                       </span>
                       <span className="badge badge-outline text-xs ml-xs">
-                        关联池: {proj.linked_pool_id || 'POOL_FUND'}
+                        关联池: {proj.linked_pool_id || 'POOL_FLEX'}
                       </span>
                     </div>
                     <div className="text-right text-xs">

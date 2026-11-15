@@ -51,7 +51,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [keyword, setKeyword] = useState('');
   const [monthFilter, setMonthFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
-  const [accountFilter, setAccountFilter] = useState<string>('ALL');
   const [poolOrProjectFilter, setPoolOrProjectFilter] = useState<string>('ALL');
 
   // 展开子项折叠状态 (按 tx.header.id 记录)
@@ -66,7 +65,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [editingTx, setEditingTx] = useState<TransactionAggregate | null>(null);
   const [editDate, setEditDate] = useState('');
   const [editNote, setEditNote] = useState('');
-  const [editAccountId, setEditAccountId] = useState('');
   const [editTargetSelection, setEditTargetSelection] = useState<string>('');
   const [editItemTargets, setEditItemTargets] = useState<string[]>([]);
   const [editGross, setEditGross] = useState('');
@@ -117,14 +115,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         } else if (h.tx_type !== typeFilter) return false;
       }
 
-      // 4. 账户过滤
-      if (accountFilter !== 'ALL') {
-        if (h.account_id !== accountFilter && h.target_account_id !== accountFilter) {
-          return false;
-        }
-      }
-
-      // 5. 归属资金池 / 专项过滤
+      // 4. 归属资金池 / 专项过滤
       if (poolOrProjectFilter !== 'ALL') {
         if (poolOrProjectFilter.startsWith('POOL:')) {
           const poolId = poolOrProjectFilter.slice(5);
@@ -146,7 +137,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     keyword,
     monthFilter,
     typeFilter,
-    accountFilter,
     poolOrProjectFilter,
   ]);
 
@@ -183,7 +173,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     setKeyword('');
     setMonthFilter('ALL');
     setTypeFilter('ALL');
-    setAccountFilter('ALL');
     setPoolOrProjectFilter('ALL');
   };
 
@@ -228,7 +217,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     const h = tx.header;
     setEditDate(h.tx_date);
     setEditNote(h.merchant_or_note || h.raw_input_text || '');
-    setEditAccountId(h.account_id);
     setEditGross(h.total_gross);
     setEditDiscount(
       Number(h.payment_discount) > 0 ? h.payment_discount : h.platform_discount
@@ -263,7 +251,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         engine.updateTransaction(editingTx.header.id, {
           tx_date: editDate,
           merchant_or_note: editNote.trim(),
-          account_id: editAccountId,
           total_gross: editGross.trim(),
           payment_discount: editDiscount.trim() || '0.00',
           item_updates: itemUpdates,
@@ -273,7 +260,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         engine.updateTransaction(editingTx.header.id, {
           tx_date: editDate,
           merchant_or_note: editNote.trim(),
-          account_id: editAccountId,
           total_gross: editGross.trim(),
           payment_discount: editDiscount.trim() || '0.00',
           budget_pool_id,
@@ -293,7 +279,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     if (!deletingTxId) return;
     try {
       engine.deleteTransaction(deletingTxId);
-      setToastMsg(`🗑️ 账单 ${deletingTxId} 已成功删除，相关账户余额与优惠券已回退！`);
+      setToastMsg(`🗑️ 账单 ${deletingTxId} 已成功删除，相关预算池与优惠券已回退！`);
       setDeletingTxId(null);
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -530,7 +516,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             const h = tx.header;
             const isExpense = h.tx_type === 'EXPENSE';
             const isIncome = h.tx_type === 'INCOME';
-            const isTransfer = h.tx_type === 'TRANSFER';
             const isVoucherBuy = h.tx_type === 'VOUCHER_BUY';
             const isExpenseLike = isExpense || isVoucherBuy;
             const isExpanded = !!expandedTxs[h.id];
@@ -599,7 +584,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                                 ? '支出'
                                 : isIncome
                                 ? '收入'
-                                : '转账'
+                                : '其他'
                             }
                             color={
                               isVoucherBuy
@@ -664,7 +649,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           {h.applied_voucher_id != null && (
                             <Chip
                               size="small"
-                              label={h.tx_type === 'TRANSFER' ? '🎟️ 已用还款券' : '🎟️ 已用立减金'}
+                              label="🎟️ 已用立减金"
                               color="success"
                               variant="outlined"
                               sx={{ height: 20, fontSize: '0.7rem' }}
