@@ -354,7 +354,7 @@ void main() {
     final sa = sMap['scenario_a_routine_expense_income_and_daily_summary']!;
     final evalDate = sa['evaluation_date'] as String;
     final expP1 = sa['expected_phase_1_normal'] as Map<String, dynamic>;
-    final engine1 = FlutterLedgerEngine(bridge: bridge);
+    final engine1 = FlutterLedgerEngine(bridge: bridge, seedDemoData: true);
     for (final rawAct in sa['actions_phase_1_normal'] as List<dynamic>) {
       final act = rawAct as Map<String, dynamic>;
       if (act['type'] == 'recordFromDsl') {
@@ -384,7 +384,7 @@ void main() {
     );
 
     final expP2 = sa['expected_phase_2_with_overspend'] as Map<String, dynamic>;
-    final engine2 = FlutterLedgerEngine(bridge: bridge);
+    final engine2 = FlutterLedgerEngine(bridge: bridge, seedDemoData: true);
     final txIds2 = <Map<String, dynamic>>[];
     for (final rawAct in sa['actions_phase_2_with_overspend'] as List<dynamic>) {
       final act = rawAct as Map<String, dynamic>;
@@ -441,7 +441,7 @@ void main() {
     final sb = sMap['scenario_b_cross_pool_split_tail_diff_and_item_edit']!;
     final actions = sb['actions'] as List<dynamic>;
     final exp = sb['expected'] as Map<String, dynamic>;
-    final engine = FlutterLedgerEngine(bridge: bridge);
+    final engine = FlutterLedgerEngine(bridge: bridge, seedDemoData: true);
 
     final a1 = actions[0] as Map<String, dynamic>;
     final tx1 = engine.recordFromDsl(
@@ -481,7 +481,7 @@ void main() {
     final sc = sMap['scenario_c_voucher_buy_redeem_and_delete_rollback']!;
     final actions = sc['actions'] as List<dynamic>;
     final exp = sc['expected'] as Map<String, dynamic>;
-    final engine = FlutterLedgerEngine(bridge: bridge);
+    final engine = FlutterLedgerEngine(bridge: bridge, seedDemoData: true);
     final refs = <String, String>{};
 
     // Step 1: buyVoucher
@@ -564,7 +564,7 @@ void main() {
     final sd = sMap['scenario_d_mastercard_fx_hold_and_settlement']!;
     final actions = sd['actions'] as List<dynamic>;
     final exp = sd['expected'] as Map<String, dynamic>;
-    final engine = FlutterLedgerEngine(bridge: bridge);
+    final engine = FlutterLedgerEngine(bridge: bridge, seedDemoData: true);
     final refs = <String, String>{};
 
     final a1 = actions[0] as Map<String, dynamic>;
@@ -631,7 +631,7 @@ void main() {
     final se = sMap['scenario_e_project_exemption_and_month_rollover']!;
     final actions = se['actions'] as List<dynamic>;
     final exp = se['expected'] as Map<String, dynamic>;
-    final engine = FlutterLedgerEngine(bridge: bridge);
+    final engine = FlutterLedgerEngine(bridge: bridge, seedDemoData: true);
 
     for (var i = 0; i < 4; i++) {
       final act = actions[i] as Map<String, dynamic>;
@@ -687,8 +687,16 @@ void main() {
 
   // Extra check: HLC monotonicity & LWW sync merge across two Dart engines
   {
-    final eA = FlutterLedgerEngine(bridge: bridge, nodeId: 'phone-a');
-    final eB = FlutterLedgerEngine(bridge: bridge, nodeId: 'web-b');
+    final eA = FlutterLedgerEngine(
+      bridge: bridge,
+      nodeId: 'phone-a',
+      seedDemoData: true,
+    );
+    final eB = FlutterLedgerEngine(
+      bridge: bridge,
+      nodeId: 'web-b',
+      seedDemoData: true,
+    );
     final txA = eA.recordFromDsl('咖啡 18 #饮食', txDate: '2026-11-15');
     final syncRes = eB.processSync(eA.syncOplog);
     check(syncRes['acceptedCount'] == 1, 'hlc_sync.acceptedCount');

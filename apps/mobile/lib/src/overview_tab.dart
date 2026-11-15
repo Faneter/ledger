@@ -9,11 +9,6 @@ class OverviewTab extends StatelessWidget {
     super.key,
     required this.engine,
     required this.selectedMonth,
-    required this.dslController,
-    required this.selectedVoucherId,
-    required this.onVoucherChanged,
-    required this.onSubmitInlineDsl,
-    required this.onOpenQuickSheet,
     required this.onSettleFx,
     required this.onPullSync,
     required this.onEngineChanged,
@@ -21,11 +16,6 @@ class OverviewTab extends StatelessWidget {
 
   final FlutterLedgerEngine engine;
   final String selectedMonth;
-  final TextEditingController dslController;
-  final int? selectedVoucherId;
-  final ValueChanged<int?> onVoucherChanged;
-  final VoidCallback onSubmitInlineDsl;
-  final VoidCallback onOpenQuickSheet;
   final Future<void> Function(Map<String, dynamic> tx) onSettleFx;
   final Future<void> Function() onPullSync;
   final VoidCallback onEngineChanged;
@@ -93,9 +83,6 @@ class OverviewTab extends StatelessWidget {
     final dailySummary = engine.getDailyBudgetSummary(selectedMonth);
     final pools = (dashboard['pools'] as List<dynamic>)
         .cast<Map<String, dynamic>>();
-    final availableVouchers = engine.vouchers
-        .where((v) => v['status'] == 'AVAILABLE')
-        .toList();
     final pendingFxTxs = engine.getPendingFxTransactions();
     final pendingRules = engine.getPendingRecurringRules(selectedMonth);
 
@@ -278,80 +265,9 @@ class OverviewTab extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-
-          // 4. Quick Inline DSL Input Card (with direct entry into Half-Screen Geek Drawer)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      const Expanded(
-                        child: Text(
-                          '极速记账 DSL（Rust 引擎解析）',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: onOpenQuickSheet,
-                        icon: const Icon(Icons.tune_rounded, size: 16),
-                        label: const Text('拆单/键盘'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: dslController,
-                    decoration: InputDecoration(
-                      hintText:
-                          '例: 咸蛋黄拌面 16.8-0.15 #饮食 或 Porkbun \$4.35 冻结31.95',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.send),
-                        onPressed: onSubmitInlineDsl,
-                      ),
-                    ),
-                    onSubmitted: (_) => onSubmitInlineDsl(),
-                  ),
-                  if (availableVouchers.isNotEmpty) ...<Widget>[
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<int?>(
-                      key: ValueKey<int?>(selectedVoucherId),
-                      initialValue: selectedVoucherId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: '叠加卡券核销（可选）',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      items: <DropdownMenuItem<int?>>[
-                        const DropdownMenuItem<int?>(
-                          value: null,
-                          child: Text('不使用卡券'),
-                        ),
-                        ...availableVouchers.map(
-                          (v) => DropdownMenuItem<int?>(
-                            value: v['id'] as int,
-                            child: Text(
-                              '${v['title']} (成本 ¥${v['acquire_cost']} / 满 ¥${v['min_spend']})',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      ],
-                      onChanged: onVoucherChanged,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
           const SizedBox(height: 16),
 
-          // 5. Four Monthly Budget Pool Water-Level Progress Bars
+          // 4. Monthly Budget Pool Water-Level Progress Bars
           Row(
             children: <Widget>[
               Expanded(
@@ -371,8 +287,35 @@ class OverviewTab extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          for (final pool in pools)
-            _buildPoolWaterCard(context, pool, remDays),
+          if (pools.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: <Widget>[
+                    Text(
+                      '暂无月度预算池',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '点击右上角「新增/调配」创建预算池，或通过右下角「+ 记一笔」直接记账',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: cs.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            for (final pool in pools)
+              _buildPoolWaterCard(context, pool, remDays),
         ],
       ),
     );

@@ -18,17 +18,36 @@ Future<void> _setPhoneViewport(WidgetTester tester) async {
 
 void main() {
   testWidgets(
-      'V2 3-Tab Shell & Overview Dashboard shows seed budgets, honest unsynced pill and pending rule banner at 360x780',
+      'App launches cleanly with zero default seed data, no AppBar app name, and no inline quick-record card on OverviewTab',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine();
+    final currentYm = getLocalTodayDateStr().substring(0, 7);
+
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
 
-    // AppBar shell elements
-    expect(find.text('Geek Ledger'), findsOneWidget);
-    expect(find.text('2026-11'), findsOneWidget);
+    // Zero initial default data
+    expect(engine.budgetPools, isEmpty);
+    expect(engine.monthlyBudgets, isEmpty);
+    expect(engine.categories, isEmpty);
+    expect(engine.projectTags, isEmpty);
+    expect(engine.vouchers, isEmpty);
+    expect(engine.fixedAssets, isEmpty);
+    expect(engine.recurringRules, isEmpty);
+    expect(engine.transactions, isEmpty);
+
+    // Top bar omits app name & seed reset button, keeping month pill + sync pill
+    expect(find.text('Geek Ledger'), findsNothing);
+    expect(find.text(currentYm), findsOneWidget);
     expect(find.text('未同步'), findsOneWidget);
+
+    // OverviewTab omits inline quick-record card (FAB is sufficient) & shows empty budget state
+    expect(find.textContaining('极速记账 DSL'), findsNothing);
+    expect(find.text('拆单/键盘'), findsNothing);
+    expect(find.text('日均预算概览'), findsOneWidget);
+    expect(find.text('暂无月度预算池'), findsOneWidget);
+    expect(find.text('月度预算池水位 (0)'), findsOneWidget);
 
     // 3-Tab NavigationBar + FAB
     expect(find.text('今日看板'), findsOneWidget);
@@ -36,48 +55,33 @@ void main() {
     expect(find.text('卡包与引擎'), findsOneWidget);
     expect(find.text('记一笔'), findsOneWidget);
 
-    // Pending recurring rule banner & daily gauge card
-    expect(
-      find.textContaining('每月固定话费(移动8+电信29+联通49)'),
-      findsOneWidget,
-    );
-    expect(find.text('一键入账'), findsWidgets);
-    expect(find.textContaining('本月薅羊毛已省 ¥0.00'), findsOneWidget);
-    expect(find.textContaining('今日可用:'), findsOneWidget);
+    // Quick record works even when budgetPools is completely empty
+    await tester.tap(find.text('记一笔'));
+    await tester.pumpAndSettle();
 
-    // Scroll to verify all 4 budget pools
-    final mainScroll = find.byType(Scrollable).first;
-    await tester.scrollUntilVisible(
-      find.text('固定刚需与定投池'),
-      200,
-      scrollable: mainScroll,
-    );
-    expect(find.text('固定刚需与定投池'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('高频饮食与洗护池'),
-      200,
-      scrollable: mainScroll,
-    );
-    expect(find.text('高频饮食与洗护池'), findsWidgets);
-    await tester.scrollUntilVisible(
-      find.text('月度弹性发展池'),
-      200,
-      scrollable: mainScroll,
-    );
-    expect(find.text('月度弹性发展池'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('医疗与突发应急池'),
-      250,
-      scrollable: mainScroll,
-    );
-    expect(find.text('医疗与突发应急池'), findsOneWidget);
+    final sheetField = find
+        .descendant(
+          of: find.byType(BottomSheet),
+          matching: find.byType(TextField),
+        )
+        .first;
+    await tester.enterText(sheetField, '晚餐牛肉面 22');
+    await tester.pumpAndSettle();
+    final confirmBtn = find.text('确认入账 · ¥22.00');
+    await tester.ensureVisible(confirmBtn);
+    await tester.tap(confirmBtn);
+    await tester.pumpAndSettle();
+
+    expect(engine.transactions.length, 1);
+    final items = engine.transactions.first['items'] as List<dynamic>;
+    expect((items.first as Map<String, dynamic>)['budget_pool_id'], isNull);
   });
 
   testWidgets(
       'Half-screen Geek Formula BottomSheet supports live split preview, primary item toggle and voucher mounting',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
-    final engine = FlutterLedgerEngine();
+    final engine = FlutterLedgerEngine(seedDemoData: true);
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
 
@@ -96,7 +100,6 @@ void main() {
     await tester.enterText(sheetField, '牛奶 28 + 晾衣架 12 + 排针 15');
     await tester.pumpAndSettle();
 
-    // Live split preview + smart eligible voucher chip appear
     expect(find.text('实时拆单沙盒'), findsOneWidget);
     final voucherChip = find.text('🎟️ 可用：微信支付10元立减金 (净省 ¥4.01)');
     expect(voucherChip, findsOneWidget);
@@ -105,7 +108,6 @@ void main() {
     await tester.tap(voucherChip);
     await tester.pumpAndSettle();
 
-    // Mark 排针 as primary item (tap row inside split preview)
     final pinTarget = find.descendant(
       of: find.byType(BottomSheet),
       matching: find.text('排针'),
@@ -115,7 +117,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('★ 主商品'), findsOneWidget);
 
-    // Submit 55.00 - 10.00 + 5.99 = 50.99 net
     final confirmBtn = find.text('确认入账 · ¥50.99');
     await tester.ensureVisible(confirmBtn);
     await tester.tap(confirmBtn);
@@ -126,12 +127,11 @@ void main() {
     expect(h['total_gross'], '55.00');
     expect(h['total_net'], '50.99');
     expect(h['applied_voucher_id'], 1);
-    expect(find.textContaining('已记账:'), findsOneWidget);
     expect(find.textContaining('本月薅羊毛已省 ¥4.01'), findsOneWidget);
   });
 
   testWidgets(
-      'Mastercard FX pre-auth hold shows pending banner and settles via SettleFxDialog',
+      'Mastercard FX pre-auth hold shows pending banner and settles via SettleFxDialog on clean engine',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine();
@@ -147,7 +147,7 @@ void main() {
           matching: find.byType(TextField),
         )
         .first;
-    await tester.enterText(sheetField, '4.32 USD GooglePlay #弹性 冻结');
+    await tester.enterText(sheetField, '4.32 USD GooglePlay 冻结');
     await tester.pumpAndSettle();
 
     expect(find.textContaining('已识别外币消费 (USD 4.32)'), findsOneWidget);
@@ -180,39 +180,43 @@ void main() {
       findsNothing,
     );
     expect(engine.getPendingFxTransactions(), isEmpty);
-    expect(find.textContaining('¥30.94'), findsWidgets);
   });
 
   testWidgets(
-      'Switching month, creating monthly pool, and creating detached project budget work with zero controller disposal errors or overflows',
+      'Switching month via visual calendar month-picker widget (no TextField), creating monthly pool, and creating detached project budget work cleanly',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine();
+    final today = getLocalTodayDateStr();
+    final todayYear = int.parse(today.substring(0, 4));
+    final currentYm = today.substring(0, 7);
+
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
 
-    // 1. Switch billing month via AppBar month pill (typing custom YYYY-MM)
-    await tester.tap(find.text('2026-11'));
+    // 1. Switch billing month via visual year/month calendar picker (zero TextFields)
+    await tester.tap(find.text(currentYm));
     await tester.pumpAndSettle();
-    expect(find.text('切换账单月份'), findsOneWidget);
+    expect(find.text('选择账单月份'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      findsNothing,
+    );
 
-    final monthField = find
-        .descendant(
-          of: find.byType(AlertDialog),
-          matching: find.byType(TextField),
-        )
-        .first;
-    await tester.enterText(monthField, '2026-12');
-    await tester.tap(find.text('确定'));
-    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    // Step to next year and select 12月
+    await tester.tap(find.byTooltip('下一年'));
+    await tester.pumpAndSettle();
+    expect(find.text('${todayYear + 1} 年'), findsOneWidget);
 
-    expect(find.text('2026-12'), findsOneWidget);
+    await tester.tap(find.text('12月'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+    expect(find.text('${todayYear + 1}-12'), findsOneWidget);
 
     // 2. Create a new Monthly Budget Pool via Overview dialog
-    final mainScroll = find.byType(Scrollable).first;
-    final addPoolBtn = find.text('新增/调配');
-    await tester.scrollUntilVisible(addPoolBtn, 200, scrollable: mainScroll);
-    await tester.tap(addPoolBtn);
+    await tester.tap(find.text('新增/调配'));
     await tester.pumpAndSettle();
     expect(find.text('新增月度预算池'), findsOneWidget);
 
@@ -240,7 +244,6 @@ void main() {
     await tester.tap(find.text('新增专项'));
     await tester.pumpAndSettle();
     expect(find.text('新增跨期独立专项预算'), findsOneWidget);
-    // Verify 关联预算池 was completely removed
     expect(find.text('关联预算池'), findsNothing);
 
     final projFields = find.descendant(
@@ -264,7 +267,7 @@ void main() {
       'Timeline split item expansion, pool rebind, swipe-delete undo and Projects view work end-to-end',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
-    final engine = FlutterLedgerEngine();
+    final engine = FlutterLedgerEngine(seedDemoData: true);
     engine.recordFromDsl('N2报名费 550 #JLPT_N2考试专项', txDate: '2026-11-15');
     engine.recordFromDsl('牛奶 28 + 排针 15 = 35', txDate: '2026-11-16');
 
@@ -274,13 +277,11 @@ void main() {
     await tester.tap(find.text('流水与专项'));
     await tester.pumpAndSettle();
 
-    // Expand split transaction card (牛奶 28 + 排针 15 => 原价 ¥43.00)
     await tester.tap(find.textContaining('原价 ¥43.00'));
     await tester.pumpAndSettle();
 
     expect(find.text('编辑主账单'), findsOneWidget);
 
-    // Rebind first split child item pool
     final pillFinder = find.textContaining('▾').first;
     await tester.ensureVisible(pillFinder);
     await tester.tap(pillFinder);
@@ -298,7 +299,6 @@ void main() {
         (splitTx['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     expect(splitItems.first['budget_pool_id'], 'POOL_EMERGENCY');
 
-    // Left-swipe Dismissible soft delete + SnackBar Undo
     await tester.drag(
       find.byType(Dismissible).first,
       const Offset(-500, 0),
@@ -312,7 +312,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.getRecentTransactions().length, 2);
 
-    // Switch SegmentedButton to 专项立项
     await tester.tap(find.text('专项立项'));
     await tester.pumpAndSettle();
 
@@ -321,11 +320,10 @@ void main() {
   });
 
   testWidgets(
-      'Wallet & Engine tab + Real HTTP sync with unreachable vs live mock server',
+      'Wallet & Engine tab handles empty state, adding recurring rule without pools, and honest unreachable HTTP sync error',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
 
-    // Phase 1: Failing HTTP transport keeps pending ops and marks 未连云端
     final offlineEngine = FlutterLedgerEngine(
       httpPost: (_, __) async =>
           throw const SocketException('Connection refused'),
@@ -336,23 +334,36 @@ void main() {
     await tester.tap(find.text('卡包与引擎'));
     await tester.pumpAndSettle();
 
-    // Voucher deck + recurring rule 1-tap execution + fixed assets
-    expect(find.text('微信支付10元立减金'), findsOneWidget);
-    expect(find.text('美团外卖5元无门槛优惠券'), findsOneWidget);
-    expect(
-      find.textContaining('每月固定话费(移动8+电信29+联通49)'),
-      findsOneWidget,
-    );
+    // Empty state cards render cleanly
+    expect(find.textContaining('暂无符合条件的卡券'), findsOneWidget);
+    expect(find.textContaining('暂无周期性扣款规则'), findsOneWidget);
 
+    // Add a recurring rule even when budgetPools is empty (no DropdownButton crash)
+    await tester.tap(find.text('新增规则'));
+    await tester.pumpAndSettle();
+    expect(find.text('新增周期性扣款规则'), findsOneWidget);
+
+    final ruleFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(ruleFields.at(0), '校园网月租');
+    await tester.enterText(ruleFields.at(1), '30.00');
+    await tester.tap(find.text('保存规则'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+
+    expect(find.text('校园网月租'), findsOneWidget);
+    expect(offlineEngine.recurringRules.length, 1);
+    expect(offlineEngine.pendingSyncCount, greaterThan(0));
+
+    // Execute recurring rule -> pending sync increments
     final walletScroll = find.byType(Scrollable).first;
     await tester.drag(walletScroll, const Offset(0, -140));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('立即入账').first);
     await tester.pumpAndSettle();
-
     expect(offlineEngine.transactions.length, 1);
-    expect(offlineEngine.pendingSyncCount, greaterThan(0));
 
     // Open Sync Dialog -> attempt sync -> fails honestly without resetting pending count
     await tester.tap(find.textContaining('待传'));
@@ -418,7 +429,7 @@ void main() {
         throw StateError('Unexpected path: ${uri.path}');
       },
     );
-    engine.recordFromDsl('测试面条 18 #饮食');
+    engine.recordFromDsl('测试面条 18');
     expect(engine.pendingSyncCount, 1);
 
     final syncRes = await engine.syncWithServer();
@@ -438,14 +449,17 @@ void main() {
     expect(engine.serverResetDetected, isTrue);
 
     final pushRes = await engine.pushLocalBundleToServer();
-    expect(pushRes['restored'], isTrue);
+    expect(pushRes['success'], isTrue);
     expect(engine.serverResetDetected, isFalse);
-    expect(recordedPaths, <String>[
-      '/api/sync/exchange',
-      '/api/conflicts/cf_1/resolve',
-      '/api/sync/exchange',
-      '/api/sync/exchange',
-      '/api/sync/reseed',
-    ]);
+    expect(
+      recordedPaths,
+      <String>[
+        '/api/sync/exchange',
+        '/api/conflicts/cf_1/resolve',
+        '/api/sync/exchange',
+        '/api/sync/exchange',
+        '/api/sync/reseed',
+      ],
+    );
   });
 }

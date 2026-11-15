@@ -158,6 +158,7 @@ class FlutterLedgerEngine {
     String nodeId = 'mobile-flutter',
     String serverUrl = 'http://127.0.0.1:3001',
     JsonHttpPost? httpPost,
+    bool seedDemoData = false,
   })  : _bridge = bridge ?? RustCoreBridge.instance(),
         _httpPost = httpPost ?? _defaultJsonHttpPost,
         hlc = HybridLogicalClock(
@@ -165,7 +166,11 @@ class FlutterLedgerEngine {
           bridge: bridge ?? RustCoreBridge.instance(),
         ) {
     this.serverUrl = serverUrl;
-    resetToDefaultSeed();
+    if (seedDemoData) {
+      resetToDefaultSeed();
+    } else {
+      resetToCleanState();
+    }
   }
 
   final RustCoreBridge _bridge;
@@ -563,18 +568,11 @@ class FlutterLedgerEngine {
     _recurringSeq = 2;
   }
 
-  /// Resets engine state to a completely clean empty personal ledger (0 transactions,
-  /// 0 vouchers, 0 initial monthly budget amounts, standard 4 pools & categories kept).
+  /// Resets engine state to a completely empty personal ledger with zero initial default data.
   void resetToCleanState() {
-    budgetPools = _cloneListOfMaps(_seedBudgetPools);
-    monthlyBudgets = _seedMonthlyBudgets202611
-        .map((row) => <String, dynamic>{
-              ..._cloneMap(row),
-              'base_allocation': '0.00',
-              'rollover_from_prev': '0.00',
-            })
-        .toList();
-    categories = _cloneListOfMaps(_seedCategories);
+    budgetPools = <Map<String, dynamic>>[];
+    monthlyBudgets = <Map<String, dynamic>>[];
+    categories = <Map<String, dynamic>>[];
     projectTags = <Map<String, dynamic>>[];
     vouchers = <Map<String, dynamic>>[];
     fixedAssets = <Map<String, dynamic>>[];
@@ -583,6 +581,7 @@ class FlutterLedgerEngine {
     syncOplog = <Map<String, dynamic>>[];
     conflicts = <Map<String, dynamic>>[];
     dismissedRecurringRuleIds = <int>{};
+    isOfflineMode = false;
     isSyncing = false;
     serverEpochId = null;
     serverResetDetected = false;
@@ -597,7 +596,7 @@ class FlutterLedgerEngine {
     _itemSeq = 0;
     _voucherSeq = 0;
     _assetSeq = 0;
-    _monthlyBudgetSeq = 4;
+    _monthlyBudgetSeq = 0;
     _recurringSeq = 0;
   }
 
@@ -724,9 +723,23 @@ class FlutterLedgerEngine {
           final tagId = ov['project_tag_id'];
           parsedItems[i]['project_tag_id'] = tagId;
           if (tagId != null && !ov.containsKey('budget_pool_id')) {
-            parsedItems[i]['budget_pool_id'] = 'POOL_FLEX';
+            parsedItems[i]['budget_pool_id'] =
+                budgetPools.any((p) => p['id'] == 'POOL_FLEX')
+                    ? 'POOL_FLEX'
+                    : null;
           }
         }
+      }
+    }
+
+    for (final it in parsedItems) {
+      final pid = it['budget_pool_id'] as String?;
+      if (pid != null && !budgetPools.any((p) => p['id'] == pid)) {
+        it['budget_pool_id'] = null;
+      }
+      final cid = it['category_id'] as String?;
+      if (cid != null && !categories.any((c) => c['id'] == cid)) {
+        it['category_id'] = null;
       }
     }
 
@@ -1043,13 +1056,15 @@ class FlutterLedgerEngine {
     final nowIso = _nowIso();
     final currentHlc = hlc.now();
     final upperCurr = currency.toUpperCase();
-    final resolvedCategory =
-        categoryId ?? (categories.isNotEmpty ? categories.first['id'] as String : 'CAT_FOOD');
-    final catMatch = categories.where((c) => c['id'] == resolvedCategory).toList();
+    final resolvedCategory = categoryId ??
+        (categories.isNotEmpty ? categories.first['id'] as String : null);
+    final catMatch = resolvedCategory != null
+        ? categories.where((c) => c['id'] == resolvedCategory).toList()
+        : <Map<String, dynamic>>[];
     final resolvedPool = budgetPoolId ??
         (catMatch.isNotEmpty
-            ? (catMatch.first['default_pool_id'] as String?) ?? 'POOL_DAILY'
-            : 'POOL_DAILY');
+            ? (catMatch.first['default_pool_id'] as String?)
+            : (budgetPools.isNotEmpty ? budgetPools.first['id'] as String : null));
 
     Map<String, dynamic>? voucherToUse;
     if (appliedVoucherId != null) {
@@ -1943,10 +1958,16 @@ class FlutterLedgerEngine {
     }
     final rule = recurringRules[idx];
     final ruleType = rule['rule_type'] as String;
-    final defaultCat =
+    final preferredCat =
         ruleType == 'FX_SUBSCRIPTION' ? 'CAT_DIGITAL_SUB' : 'CAT_TELECOM';
-    final defaultPool =
+    final defaultCat = categories.any((c) => c['id'] == preferredCat)
+        ? preferredCat
+        : (categories.isNotEmpty ? categories.first['id'] as String? : null);
+    final preferredPool =
         ruleType == 'FX_SUBSCRIPTION' ? 'POOL_FLEX' : 'POOL_FIXED';
+    final defaultPool = budgetPools.any((p) => p['id'] == preferredPool)
+        ? preferredPool
+        : (budgetPools.isNotEmpty ? budgetPools.first['id'] as String? : null);
     return recordManualTransaction(
       txType: 'EXPENSE',
       txDate: txDate,
@@ -2129,7 +2150,7 @@ class FlutterLedgerEngine {
     return <String, dynamic>{
       'poolName': dailyRow != null
           ? '${dailyRow['pool_name']} (${dailyRow['pool_id']})'
-          : '高频饮食与洗护池 (POOL_DAILY)',
+          : '日均预算概览',
       'totalAvailable':
           dailyRow != null ? dailyRow['total_available_budget'] : '0.00',
       'spentNet': dailyRow != null ? dailyRow['spent_net'] : '0.00',
@@ -2417,7 +2438,7 @@ class FlutterLedgerEngine {
     int triggerDay = 1,
     String currency = 'CNY',
     required String amount,
-    String? budgetPoolId = 'POOL_FIXED',
+    String? budgetPoolId,
     String? categoryId,
     bool autoReserveBudget = true,
     bool isActive = true,
@@ -2447,6 +2468,10 @@ class FlutterLedgerEngine {
     }
 
     _recurringSeq += 1;
+    final preferredCat =
+        derivedType == 'FX_SUBSCRIPTION' ? 'CAT_DIGITAL_SUB' : 'CAT_TELECOM';
+    final fallbackCat =
+        categories.any((c) => c['id'] == preferredCat) ? preferredCat : null;
     final rule = <String, dynamic>{
       'id': _recurringSeq,
       'title': title.trim(),
@@ -2455,11 +2480,8 @@ class FlutterLedgerEngine {
       'trigger_day': clampedDay,
       'currency': upperCurr,
       'amount': amtFormatted,
-      'category_id': categoryId ??
-          (derivedType == 'FX_SUBSCRIPTION'
-              ? 'CAT_DIGITAL_SUB'
-              : 'CAT_TELECOM'),
-      'budget_pool_id': budgetPoolId ?? 'POOL_FIXED',
+      'category_id': categoryId ?? fallbackCat,
+      'budget_pool_id': budgetPoolId,
       'auto_reserve_budget': autoReserveBudget,
       'is_active': isActive,
     };

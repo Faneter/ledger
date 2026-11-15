@@ -591,10 +591,13 @@ class _SyncAndConflictDialogState extends State<SyncAndConflictDialog> {
                       engine.resetToCleanState();
                       widget.onEngineChanged();
                       Navigator.of(context).pop();
-                      showLedgerSnackBar(context, '已恢复为纯净初始账本（0 流水 / 0 卡券）');
+                      showLedgerSnackBar(
+                        context,
+                        '已清空本地数据（0 预算池 / 0 流水 / 0 卡券）',
+                      );
                     },
                     icon: const Icon(Icons.cleaning_services_outlined, size: 16),
-                    label: const Text('恢复纯净账本'),
+                    label: const Text('清空本地数据'),
                   ),
                 ],
               ),

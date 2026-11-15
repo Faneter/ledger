@@ -117,32 +117,60 @@ Future<Map<String, String?>?> showTargetPickerSheet(
                       ?.copyWith(color: cs.onSurfaceVariant),
                 ),
                 const SizedBox(height: 6),
-                for (final pool in engine.budgetPools)
-                  ListTile(
-                    dense: true,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                if (engine.budgetPools.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(
+                      '暂无月度预算池',
+                      style: Theme.of(ctx)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: cs.onSurfaceVariant),
                     ),
-                    selected: currentProjectTagId == null &&
-                        currentPoolId == pool['id'],
-                    leading: const Icon(Icons.savings_outlined),
-                    title: Text(pool['name'] as String),
-                    subtitle: pool['description'] != null
-                        ? Text(
-                            pool['description'] as String,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          )
-                        : null,
-                    trailing: currentProjectTagId == null &&
-                            currentPoolId == pool['id']
-                        ? Icon(Icons.check_circle, color: cs.primary)
-                        : null,
-                    onTap: () => Navigator.of(ctx).pop(<String, String?>{
-                      'budget_pool_id': pool['id'] as String,
-                      'project_tag_id': null,
-                    }),
+                  )
+                else
+                  for (final pool in engine.budgetPools)
+                    ListTile(
+                      dense: true,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      selected: currentProjectTagId == null &&
+                          currentPoolId == pool['id'],
+                      leading: const Icon(Icons.savings_outlined),
+                      title: Text(pool['name'] as String),
+                      subtitle: pool['description'] != null
+                          ? Text(
+                              pool['description'] as String,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          : null,
+                      trailing: currentProjectTagId == null &&
+                              currentPoolId == pool['id']
+                          ? Icon(Icons.check_circle, color: cs.primary)
+                          : null,
+                      onTap: () => Navigator.of(ctx).pop(<String, String?>{
+                        'budget_pool_id': pool['id'] as String,
+                        'project_tag_id': null,
+                      }),
+                    ),
+                ListTile(
+                  dense: true,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  selected: currentProjectTagId == null && currentPoolId == null,
+                  leading: const Icon(Icons.layers_clear_outlined),
+                  title: const Text('暂不绑定预算池（自由流水）'),
+                  trailing: currentProjectTagId == null && currentPoolId == null
+                      ? Icon(Icons.check_circle, color: cs.primary)
+                      : null,
+                  onTap: () => Navigator.of(ctx).pop(<String, String?>{
+                    'budget_pool_id': null,
+                    'project_tag_id': null,
+                  }),
+                ),
                 if (activeTags.isNotEmpty) ...<Widget>[
                   const Divider(height: 20),
                   Text(
@@ -169,7 +197,10 @@ Future<Map<String, String?>?> showTargetPickerSheet(
                           ? Icon(Icons.check_circle, color: cs.secondary)
                           : null,
                       onTap: () => Navigator.of(ctx).pop(<String, String?>{
-                        'budget_pool_id': 'POOL_FLEX',
+                        'budget_pool_id':
+                            engine.budgetPools.any((p) => p['id'] == 'POOL_FLEX')
+                                ? 'POOL_FLEX'
+                                : null,
                         'project_tag_id': tag['id'] as String,
                       }),
                     ),

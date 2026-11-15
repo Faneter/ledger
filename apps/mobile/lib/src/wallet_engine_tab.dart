@@ -247,7 +247,20 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
             ],
           ),
           const SizedBox(height: 6),
-          for (final rule in engine.recurringRules)
+          if (engine.recurringRules.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: Text(
+                    '暂无周期性扣款规则，点击右上角「新增规则」创建',
+                    style: TextStyle(color: cs.onSurfaceVariant),
+                  ),
+                ),
+              ),
+            )
+          else
+            for (final rule in engine.recurringRules)
             Card(
               margin: const EdgeInsets.only(bottom: 8),
               child: Padding(
@@ -438,7 +451,20 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
             ],
           ),
           const SizedBox(height: 6),
-          for (final asset in assets)
+          if (assets.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: Text(
+                    '暂无固定资产，点击右上角「添置资产」开始追踪日均成本',
+                    style: TextStyle(color: cs.onSurfaceVariant),
+                  ),
+                ),
+              ),
+            )
+          else
+            for (final asset in assets)
             Card(
               margin: const EdgeInsets.only(bottom: 8),
               child: Padding(
@@ -641,7 +667,7 @@ class _AddRuleResult {
   final int triggerDay;
   final String currency;
   final String amount;
-  final String budgetPoolId;
+  final String? budgetPoolId;
 }
 
 class _AddRuleDialog extends StatefulWidget {
@@ -659,7 +685,7 @@ class _AddRuleDialogState extends State<_AddRuleDialog> {
   final _dayCtrl = TextEditingController(text: '1');
   String _cycle = 'MONTHLY';
   String _currency = 'CNY';
-  late String _poolId;
+  String? _poolId;
   String? _error;
 
   @override
@@ -668,7 +694,7 @@ class _AddRuleDialogState extends State<_AddRuleDialog> {
     final ids = widget.budgetPools.map((p) => p['id'] as String).toList();
     _poolId = ids.contains('POOL_FIXED')
         ? 'POOL_FIXED'
-        : (ids.isNotEmpty ? ids.first : 'POOL_FIXED');
+        : (ids.isNotEmpty ? ids.first : null);
   }
 
   @override
@@ -772,28 +798,30 @@ class _AddRuleDialogState extends State<_AddRuleDialog> {
               ],
             ),
             const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              key: ValueKey<String>(_poolId),
+            DropdownButtonFormField<String?>(
+              key: ValueKey<String?>(_poolId),
               initialValue: _poolId,
               isExpanded: true,
               decoration: const InputDecoration(
                 labelText: '关联资金池',
                 border: OutlineInputBorder(),
               ),
-              items: widget.budgetPools
-                  .map(
-                    (p) => DropdownMenuItem<String>(
-                      value: p['id'] as String,
-                      child: Text(
-                        p['name'] as String,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+              items: <DropdownMenuItem<String?>>[
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('暂不绑定预算池'),
+                ),
+                ...widget.budgetPools.map(
+                  (p) => DropdownMenuItem<String?>(
+                    value: p['id'] as String,
+                    child: Text(
+                      p['name'] as String,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setState(() => _poolId = v);
-              },
+                  ),
+                ),
+              ],
+              onChanged: (v) => setState(() => _poolId = v),
             ),
             if (_error != null) ...<Widget>[
               const SizedBox(height: 8),

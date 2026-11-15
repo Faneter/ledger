@@ -90,9 +90,6 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   int _tabIndex = 0;
   String _selectedMonth = getLocalTodayDateStr().substring(0, 7);
 
-  final TextEditingController _dslController = TextEditingController();
-  int? _selectedVoucherId;
-
   @override
   void initState() {
     super.initState();
@@ -116,40 +113,9 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
     return todayYm;
   }
 
-  @override
-  void dispose() {
-    _dslController.dispose();
-    super.dispose();
-  }
-
   void _refresh() {
     if (!mounted) return;
     setState(() {});
-  }
-
-  void _submitInlineDsl() {
-    final engine = _engine;
-    final raw = _dslController.text.trim();
-    if (engine == null || raw.isEmpty) return;
-
-    try {
-      final tx = engine.recordFromDsl(
-        raw,
-        appliedVoucherId: _selectedVoucherId,
-      );
-      final h = tx['header'] as Map<String, dynamic>;
-      _selectedMonth = (h['tx_date'] as String).substring(0, 7);
-      _dslController.clear();
-      setState(() {
-        _selectedVoucherId = null;
-      });
-      showLedgerSnackBar(
-        context,
-        '已记账: ${h['merchant_or_note']} ¥${h['total_net']}',
-      );
-    } catch (e) {
-      showLedgerSnackBar(context, '解析失败: $e', isError: true);
-    }
   }
 
   Future<void> _openQuickRecordSheet({
@@ -157,21 +123,15 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   }) async {
     final engine = _engine;
     if (engine == null) return;
-    final prefill = _dslController.text.trim();
     final tx = await showQuickRecordModal(
       context,
       engine,
       initialMode: initialMode,
-      initialDsl: prefill.isNotEmpty ? prefill : null,
     );
     if (tx == null || !mounted) return;
     final h = tx['header'] as Map<String, dynamic>;
-    _selectedMonth = (h['tx_date'] as String).substring(0, 7);
-    if (prefill.isNotEmpty) {
-      _dslController.clear();
-    }
     setState(() {
-      _selectedVoucherId = null;
+      _selectedMonth = (h['tx_date'] as String).substring(0, 7);
     });
     showLedgerSnackBar(
       context,
@@ -294,11 +254,6 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
         return OverviewTab(
           engine: engine,
           selectedMonth: _selectedMonth,
-          dslController: _dslController,
-          selectedVoucherId: _selectedVoucherId,
-          onVoucherChanged: (id) => setState(() => _selectedVoucherId = id),
-          onSubmitInlineDsl: _submitInlineDsl,
-          onOpenQuickSheet: () => _openQuickRecordSheet(),
           onSettleFx: _showSettleFxDialog,
           onPullSync: _pullSync,
           onEngineChanged: _refresh,
@@ -327,7 +282,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   Widget build(BuildContext context) {
     if (_initError != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Geek Ledger · 初始化失败')),
+        appBar: AppBar(title: const Text('初始化失败')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -346,47 +301,42 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 10,
-        title: const Text(
-          'Geek Ledger',
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-        ),
-        actions: <Widget>[
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: _openMonthPickerDialog,
-              child: Tooltip(
-                message: '切换账单月份',
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
+        automaticallyImplyLeading: false,
+        titleSpacing: 12,
+        title: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: _openMonthPickerDialog,
+          child: Tooltip(
+            message: '切换账单月份',
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Icon(Icons.calendar_month_outlined, size: 15),
+                  const SizedBox(width: 5),
+                  Text(
+                    _selectedMonth,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        _selectedMonth,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 1),
-                      const Icon(Icons.arrow_drop_down, size: 15),
-                    ],
-                  ),
-                ),
+                  const SizedBox(width: 2),
+                  const Icon(Icons.arrow_drop_down, size: 16),
+                ],
               ),
             ),
           ),
+        ),
+        actions: <Widget>[
           SyncStatusPill(
             engine: engine,
             onTap: _openSyncDialog,
@@ -394,31 +344,16 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
           if (widget.onToggleTheme != null)
             IconButton(
               visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               padding: const EdgeInsets.all(4),
               tooltip: '切换深浅色主题',
               icon: Icon(
                 isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                size: 19,
+                size: 20,
               ),
               onPressed: widget.onToggleTheme,
             ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-            padding: const EdgeInsets.all(4),
-            tooltip: '重设至 2026-11 默认种子',
-            icon: const Icon(Icons.restart_alt, size: 19),
-            onPressed: () {
-              engine.resetToDefaultSeed();
-              _dslController.clear();
-              setState(() {
-                _selectedVoucherId = null;
-                _selectedMonth = _resolveInitialMonth(engine);
-              });
-              showLedgerSnackBar(context, '已重设至 2026-11 默认种子');
-            },
-          ),
+          const SizedBox(width: 6),
         ],
       ),
       body: _buildActiveTab(engine),
@@ -466,76 +401,174 @@ class _MonthPickerDialog extends StatefulWidget {
 }
 
 class _MonthPickerDialogState extends State<_MonthPickerDialog> {
-  late final TextEditingController _customCtrl;
-  String? _error;
+  late int _displayYear;
+  bool _pickingYear = false;
 
   @override
   void initState() {
     super.initState();
-    _customCtrl = TextEditingController(text: widget.initialMonth);
+    final parts = widget.initialMonth.split('-');
+    _displayYear =
+        int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? DateTime.now().year;
   }
 
-  @override
-  void dispose() {
-    _customCtrl.dispose();
-    super.dispose();
-  }
+  String _formatYearMonth(int year, int month) =>
+      '${year.toString().padLeft(4, '0')}-${month.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final todayYm = getLocalTodayDateStr().substring(0, 7);
+
     return AlertDialog(
-      title: const Text('切换账单月份'),
-      content: SingleChildScrollView(
+      title: const Text('选择账单月份'),
+      content: SizedBox(
+        width: 280,
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: widget.months.map((ym) {
-                return ChoiceChip(
-                  label: Text(ym),
-                  selected: ym == widget.initialMonth,
-                  onSelected: (_) => Navigator.of(context).pop(ym),
-                );
-              }).toList(),
+            Row(
+              children: <Widget>[
+                IconButton(
+                  tooltip: '上一年',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.chevron_left, size: 20),
+                  onPressed: _pickingYear
+                      ? null
+                      : () => setState(() => _displayYear -= 1),
+                ),
+                Expanded(
+                  child: Center(
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                      ),
+                      onPressed: () =>
+                          setState(() => _pickingYear = !_pickingYear),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            '$_displayYear 年',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            _pickingYear
+                                ? Icons.arrow_drop_up
+                                : Icons.arrow_drop_down,
+                            size: 18,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '下一年',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.chevron_right, size: 20),
+                  onPressed: _pickingYear
+                      ? null
+                      : () => setState(() => _displayYear += 1),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _customCtrl,
-              decoration: InputDecoration(
-                labelText: '或输入月份 (YYYY-MM)',
-                border: const OutlineInputBorder(),
-                errorText: _error,
+            const SizedBox(height: 8),
+            if (_pickingYear)
+              SizedBox(
+                height: 216,
+                child: YearPicker(
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2100),
+                  selectedDate: DateTime(_displayYear),
+                  onChanged: (DateTime picked) {
+                    setState(() {
+                      _displayYear = picked.year;
+                      _pickingYear = false;
+                    });
+                  },
+                ),
+              )
+            else
+              GridView.count(
+                crossAxisCount: 3,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 1.85,
+                children: List<Widget>.generate(12, (idx) {
+                  final month = idx + 1;
+                  final ym = _formatYearMonth(_displayYear, month);
+                  final isSelected = ym == widget.initialMonth;
+                  final isToday = ym == todayYm;
+                  final hasData = widget.months.contains(ym);
+
+                  return Material(
+                    color: isSelected
+                        ? cs.primary
+                        : cs.surfaceContainerHighest.withValues(alpha: 0.6),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: isToday && !isSelected
+                          ? BorderSide(color: cs.primary, width: 1.2)
+                          : BorderSide.none,
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => Navigator.of(context).pop(ym),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: <Widget>[
+                          Text(
+                            '$month月',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                              color: isSelected ? cs.onPrimary : cs.onSurface,
+                            ),
+                          ),
+                          if (hasData && !isSelected)
+                            Positioned(
+                              bottom: 5,
+                              child: Container(
+                                width: 4,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: cs.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
               ),
-              onChanged: (_) {
-                if (_error != null) setState(() => _error = null);
-              },
-            ),
           ],
         ),
       ),
       actions: <Widget>[
         TextButton(
+          onPressed: () => Navigator.of(context).pop(todayYm),
+          child: const Text('回到本月'),
+        ),
+        TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final text = _customCtrl.text.trim();
-            if (!RegExp(r'^\d{4}-\d{2}$').hasMatch(text)) {
-              setState(() => _error = '请输入 YYYY-MM 格式，如 2026-12');
-              return;
-            }
-            final m = int.tryParse(text.substring(5, 7)) ?? 0;
-            if (m < 1 || m > 12) {
-              setState(() => _error = '月份需在 01-12 之间');
-              return;
-            }
-            Navigator.of(context).pop(text);
-          },
-          child: const Text('确定'),
         ),
       ],
     );

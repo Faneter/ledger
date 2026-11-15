@@ -64,8 +64,8 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
   late final TextEditingController _fxHoldPctCtrl;
   late final TextEditingController _fxCashbackPctCtrl;
   String _currency = 'CNY';
-  String _targetType = 'POOL';
-  String _targetId = 'POOL_DAILY';
+  String _targetType = 'NONE';
+  String _targetId = '';
   int? _selectedVoucherIdVisual;
 
   @override
@@ -89,9 +89,18 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
       final daily = widget.engine.budgetPools
           .where((p) => p['id'] == 'POOL_DAILY')
           .toList();
+      _targetType = 'POOL';
       _targetId = (daily.isNotEmpty
           ? daily.first['id']
           : widget.engine.budgetPools.first['id']) as String;
+    } else {
+      final activeTags = widget.engine.projectTags
+          .where((t) => t['is_active'] != false)
+          .toList();
+      if (activeTags.isNotEmpty) {
+        _targetType = 'PROJECT';
+        _targetId = activeTags.first['id'] as String;
+      }
     }
   }
 
@@ -196,14 +205,18 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
               ? '日常收入'
               : _targetType == 'PROJECT'
                   ? (projectTagNameById(widget.engine, _targetId) ?? '专项支出')
-                  : poolNameById(widget.engine, _targetId));
+                  : _targetType == 'POOL'
+                      ? poolNameById(widget.engine, _targetId)
+                      : '日常支出');
 
       String? poolId;
       String? tagId;
-      if (_targetType == 'PROJECT') {
+      if (_targetType == 'PROJECT' && _targetId.isNotEmpty) {
         tagId = _targetId;
-        poolId = 'POOL_FLEX';
-      } else {
+        poolId = widget.engine.budgetPools.any((p) => p['id'] == 'POOL_FLEX')
+            ? 'POOL_FLEX'
+            : null;
+      } else if (_targetType == 'POOL' && _targetId.isNotEmpty) {
         poolId = _targetId;
       }
 
@@ -772,6 +785,12 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 children: <Widget>[
+                  if (widget.engine.budgetPools.isEmpty && activeTags.isEmpty)
+                    ActionChip(
+                      visualDensity: VisualDensity.compact,
+                      label: const Text('暂无预算池或专项标签'),
+                      onPressed: () => setState(() => _showTagBar = false),
+                    ),
                   for (final pool in widget.engine.budgetPools)
                     Padding(
                       padding: const EdgeInsets.only(right: 6),
@@ -1010,35 +1029,44 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
                 ?.copyWith(color: cs.onSurfaceVariant),
           ),
           const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: <Widget>[
-              for (final pool in widget.engine.budgetPools)
-                ChoiceChip(
-                  label: Text('💰 ${pool['name']}'),
-                  selected: _targetType == 'POOL' && _targetId == pool['id'],
-                  onSelected: (_) {
-                    setState(() {
-                      _targetType = 'POOL';
-                      _targetId = pool['id'] as String;
-                    });
-                  },
-                ),
-              for (final tag in activeTags)
-                ChoiceChip(
-                  label: Text('🎯 ${tag['name']}'),
-                  selected:
-                      _targetType == 'PROJECT' && _targetId == tag['id'],
-                  onSelected: (_) {
-                    setState(() {
-                      _targetType = 'PROJECT';
-                      _targetId = tag['id'] as String;
-                    });
-                  },
-                ),
-            ],
-          ),
+          if (widget.engine.budgetPools.isEmpty && activeTags.isEmpty)
+            Text(
+              '当前暂无预算池或专项，将记为自由流水（后续可随时分配归属）',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: cs.onSurfaceVariant),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: <Widget>[
+                for (final pool in widget.engine.budgetPools)
+                  ChoiceChip(
+                    label: Text('💰 ${pool['name']}'),
+                    selected: _targetType == 'POOL' && _targetId == pool['id'],
+                    onSelected: (_) {
+                      setState(() {
+                        _targetType = 'POOL';
+                        _targetId = pool['id'] as String;
+                      });
+                    },
+                  ),
+                for (final tag in activeTags)
+                  ChoiceChip(
+                    label: Text('🎯 ${tag['name']}'),
+                    selected:
+                        _targetType == 'PROJECT' && _targetId == tag['id'],
+                    onSelected: (_) {
+                      setState(() {
+                        _targetType = 'PROJECT';
+                        _targetId = tag['id'] as String;
+                      });
+                    },
+                  ),
+              ],
+            ),
           if (availableVouchers.isNotEmpty) ...<Widget>[
             const SizedBox(height: 12),
             DropdownButtonFormField<int?>(
