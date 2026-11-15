@@ -1,4 +1,4 @@
-#![cfg_attr(target_arch = "wasm32", no_std)]
+#![cfg_attr(any(target_arch = "wasm32", ledger_no_std), no_std)]
 
 extern crate alloc;
 
@@ -170,6 +170,50 @@ mod wasm_rt {
             i += 1;
         }
         0
+    }
+}
+
+#[cfg(all(ledger_no_std, not(target_arch = "wasm32")))]
+mod libc_rt {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::ffi::c_void;
+    use core::panic::PanicInfo;
+    use core::ptr;
+
+    unsafe extern "C" {
+        fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, size: usize) -> i32;
+        fn free(ptr: *mut c_void);
+        fn abort() -> !;
+    }
+
+    pub struct LibcAlloc;
+
+    unsafe impl GlobalAlloc for LibcAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let align = layout.align().max(core::mem::size_of::<usize>());
+            let size = layout.size().max(1);
+            let mut ptr: *mut c_void = ptr::null_mut();
+            let rc = unsafe { posix_memalign(&raw mut ptr, align, size) };
+            if rc == 0 {
+                ptr as *mut u8
+            } else {
+                ptr::null_mut()
+            }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+            if !ptr.is_null() {
+                unsafe { free(ptr as *mut c_void) };
+            }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: LibcAlloc = LibcAlloc;
+
+    #[panic_handler]
+    fn panic(_info: &PanicInfo) -> ! {
+        unsafe { abort() }
     }
 }
 

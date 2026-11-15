@@ -96,20 +96,23 @@ class RustCoreBridge {
       ]);
     }
 
+    Object? lastError;
     for (final candidate in candidates) {
       if (candidate.contains(Platform.pathSeparator) || candidate.contains('/')) {
         if (!File(candidate).existsSync()) continue;
       }
       try {
         return DynamicLibrary.open(candidate);
-      } catch (_) {
+      } catch (e) {
+        lastError = e;
         // Continue trying fallback paths.
       }
     }
 
     throw StateError(
       'Unable to locate ledger_core_rs native library. '
-      'Run `pnpm build:core-rs` or set LEDGER_CORE_RS_LIB.',
+      'Run `pnpm build:core-rs` or set LEDGER_CORE_RS_LIB.'
+      '${lastError != null ? ' (last error: $lastError)' : ''}',
     );
   }
 

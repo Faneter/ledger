@@ -8,3 +8,6 @@ name = "ledger_core_rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ledger_no_std)'] }
