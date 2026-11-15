@@ -1023,4 +1023,81 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(dec15.remainingDays).toBe(17);
     });
   });
+
+  describe('12. 算式算账拆单子项独立编辑资金池/专项预算测试', () => {
+    it('应对多子项交易分别修改各子项的资金池与专项归属，且不破坏各子项名称与分摊金额守恒', () => {
+      const tx = engine.recordFromDsl('测试1 20 #日常 + 测试2 10 #弹性 = 15', '2026-11-15');
+      expect(tx.items).toHaveLength(2);
+      expect(tx.items[0].item_name).toBe('测试1');
+      expect(tx.items[0].budget_pool_id).toBe('POOL_DAILY');
+      expect(tx.items[0].item_net).toBe('10.00');
+      expect(tx.items[1].item_name).toBe('测试2');
+      expect(tx.items[1].budget_pool_id).toBe('POOL_FLEX');
+      expect(tx.items[1].item_net).toBe('5.00');
+
+      const dailyBefore = engine
+        .getMonthlyBudgetStatus('2026-11')
+        .find((p) => p.pool_id === 'POOL_DAILY')!;
+      const emergencyBefore = engine
+        .getMonthlyBudgetStatus('2026-11')
+        .find((p) => p.pool_id === 'POOL_EMERGENCY')!;
+
+      const updated = engine.updateTransaction(tx.header.id, {
+        tx_date: '2026-11-15',
+        merchant_or_note: '测试1 + 测试2（已调整池）',
+        total_gross: '30.00',
+        payment_discount: '15.00',
+        item_updates: [
+          { index: 0, id: tx.items[0].id, budget_pool_id: 'POOL_EMERGENCY', project_tag_id: null },
+          { index: 1, id: tx.items[1].id, budget_pool_id: 'POOL_DAILY', project_tag_id: null },
+        ],
+      });
+
+      // 子项名称与拆单金额必须完整保留，不得被整单总额或备注覆盖
+      expect(updated.items[0].item_name).toBe('测试1');
+      expect(updated.items[0].item_gross).toBe('20.00');
+      expect(updated.items[0].allocated_discount).toBe('10.00');
+      expect(updated.items[0].item_net).toBe('10.00');
+      expect(updated.items[0].budget_pool_id).toBe('POOL_EMERGENCY');
+
+      expect(updated.items[1].item_name).toBe('测试2');
+      expect(updated.items[1].item_gross).toBe('10.00');
+      expect(updated.items[1].allocated_discount).toBe('5.00');
+      expect(updated.items[1].item_net).toBe('5.00');
+      expect(updated.items[1].budget_pool_id).toBe('POOL_DAILY');
+
+      const dailyAfter = engine
+        .getMonthlyBudgetStatus('2026-11')
+        .find((p) => p.pool_id === 'POOL_DAILY')!;
+      const emergencyAfter = engine
+        .getMonthlyBudgetStatus('2026-11')
+        .find((p) => p.pool_id === 'POOL_EMERGENCY')!;
+
+      // 日常池原支出 ¥10.00 -> 修改后变为 ¥5.00（减少 ¥5.00）
+      expect(Number(dailyBefore.spent_net) - Number(dailyAfter.spent_net)).toBeCloseTo(5, 2);
+      // 医疗应急池新增支出 ¥10.00
+      expect(Number(emergencyAfter.spent_net) - Number(emergencyBefore.spent_net)).toBeCloseTo(10, 2);
+    });
+
+    it('修改多子项账单的总原价与优惠金额时，应按比例重算各子项并维持守恒', () => {
+      const tx = engine.recordFromDsl('餐费 20 #日常 + 杂费 10 #弹性 = 15', '2026-11-15');
+
+      const updated = engine.updateTransaction(tx.header.id, {
+        total_gross: '60.00',
+        payment_discount: '0.00',
+        item_updates: [
+          { index: 0, id: tx.items[0].id, budget_pool_id: 'POOL_FIXED', project_tag_id: null },
+          { index: 1, id: tx.items[1].id, budget_pool_id: 'POOL_EMERGENCY', project_tag_id: null },
+        ],
+      });
+
+      expect(updated.header.total_net).toBe('60.00');
+      expect(updated.items[0].item_gross).toBe('40.00');
+      expect(updated.items[0].item_net).toBe('40.00');
+      expect(updated.items[0].budget_pool_id).toBe('POOL_FIXED');
+      expect(updated.items[1].item_gross).toBe('20.00');
+      expect(updated.items[1].item_net).toBe('20.00');
+      expect(updated.items[1].budget_pool_id).toBe('POOL_EMERGENCY');
+    });
+  });
 });

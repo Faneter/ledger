@@ -68,6 +68,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [editNote, setEditNote] = useState('');
   const [editAccountId, setEditAccountId] = useState('');
   const [editTargetSelection, setEditTargetSelection] = useState<string>('');
+  const [editItemTargets, setEditItemTargets] = useState<string[]>([]);
   const [editGross, setEditGross] = useState('');
   const [editDiscount, setEditDiscount] = useState('');
 
@@ -191,6 +192,36 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     setExpandedTxs((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const getItemTargetValue = (item?: TransactionAggregate['items'][number]) => {
+    if (item?.project_tag_id) {
+      return `PROJECT:${item.project_tag_id}`;
+    }
+    if (item?.budget_pool_id) {
+      return `POOL:${item.budget_pool_id}`;
+    }
+    return 'POOL:POOL_DAILY';
+  };
+
+  const resolveTargetSelection = (
+    selection: string
+  ): { budget_pool_id?: string; project_tag_id: string | null } => {
+    if (selection.startsWith('PROJECT:')) {
+      const projId = selection.slice(8);
+      const pt = engine.state.projectTags.find((p) => p.id === projId);
+      return {
+        budget_pool_id: pt?.linked_pool_id || 'POOL_FLEX',
+        project_tag_id: projId,
+      };
+    }
+    if (selection.startsWith('POOL:')) {
+      return {
+        budget_pool_id: selection.slice(5),
+        project_tag_id: null,
+      };
+    }
+    return { budget_pool_id: undefined, project_tag_id: null };
+  };
+
   // 打开编辑弹窗
   const handleOpenEdit = (tx: TransactionAggregate) => {
     setEditingTx(tx);
@@ -203,14 +234,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       Number(h.payment_discount) > 0 ? h.payment_discount : h.platform_discount
     );
 
-    const primaryItem = tx.items[0];
-    if (primaryItem?.project_tag_id) {
-      setEditTargetSelection(`PROJECT:${primaryItem.project_tag_id}`);
-    } else if (primaryItem?.budget_pool_id) {
-      setEditTargetSelection(`POOL:${primaryItem.budget_pool_id}`);
-    } else {
-      setEditTargetSelection('POOL:POOL_DAILY');
-    }
+    setEditTargetSelection(getItemTargetValue(tx.items[0]));
+    setEditItemTargets(tx.items.map((it) => getItemTargetValue(it)));
   };
 
   // 保存编辑
@@ -222,26 +247,39 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     }
 
     try {
-      let poolId: string | undefined = undefined;
-      let projId: string | null = null;
-      if (editTargetSelection.startsWith('PROJECT:')) {
-        projId = editTargetSelection.slice(8);
-        const pt = engine.state.projectTags.find((p) => p.id === projId);
-        poolId = pt?.linked_pool_id || 'POOL_FLEX';
-      } else if (editTargetSelection.startsWith('POOL:')) {
-        poolId = editTargetSelection.slice(5);
-        projId = null;
-      }
+      if (editingTx.items.length > 1) {
+        const itemUpdates = editingTx.items.map((it, idx) => {
+          const resolved = resolveTargetSelection(
+            editItemTargets[idx] ?? getItemTargetValue(it)
+          );
+          return {
+            index: idx,
+            id: it.id,
+            budget_pool_id: resolved.budget_pool_id,
+            project_tag_id: resolved.project_tag_id,
+          };
+        });
 
-      engine.updateTransaction(editingTx.header.id, {
-        tx_date: editDate,
-        merchant_or_note: editNote.trim(),
-        account_id: editAccountId,
-        total_gross: editGross.trim(),
-        payment_discount: editDiscount.trim() || '0.00',
-        budget_pool_id: poolId,
-        project_tag_id: projId,
-      });
+        engine.updateTransaction(editingTx.header.id, {
+          tx_date: editDate,
+          merchant_or_note: editNote.trim(),
+          account_id: editAccountId,
+          total_gross: editGross.trim(),
+          payment_discount: editDiscount.trim() || '0.00',
+          item_updates: itemUpdates,
+        });
+      } else {
+        const { budget_pool_id, project_tag_id } = resolveTargetSelection(editTargetSelection);
+        engine.updateTransaction(editingTx.header.id, {
+          tx_date: editDate,
+          merchant_or_note: editNote.trim(),
+          account_id: editAccountId,
+          total_gross: editGross.trim(),
+          payment_discount: editDiscount.trim() || '0.00',
+          budget_pool_id,
+          project_tag_id,
+        });
+      }
 
       setToastMsg(`✅ 账单 ${editingTx.header.id} 已成功更新！`);
       setEditingTx(null);
@@ -575,31 +613,52 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             sx={{ height: 20, fontSize: '0.7rem', fontWeight: 600 }}
                           />
 
-                          {/* 支出归属胶囊 */}
-                          {isExpenseLike && (
-                            tx.items[0]?.project_tag_id ? (
-                              <Chip
-                                size="small"
-                                color="secondary"
-                                label={`🎯 ${engine.state.projectTags.find((p) => p.id === tx.items[0]?.project_tag_id)?.name || tx.items[0].project_tag_id}`}
-                                sx={{ height: 20, fontSize: '0.7rem' }}
-                              />
-                            ) : tx.items[0]?.budget_pool_id ? (
-                              <Chip
-                                size="small"
-                                label={`💰 ${getPoolName(tx.items[0].budget_pool_id)}`}
-                                variant="outlined"
-                                sx={{ height: 20, fontSize: '0.7rem' }}
-                              />
-                            ) : tx.items[0]?.category_id ? (
-                              <Chip
-                                size="small"
-                                label={getCategoryName(tx.items[0].category_id)}
-                                variant="outlined"
-                                sx={{ height: 20, fontSize: '0.7rem' }}
-                              />
-                            ) : null
-                          )}
+                          {/* 支出归属胶囊（多子项按池/专项去重展示） */}
+                          {isExpenseLike && (() => {
+                            const seen = new Set<string>();
+                            return tx.items.map((it, idx) => {
+                              const key = it.project_tag_id
+                                ? `PROJECT:${it.project_tag_id}`
+                                : it.budget_pool_id
+                                ? `POOL:${it.budget_pool_id}`
+                                : it.category_id
+                                ? `CAT:${it.category_id}`
+                                : '';
+                              if (!key || seen.has(key)) return null;
+                              seen.add(key);
+                              if (it.project_tag_id) {
+                                return (
+                                  <Chip
+                                    key={`${key}-${idx}`}
+                                    size="small"
+                                    color="secondary"
+                                    label={`🎯 ${engine.state.projectTags.find((p) => p.id === it.project_tag_id)?.name || it.project_tag_id}`}
+                                    sx={{ height: 20, fontSize: '0.7rem' }}
+                                  />
+                                );
+                              }
+                              if (it.budget_pool_id) {
+                                return (
+                                  <Chip
+                                    key={`${key}-${idx}`}
+                                    size="small"
+                                    label={`💰 ${getPoolName(it.budget_pool_id)}`}
+                                    variant="outlined"
+                                    sx={{ height: 20, fontSize: '0.7rem' }}
+                                  />
+                                );
+                              }
+                              return (
+                                <Chip
+                                  key={`${key}-${idx}`}
+                                  size="small"
+                                  label={getCategoryName(it.category_id)}
+                                  variant="outlined"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              );
+                            });
+                          })()}
 
                           {/* 立减金使用标记 */}
                           {h.applied_voucher_id != null && (
@@ -643,14 +702,28 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           }}
                         >
                           <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums' }}>{h.tx_date}</Box>
-                          {tx.items[0]?.project_tag_id && (
-                            <>
-                              <span>·</span>
-                              <span style={{ color: '#7c4dff', fontWeight: 600 }}>
-                                🎯 {engine.state.projectTags.find((p) => p.id === tx.items[0].project_tag_id)?.name || tx.items[0].project_tag_id}
-                              </span>
-                            </>
-                          )}
+                          {(() => {
+                            const projIds = Array.from(
+                              new Set(
+                                tx.items
+                                  .map((it) => it.project_tag_id)
+                                  .filter((id): id is string => Boolean(id))
+                              )
+                            );
+                            if (projIds.length === 0) return null;
+                            const names = projIds.map(
+                              (pid) =>
+                                engine.state.projectTags.find((p) => p.id === pid)?.name || pid
+                            );
+                            return (
+                              <>
+                                <span>·</span>
+                                <span style={{ color: '#7c4dff', fontWeight: 600 }}>
+                                  🎯 {names.join(' / ')}
+                                </span>
+                              </>
+                            );
+                          })()}
                         </Typography>
 
                         {/* 原始 DSL / 算式输入提示 */}
@@ -923,34 +996,104 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               />
             </Stack>
 
-            {editingTx?.header.tx_type === 'EXPENSE' && (
-              <TextField
-                select
-                label="支出归属（月度资金池 / 专项预算）"
-                fullWidth
-                value={editTargetSelection}
-                onChange={(e) => setEditTargetSelection(e.target.value)}
-              >
-                <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
+            {editingTx?.header.tx_type === 'EXPENSE' && (() => {
+              const targetMenuItems = [
+                <MenuItem key="hdr-pool" disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
                   ── 月度预算资金池 ──
-                </MenuItem>
-                {engine.state.budgetPools
+                </MenuItem>,
+                ...engine.state.budgetPools
                   .filter((p) => p.is_monthly_budget)
                   .map((pool) => (
                     <MenuItem key={pool.id} value={`POOL:${pool.id}`}>
                       💰 {pool.name}
                     </MenuItem>
-                  ))}
-                <MenuItem disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
+                  )),
+                <MenuItem key="hdr-proj" disabled value="" sx={{ fontWeight: 700, opacity: 0.7 }}>
                   ── 专项预算 ──
-                </MenuItem>
-                {engine.state.projectTags.map((tag) => (
+                </MenuItem>,
+                ...engine.state.projectTags.map((tag) => (
                   <MenuItem key={tag.id} value={`PROJECT:${tag.id}`}>
                     🎯 {tag.name} (目标 ¥{tag.target_budget || '0.00'})
                   </MenuItem>
-                ))}
-              </TextField>
-            )}
+                )),
+              ];
+
+              if (editingTx.items.length > 1) {
+                return (
+                  <Box>
+                    <Typography
+                      variant="caption"
+                      sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 1 }}
+                    >
+                      各拆单子项预算池归属（{editingTx.items.length} 个子项可分别调整）
+                    </Typography>
+                    <Stack spacing={1.25}>
+                      {editingTx.items.map((item, idx) => (
+                        <Paper
+                          key={idx}
+                          variant="outlined"
+                          sx={{
+                            p: 1.5,
+                            borderRadius: 2,
+                            bgcolor: (t) =>
+                              t.palette.mode === 'light' ? '#f9fafe' : '#141a24',
+                          }}
+                        >
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            sx={{
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              mb: 1.25,
+                            }}
+                          >
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                              {item.item_name}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              sx={{ color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}
+                            >
+                              原价 ¥{item.item_gross} · 实付 ¥{item.item_net}
+                            </Typography>
+                          </Stack>
+                          <TextField
+                            select
+                            size="small"
+                            label="支出归属（月度资金池 / 专项预算）"
+                            fullWidth
+                            value={editItemTargets[idx] ?? getItemTargetValue(item)}
+                            onChange={(e) => {
+                              const nextVal = e.target.value;
+                              setEditItemTargets((prev) => {
+                                const next = [...prev];
+                                next[idx] = nextVal;
+                                return next;
+                              });
+                            }}
+                          >
+                            {targetMenuItems}
+                          </TextField>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  </Box>
+                );
+              }
+
+              return (
+                <TextField
+                  select
+                  label="支出归属（月度资金池 / 专项预算）"
+                  fullWidth
+                  value={editTargetSelection}
+                  onChange={(e) => setEditTargetSelection(e.target.value)}
+                >
+                  {targetMenuItems}
+                </TextField>
+              );
+            })()}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>

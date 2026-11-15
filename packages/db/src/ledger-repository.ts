@@ -2136,6 +2136,14 @@ export class LedgerRepository {
       category_id?: string;
       budget_pool_id?: string;
       project_tag_id?: string | null;
+      item_updates?: Array<{
+        index?: number;
+        id?: number;
+        item_name?: string;
+        category_id?: string;
+        budget_pool_id?: string;
+        project_tag_id?: string | null;
+      }>;
     }
   ): TransactionAggregate {
     const existing = this.getRecentTransactions(1000).find((t) => t.header.id === txId);
@@ -2144,6 +2152,9 @@ export class LedgerRepository {
     }
 
     const h = existing.header;
+    const prevGross = h.total_gross;
+    const prevNet = h.total_net;
+
     if (patch.tx_date !== undefined) h.tx_date = patch.tx_date;
     if (patch.account_id !== undefined) h.account_id = patch.account_id;
     if (patch.target_account_id !== undefined) h.target_account_id = patch.target_account_id;
@@ -2162,6 +2173,10 @@ export class LedgerRepository {
         Decimal.max(0, toDecimal(h.total_gross).minus(toDecimal(h.payment_discount)))
       );
     }
+
+    const amountsChanged =
+      !equalsCny(prevGross, h.total_gross) ||
+      !equalsCny(prevNet, h.total_net);
 
     const hlc = this.hlc.now();
     h.updated_hlc = hlc;
@@ -2185,33 +2200,114 @@ export class LedgerRepository {
         txId
       );
 
-    if (existing.items.length > 0) {
-      const primary = existing.items.find((it) => it.is_primary_item) ?? existing.items[0];
-      if (patch.merchant_or_note !== undefined) primary.item_name = patch.merchant_or_note;
+    if (existing.items.length === 1) {
+      const primary = existing.items[0];
+      const itemPatch = patch.item_updates?.find(
+        (u) =>
+          (u.index !== undefined && u.index === 0) ||
+          (u.id !== undefined && u.id !== 0 && u.id === primary.id)
+      );
+      if (itemPatch?.item_name !== undefined) {
+        primary.item_name = itemPatch.item_name;
+      } else if (patch.merchant_or_note !== undefined) {
+        primary.item_name = patch.merchant_or_note;
+      }
       if (patch.total_gross !== undefined) primary.item_gross = h.total_gross;
       if (patch.payment_discount !== undefined) primary.allocated_discount = h.payment_discount;
       primary.item_net = h.total_net;
-      if (patch.category_id !== undefined) primary.category_id = patch.category_id;
-      if (patch.budget_pool_id !== undefined) primary.budget_pool_id = patch.budget_pool_id;
-      if (patch.project_tag_id !== undefined) primary.project_tag_id = patch.project_tag_id;
-
-      this.db
-        .prepare(`
-          UPDATE transaction_items SET
-            item_name = ?, item_gross = ?, allocated_discount = ?, item_net = ?,
-            category_id = ?, budget_pool_id = ?, project_tag_id = ?
-          WHERE id = ?
-        `)
-        .run(
-          primary.item_name,
-          primary.item_gross,
-          primary.allocated_discount,
-          primary.item_net,
-          primary.category_id,
-          primary.budget_pool_id,
-          primary.project_tag_id ?? null,
-          primary.id
+      if (itemPatch?.category_id !== undefined) {
+        primary.category_id = itemPatch.category_id;
+      } else if (patch.category_id !== undefined) {
+        primary.category_id = patch.category_id;
+      }
+      if (itemPatch?.budget_pool_id !== undefined) {
+        primary.budget_pool_id = itemPatch.budget_pool_id;
+      } else if (patch.budget_pool_id !== undefined) {
+        primary.budget_pool_id = patch.budget_pool_id;
+      }
+      if (itemPatch?.project_tag_id !== undefined) {
+        primary.project_tag_id = itemPatch.project_tag_id;
+      } else if (patch.project_tag_id !== undefined) {
+        primary.project_tag_id = patch.project_tag_id;
+      }
+    } else if (existing.items.length > 1) {
+      existing.items.forEach((item, idx) => {
+        const itemPatch = patch.item_updates?.find(
+          (u) =>
+            (u.index !== undefined && u.index === idx) ||
+            (u.id !== undefined && u.id !== 0 && u.id === item.id)
         );
+        if (itemPatch) {
+          if (itemPatch.item_name !== undefined) item.item_name = itemPatch.item_name;
+          if (itemPatch.category_id !== undefined) item.category_id = itemPatch.category_id;
+          if (itemPatch.budget_pool_id !== undefined) item.budget_pool_id = itemPatch.budget_pool_id;
+          if (itemPatch.project_tag_id !== undefined) item.project_tag_id = itemPatch.project_tag_id;
+        } else if (item.is_primary_item) {
+          if (patch.category_id !== undefined) item.category_id = patch.category_id;
+          if (patch.budget_pool_id !== undefined) item.budget_pool_id = patch.budget_pool_id;
+          if (patch.project_tag_id !== undefined) item.project_tag_id = patch.project_tag_id;
+        }
+      });
+
+      if (amountsChanged) {
+        const oldGrossDec = toDecimal(prevGross);
+        const newGrossDec = toDecimal(h.total_gross);
+        let scaledGrosses: Decimal[];
+        if (!equalsCny(prevGross, h.total_gross) && oldGrossDec.greaterThan(0)) {
+          scaledGrosses = existing.items.map((it) =>
+            roundCny(toDecimal(it.item_gross).div(oldGrossDec).times(newGrossDec))
+          );
+          const sumScaled = scaledGrosses.reduce((a, b) => a.plus(b), new Decimal(0));
+          const diff = newGrossDec.minus(sumScaled);
+          if (!diff.isZero() && scaledGrosses.length > 0) {
+            scaledGrosses[0] = roundCny(scaledGrosses[0].plus(diff));
+          }
+        } else {
+          scaledGrosses = existing.items.map((it) => toDecimal(it.item_gross));
+        }
+
+        const splitInputs: SplitItemInput[] = existing.items.map((it, idx) => ({
+          name: it.item_name,
+          gross: formatCny(scaledGrosses[idx]),
+          category_id: it.category_id,
+          budget_pool_id: it.budget_pool_id,
+          project_tag_id: it.project_tag_id ?? null,
+          is_primary: it.is_primary_item,
+          raw_formula_expr: it.raw_formula_expr ?? undefined,
+        }));
+        const mode: AllocationMode =
+          h.allocation_mode === 'MANUAL' ? 'PROPORTIONAL' : h.allocation_mode;
+        const allocated = allocateSplitDiscounts(splitInputs, h.total_net, mode);
+        existing.items.forEach((it, idx) => {
+          const res = allocated[idx];
+          if (res) {
+            it.item_gross = res.gross;
+            it.allocated_discount = res.allocated_discount;
+            it.item_net = res.net;
+          }
+        });
+      }
+    }
+
+    if (existing.items.length > 0) {
+      const updateItemStmt = this.db.prepare(`
+        UPDATE transaction_items SET
+          item_name = ?, item_gross = ?, allocated_discount = ?, item_net = ?,
+          category_id = ?, budget_pool_id = ?, project_tag_id = ?
+        WHERE id = ?
+      `);
+      for (const item of existing.items) {
+        updateItemStmt.run(
+          item.item_name,
+          item.item_gross,
+          item.allocated_discount,
+          item.item_net,
+          item.category_id,
+          item.budget_pool_id,
+          item.project_tag_id ?? null,
+          item.id
+        );
+      }
     }
 
     this.recordOpLog({

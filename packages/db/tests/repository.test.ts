@@ -460,5 +460,28 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       expect(settledTx.items[0].allocated_discount).toBe('0.00');
       expect(settledTx.items[0].item_net).toBe('72.50');
     });
+
+    it('should update per-item budget pools independently on multi-item transaction without corrupting split amounts', () => {
+      const repo = new LedgerRepository(':memory:', 'node-multi-item-edit');
+      const created = repo.recordFromDsl('测试1 20 #日常 + 测试2 10 #弹性 = 15', '2026-11-15');
+      expect(created.items).toHaveLength(2);
+
+      repo.updateTransaction(created.header.id, {
+        merchant_or_note: '测试1 + 测试2',
+        item_updates: [
+          { index: 0, id: created.items[0].id, budget_pool_id: 'POOL_EMERGENCY', project_tag_id: null },
+          { index: 1, id: created.items[1].id, budget_pool_id: 'POOL_DAILY', project_tag_id: null },
+        ],
+      });
+
+      const reloaded = repo.getRecentTransactions(50).find((t) => t.header.id === created.header.id)!;
+      expect(reloaded.items).toHaveLength(2);
+      expect(reloaded.items[0].item_name).toBe('测试1');
+      expect(reloaded.items[0].item_net).toBe('10.00');
+      expect(reloaded.items[0].budget_pool_id).toBe('POOL_EMERGENCY');
+      expect(reloaded.items[1].item_name).toBe('测试2');
+      expect(reloaded.items[1].item_net).toBe('5.00');
+      expect(reloaded.items[1].budget_pool_id).toBe('POOL_DAILY');
+    });
   });
 });
