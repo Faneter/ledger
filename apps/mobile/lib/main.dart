@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 import 'src/ledger_engine.dart';
@@ -62,12 +63,14 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
 
   void _showMessage(String msg, {bool isError = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
+        ),
+      );
   }
 
   void _submitDsl() {
@@ -96,46 +99,19 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
     final engine = _engine;
     if (engine == null) return;
     final h = tx['header'] as Map<String, dynamic>;
-    final controller =
-        TextEditingController(text: (h['total_gross'] as String?) ?? '');
     final settledStr = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('万事达外币预授权清算'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text('${h['merchant_or_note']} (${h['original_currency']} ${h['original_amount']})'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: '银行实际入账人民币金额 (CNY)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('确认入账'),
-          ),
-        ],
+      builder: (ctx) => _SettleFxDialog(
+        merchantOrNote: h['merchant_or_note'] as String,
+        originalCurrency: h['original_currency'] as String,
+        originalAmount: (h['original_amount'] as String?) ?? '',
+        initialSettledAmount: (h['total_gross'] as String?) ?? '',
       ),
     );
-    controller.dispose();
     if (settledStr == null || settledStr.isEmpty) return;
     try {
       engine.settleMastercardTransaction(h['id'] as String, settledStr);
-      setState(() {});
+      if (mounted) setState(() {});
       _showMessage('外币清算完成');
     } catch (e) {
       _showMessage('清算失败: $e', isError: true);
@@ -145,84 +121,25 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   Future<void> _showBuyVoucherDialog() async {
     final engine = _engine;
     if (engine == null) return;
-    final faceCtrl = TextEditingController(text: '15.00');
-    final costCtrl = TextEditingController(text: '8.90');
-    final minCtrl = TextEditingController(text: '20.00');
-    var vType = 'PREPAID_COUPON';
-
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('购买 / 新增卡券'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              DropdownButtonFormField<String>(
-                value: vType,
-                decoration: const InputDecoration(labelText: '卡券类型'),
-                items: const <DropdownMenuItem<String>>[
-                  DropdownMenuItem<String>(
-                    value: 'PREPAID_COUPON',
-                    child: Text('有偿购入立减金 (成本核销结转)'),
-                  ),
-                  DropdownMenuItem<String>(
-                    value: 'FREE_COUPON',
-                    child: Text('免费领券'),
-                  ),
-                ],
-                onChanged: (v) {
-                  if (v != null) {
-                    setDialogState(() => vType = v);
-                  }
-                },
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: faceCtrl,
-                decoration: const InputDecoration(labelText: '面额 (CNY)'),
-              ),
-              TextField(
-                controller: costCtrl,
-                decoration: const InputDecoration(labelText: '购券成本 (CNY)'),
-              ),
-              TextField(
-                controller: minCtrl,
-                decoration: const InputDecoration(labelText: '使用门槛 (CNY)'),
-              ),
-            ],
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('入库'),
-            ),
-          ],
-        ),
-      ),
+      builder: (ctx) => const _BuyVoucherDialog(),
     );
 
-    if (confirmed == true) {
+    if (result != null) {
       try {
         engine.upsertVoucher(
-          voucherType: vType,
-          faceValue: faceCtrl.text.trim(),
-          acquireCost: costCtrl.text.trim(),
-          minSpend: minCtrl.text.trim(),
+          voucherType: result['voucherType']!,
+          faceValue: result['faceValue']!,
+          acquireCost: result['acquireCost']!,
+          minSpend: result['minSpend']!,
         );
-        setState(() {});
+        if (mounted) setState(() {});
         _showMessage('卡券已入库');
       } catch (e) {
         _showMessage('入库失败: $e', isError: true);
       }
     }
-    faceCtrl.dispose();
-    costCtrl.dispose();
-    minCtrl.dispose();
   }
 
   @override
@@ -253,12 +170,18 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
         .toList();
     final assets = engine.getFixedAssetsWithCost();
 
-    final pages = <Widget>[
-      _buildOverviewTab(engine, dashboard, dailySummary, pools, availableVouchers),
-      _buildTransactionsTab(engine, recentTxs),
-      _buildVouchersTab(engine),
-      _buildAssetsAndSyncTab(engine, assets),
-    ];
+    final body = switch (_tabIndex) {
+      0 => _buildOverviewTab(
+          engine,
+          dashboard,
+          dailySummary,
+          pools,
+          availableVouchers,
+        ),
+      1 => _buildTransactionsTab(engine, recentTxs),
+      2 => _buildVouchersTab(engine),
+      _ => _buildAssetsAndSyncTab(engine, assets),
+    };
 
     return Scaffold(
       appBar: AppBar(
@@ -278,7 +201,14 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
           ),
         ],
       ),
-      body: pages[_tabIndex],
+      body: body,
+      floatingActionButton: _tabIndex == 2
+          ? FloatingActionButton.extended(
+              onPressed: _showBuyVoucherDialog,
+              icon: const Icon(Icons.add),
+              label: const Text('买券/添券'),
+            )
+          : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
         onDestinationSelected: (idx) => setState(() => _tabIndex = idx),
@@ -328,7 +258,8 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
                 if (availableVouchers.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 8),
                   DropdownButtonFormField<int?>(
-                    value: _selectedVoucherId,
+                    key: ValueKey<int?>(_selectedVoucherId),
+                    initialValue: _selectedVoucherId,
                     decoration: const InputDecoration(
                       labelText: '叠加卡券核销（可选）',
                       border: OutlineInputBorder(),
@@ -456,34 +387,27 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   }
 
   Widget _buildVouchersTab(FlutterLedgerEngine engine) {
-    return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showBuyVoucherDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('买券/添券'),
-      ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: engine.vouchers.length,
-        itemBuilder: (ctx, i) {
-          final v = engine.vouchers[i];
-          return Card(
-            child: ListTile(
-              title: Text(v['title'] as String),
-              subtitle: Text(
-                '${v['voucher_type']} · 面额 ¥${v['face_value']} · 成本 ¥${v['acquire_cost']} · 状态 ${v['status']}',
-              ),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () {
-                  engine.deleteVoucher(v['id'] as int);
-                  setState(() {});
-                },
-              ),
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
+      itemCount: engine.vouchers.length,
+      itemBuilder: (ctx, i) {
+        final v = engine.vouchers[i];
+        return Card(
+          child: ListTile(
+            title: Text(v['title'] as String),
+            subtitle: Text(
+              '${v['voucher_type']} · 面额 ¥${v['face_value']} · 成本 ¥${v['acquire_cost']} · 状态 ${v['status']}',
             ),
-          );
-        },
-      ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () {
+                engine.deleteVoucher(v['id'] as int);
+                setState(() {});
+              },
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -528,6 +452,169 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+class _SettleFxDialog extends StatefulWidget {
+  const _SettleFxDialog({
+    required this.merchantOrNote,
+    required this.originalCurrency,
+    required this.originalAmount,
+    required this.initialSettledAmount,
+  });
+
+  final String merchantOrNote;
+  final String originalCurrency;
+  final String originalAmount;
+  final String initialSettledAmount;
+
+  @override
+  State<_SettleFxDialog> createState() => _SettleFxDialogState();
+}
+
+class _SettleFxDialogState extends State<_SettleFxDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialSettledAmount);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('万事达外币预授权清算'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '${widget.merchantOrNote} (${widget.originalCurrency} ${widget.originalAmount})',
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _controller,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: '银行实际入账人民币金额 (CNY)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('确认入账'),
+        ),
+      ],
+    );
+  }
+}
+
+class _BuyVoucherDialog extends StatefulWidget {
+  const _BuyVoucherDialog();
+
+  @override
+  State<_BuyVoucherDialog> createState() => _BuyVoucherDialogState();
+}
+
+class _BuyVoucherDialogState extends State<_BuyVoucherDialog> {
+  late final TextEditingController _faceCtrl;
+  late final TextEditingController _costCtrl;
+  late final TextEditingController _minCtrl;
+  String _voucherType = 'PREPAID_COUPON';
+
+  @override
+  void initState() {
+    super.initState();
+    _faceCtrl = TextEditingController(text: '15.00');
+    _costCtrl = TextEditingController(text: '8.90');
+    _minCtrl = TextEditingController(text: '20.00');
+  }
+
+  @override
+  void dispose() {
+    _faceCtrl.dispose();
+    _costCtrl.dispose();
+    _minCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('购买 / 新增卡券'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            DropdownButtonFormField<String>(
+              key: ValueKey<String>(_voucherType),
+              initialValue: _voucherType,
+              decoration: const InputDecoration(labelText: '卡券类型'),
+              items: const <DropdownMenuItem<String>>[
+                DropdownMenuItem<String>(
+                  value: 'PREPAID_COUPON',
+                  child: Text('有偿购入立减金 (成本核销结转)'),
+                ),
+                DropdownMenuItem<String>(
+                  value: 'FREE_COUPON',
+                  child: Text('免费领券'),
+                ),
+              ],
+              onChanged: (v) {
+                if (v != null) {
+                  setState(() => _voucherType = v);
+                }
+              },
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _faceCtrl,
+              decoration: const InputDecoration(labelText: '面额 (CNY)'),
+            ),
+            TextField(
+              controller: _costCtrl,
+              decoration: const InputDecoration(labelText: '购券成本 (CNY)'),
+            ),
+            TextField(
+              controller: _minCtrl,
+              decoration: const InputDecoration(labelText: '使用门槛 (CNY)'),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(<String, String>{
+            'voucherType': _voucherType,
+            'faceValue': _faceCtrl.text.trim(),
+            'acquireCost': _costCtrl.text.trim(),
+            'minSpend': _minCtrl.text.trim(),
+          }),
+          child: const Text('入库'),
+        ),
       ],
     );
   }
