@@ -117,212 +117,69 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
 
   Future<void> _openEditTransactionDialog(Map<String, dynamic> tx) async {
     final h = tx['header'] as Map<String, dynamic>;
-    final noteCtrl = TextEditingController(
-      text: (h['merchant_or_note'] as String?) ?? '',
-    );
-    final grossCtrl = TextEditingController(
-      text: (h['total_gross'] as String?) ?? '0.00',
-    );
-    final discCtrl = TextEditingController(
-      text: (h['payment_discount'] as String?) ?? '0.00',
-    );
-    final dateCtrl = TextEditingController(
-      text: (h['tx_date'] as String?) ?? getLocalTodayDateStr(),
-    );
-
-    final ok = await showDialog<bool>(
+    final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('编辑账单明细'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: '商户 / 备注',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: dateCtrl,
-                decoration: const InputDecoration(
-                  labelText: '交易日期 (YYYY-MM-DD)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: grossCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: '订单原价 (CNY)',
-                  prefixText: '¥ ',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: discCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: '优惠 / 折扣 (CNY)',
-                  prefixText: '-¥ ',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final g = double.tryParse(grossCtrl.text.trim()) ?? 0;
-              if (g <= 0) return;
-              Navigator.of(ctx).pop(true);
-            },
-            child: const Text('保存重算'),
-          ),
-        ],
+      builder: (_) => _EditTransactionDialog(
+        initialNote: (h['merchant_or_note'] as String?) ?? '',
+        initialGross: (h['total_gross'] as String?) ?? '0.00',
+        initialDiscount: (h['payment_discount'] as String?) ?? '0.00',
+        initialDate: (h['tx_date'] as String?) ?? getLocalTodayDateStr(),
       ),
     );
 
-    if (ok == true) {
+    if (result != null) {
       try {
-        widget.engine.updateTransaction(h['id'] as String, <String, dynamic>{
-          'tx_date': dateCtrl.text.trim(),
-          'merchant_or_note': noteCtrl.text.trim(),
-          'total_gross': grossCtrl.text.trim(),
-          'payment_discount':
-              discCtrl.text.trim().isEmpty ? '0.00' : discCtrl.text.trim(),
-        });
+        widget.engine.updateTransaction(h['id'] as String, result);
         widget.onEngineChanged();
         if (mounted) showLedgerSnackBar(context, '账单已更新并重算分摊');
       } catch (e) {
         if (mounted) showLedgerSnackBar(context, '更新失败: $e', isError: true);
       }
     }
-
-    noteCtrl.dispose();
-    grossCtrl.dispose();
-    discCtrl.dispose();
-    dateCtrl.dispose();
   }
 
   Future<void> _openProjectEditorDialog({
     Map<String, dynamic>? existing,
   }) async {
     final isEdit = existing != null;
-    final nameCtrl = TextEditingController(
-      text: isEdit ? existing['name'] as String : '',
-    );
-    final budgetCtrl = TextEditingController(
-      text: isEdit ? ((existing['target_budget'] as String?) ?? '') : '500.00',
-    );
-    var linkedPoolId = (existing?['linked_pool_id'] as String?) ?? 'POOL_FLEX';
-    var isActive = existing != null ? existing['is_active'] != false : true;
-
-    final saved = await showDialog<bool>(
+    final defaultYm = getLocalTodayDateStr().substring(0, 7);
+    final result = await showDialog<_ProjectDialogResult>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text(isEdit ? '编辑专项立项' : '新增跨期专项立项'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '专项名称（如 JLPT_N2考试专项）',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: budgetCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: '目标总预算 (CNY，选填)',
-                    prefixText: '¥ ',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  key: ValueKey<String>(linkedPoolId),
-                  initialValue: linkedPoolId,
-                  decoration: const InputDecoration(
-                    labelText: '关联预算池',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: widget.engine.budgetPools
-                      .map(
-                        (p) => DropdownMenuItem<String>(
-                          value: p['id'] as String,
-                          child: Text(p['name'] as String),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) {
-                    if (v != null) setLocal(() => linkedPoolId = v);
-                  },
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('进行中 (勾选后在记账标签栏显示)'),
-                  value: isActive,
-                  onChanged: (v) => setLocal(() => isActive = v),
-                ),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (nameCtrl.text.trim().isEmpty) return;
-                Navigator.of(ctx).pop(true);
-              },
-              child: const Text('保存'),
-            ),
-          ],
-        ),
+      builder: (_) => _ProjectEditorDialog(
+        isEdit: isEdit,
+        initialName: isEdit ? (existing['name'] as String) : '',
+        initialBudget:
+            isEdit ? ((existing['target_budget'] as String?) ?? '') : '500.00',
+        initialStartDate:
+            isEdit ? ((existing['start_date'] as String?) ?? '') : '$defaultYm-01',
+        initialEndDate:
+            isEdit ? ((existing['end_date'] as String?) ?? '') : '$defaultYm-30',
+        initialActive: existing != null ? existing['is_active'] != false : true,
       ),
     );
 
-    if (saved == true) {
+    if (result == null) return;
+    try {
       widget.engine.upsertProjectTag(
         id: existing?['id'] as String?,
-        name: nameCtrl.text.trim(),
-        targetBudget: budgetCtrl.text.trim(),
-        linkedPoolId: linkedPoolId,
-        isActive: isActive,
+        name: result.name,
+        targetBudget: result.targetBudget,
+        startDate: result.startDate,
+        endDate: result.endDate,
+        isActive: result.isActive,
       );
       widget.onEngineChanged();
       if (mounted) {
         showLedgerSnackBar(
           context,
-          isEdit ? '专项立项已更新' : '已新增专项【${nameCtrl.text.trim()}】',
+          isEdit ? '专项立项已更新' : '已新增专项【${result.name}】',
         );
       }
+    } catch (e) {
+      if (mounted) {
+        showLedgerSnackBar(context, '保存专项预算失败: $e', isError: true);
+      }
     }
-
-    nameCtrl.dispose();
-    budgetCtrl.dispose();
   }
 
   @override
@@ -458,10 +315,13 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
                 '${filtered.length} 笔',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
               ),
-              const Spacer(),
-              Text(
-                '支出 ¥${sumExpense.toStringAsFixed(2)} · 收入 +¥${sumIncome.toStringAsFixed(2)} · 省 ¥${sumDiscount.toStringAsFixed(2)}',
-                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '支出 ¥${sumExpense.toStringAsFixed(2)} · 收入 +¥${sumIncome.toStringAsFixed(2)} · 省 ¥${sumDiscount.toStringAsFixed(2)}',
+                  textAlign: TextAlign.end,
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
               ),
             ],
           ),
@@ -868,7 +728,7 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
             ),
             const SizedBox(height: 6),
             Text(
-              '挂靠池: ${poolNameById(widget.engine, tag['linked_pool_id'] as String?)} · 关联流水 ${tag['tx_count']} 笔',
+              '${(tag['start_date'] as String?)?.isNotEmpty == true ? tag['start_date'] : '长期起'} ~ ${(tag['end_date'] as String?)?.isNotEmpty == true ? tag['end_date'] : '长期止'} · 关联流水 ${tag['tx_count']} 笔',
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
@@ -889,21 +749,28 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
               const SizedBox(height: 6),
             ],
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
-                Text(
-                  targetStr != null
-                      ? '已支 ¥${tag['spent_net']} / 目标 ¥$targetStr (剩 ¥$remainingStr)'
-                      : '累计已支 ¥${tag['spent_net']} (无上限场景)',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
+                Expanded(
+                  child: Text(
+                    targetStr != null
+                        ? '已支 ¥${tag['spent_net']} / 目标 ¥$targetStr (剩 ¥$remainingStr)'
+                        : '累计已支 ¥${tag['spent_net']} (无上限场景)',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
+                const SizedBox(width: 6),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
                     TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                       onPressed: () {
                         setState(() {
                           _targetFilter = 'PROJECT:${tag['id']}';
@@ -913,11 +780,19 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
                       child: const Text('查流水'),
                     ),
                     IconButton(
+                      visualDensity: VisualDensity.compact,
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      padding: const EdgeInsets.all(4),
                       tooltip: '编辑专项',
                       icon: const Icon(Icons.edit_outlined, size: 18),
                       onPressed: () => _openProjectEditorDialog(existing: tag),
                     ),
                     IconButton(
+                      visualDensity: VisualDensity.compact,
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      padding: const EdgeInsets.all(4),
                       tooltip: '删除专项',
                       icon: const Icon(Icons.delete_outline, size: 18),
                       onPressed: () {
@@ -936,6 +811,318 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _EditTransactionDialog extends StatefulWidget {
+  const _EditTransactionDialog({
+    required this.initialNote,
+    required this.initialGross,
+    required this.initialDiscount,
+    required this.initialDate,
+  });
+
+  final String initialNote;
+  final String initialGross;
+  final String initialDiscount;
+  final String initialDate;
+
+  @override
+  State<_EditTransactionDialog> createState() => _EditTransactionDialogState();
+}
+
+class _EditTransactionDialogState extends State<_EditTransactionDialog> {
+  late final TextEditingController _noteCtrl;
+  late final TextEditingController _grossCtrl;
+  late final TextEditingController _discCtrl;
+  late final TextEditingController _dateCtrl;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _noteCtrl = TextEditingController(text: widget.initialNote);
+    _grossCtrl = TextEditingController(text: widget.initialGross);
+    _discCtrl = TextEditingController(text: widget.initialDiscount);
+    _dateCtrl = TextEditingController(text: widget.initialDate);
+  }
+
+  @override
+  void dispose() {
+    _noteCtrl.dispose();
+    _grossCtrl.dispose();
+    _discCtrl.dispose();
+    _dateCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑账单明细'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _noteCtrl,
+              decoration: const InputDecoration(
+                labelText: '商户 / 备注',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _dateCtrl,
+              decoration: const InputDecoration(
+                labelText: '交易日期 (YYYY-MM-DD)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _grossCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: '订单原价 (CNY)',
+                prefixText: '¥ ',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _discCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: '优惠 / 折扣 (CNY)',
+                prefixText: '-¥ ',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final g = double.tryParse(_grossCtrl.text.trim()) ?? 0;
+            if (g <= 0) {
+              setState(() => _error = '请输入大于 0 的有效金额');
+              return;
+            }
+            Navigator.of(context).pop(<String, String>{
+              'tx_date': _dateCtrl.text.trim(),
+              'merchant_or_note': _noteCtrl.text.trim(),
+              'total_gross': _grossCtrl.text.trim(),
+              'payment_discount': _discCtrl.text.trim().isEmpty
+                  ? '0.00'
+                  : _discCtrl.text.trim(),
+            });
+          },
+          child: const Text('保存重算'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProjectDialogResult {
+  const _ProjectDialogResult({
+    required this.name,
+    required this.targetBudget,
+    required this.startDate,
+    required this.endDate,
+    required this.isActive,
+  });
+
+  final String name;
+  final String targetBudget;
+  final String startDate;
+  final String endDate;
+  final bool isActive;
+}
+
+class _ProjectEditorDialog extends StatefulWidget {
+  const _ProjectEditorDialog({
+    required this.isEdit,
+    required this.initialName,
+    required this.initialBudget,
+    required this.initialStartDate,
+    required this.initialEndDate,
+    required this.initialActive,
+  });
+
+  final bool isEdit;
+  final String initialName;
+  final String initialBudget;
+  final String initialStartDate;
+  final String initialEndDate;
+  final bool initialActive;
+
+  @override
+  State<_ProjectEditorDialog> createState() => _ProjectEditorDialogState();
+}
+
+class _ProjectEditorDialogState extends State<_ProjectEditorDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _budgetCtrl;
+  late final TextEditingController _startCtrl;
+  late final TextEditingController _endCtrl;
+  late bool _isActive;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.initialName);
+    _budgetCtrl = TextEditingController(text: widget.initialBudget);
+    _startCtrl = TextEditingController(text: widget.initialStartDate);
+    _endCtrl = TextEditingController(text: widget.initialEndDate);
+    _isActive = widget.initialActive;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _budgetCtrl.dispose();
+    _startCtrl.dispose();
+    _endCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.isEdit ? '编辑专项立项' : '新增跨期独立专项预算'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(
+                labelText: '专项名称（如 JLPT_N2考试专项）',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _budgetCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: '总预算目标 (CNY，留空为无限场景)',
+                prefixText: '¥ ',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: TextField(
+                    controller: _startCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '开始日期 (YYYY-MM-DD)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _endCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '截止日期 (YYYY-MM-DD)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('进行中 (勾选后在记账标签栏显示)'),
+              value: _isActive,
+              onChanged: (v) => setState(() => _isActive = v),
+            ),
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 6),
+              Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final cleanName = _nameCtrl.text.trim();
+            if (cleanName.isEmpty) {
+              setState(() => _error = '请输入专项名称');
+              return;
+            }
+            final rawBudget = _budgetCtrl.text.trim();
+            if (rawBudget.isNotEmpty) {
+              final val = double.tryParse(rawBudget);
+              if (val == null || val < 0) {
+                setState(() => _error = '预算目标必须为有效非负数字');
+                return;
+              }
+            }
+            Navigator.of(context).pop(
+              _ProjectDialogResult(
+                name: cleanName,
+                targetBudget: rawBudget,
+                startDate: _startCtrl.text.trim(),
+                endDate: _endCtrl.text.trim(),
+                isActive: _isActive,
+              ),
+            );
+          },
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }

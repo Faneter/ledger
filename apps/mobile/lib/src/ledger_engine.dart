@@ -1,7 +1,51 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'rust_bridge.dart';
+
+typedef JsonHttpPost = Future<Map<String, dynamic>> Function(
+  Uri uri,
+  Map<String, dynamic> body,
+);
+
+Future<Map<String, dynamic>> _defaultJsonHttpPost(
+  Uri uri,
+  Map<String, dynamic> body,
+) async {
+  final client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 5);
+  try {
+    final req = await client.postUrl(uri);
+    req.headers.contentType = ContentType.json;
+    req.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    req.write(jsonEncode(body));
+    final resp = await req.close().timeout(const Duration(seconds: 8));
+    final respBody = await resp.transform(utf8.decoder).join();
+    if (resp.statusCode >= 400) {
+      String msg = 'HTTP ${resp.statusCode}';
+      if (respBody.isNotEmpty) {
+        try {
+          final parsed = jsonDecode(respBody);
+          if (parsed is Map && parsed['error'] != null) {
+            msg = '${parsed['error']} (HTTP ${resp.statusCode})';
+          }
+        } catch (_) {}
+      }
+      throw HttpException(msg, uri: uri);
+    }
+    if (respBody.trim().isEmpty) {
+      return <String, dynamic>{};
+    }
+    final decoded = jsonDecode(respBody);
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+    throw const FormatException('同步服务端返回的响应格式无效');
+  } finally {
+    client.close(force: true);
+  }
+}
 
 /// Default FX rates matching `packages/core/src/types.ts` & `DEFAULT_FX_RATES`.
 const Map<String, String> defaultFxRates = <String, String>{
@@ -112,15 +156,20 @@ class FlutterLedgerEngine {
   FlutterLedgerEngine({
     RustCoreBridge? bridge,
     String nodeId = 'mobile-flutter',
+    String serverUrl = 'http://127.0.0.1:3001',
+    JsonHttpPost? httpPost,
   })  : _bridge = bridge ?? RustCoreBridge.instance(),
+        _httpPost = httpPost ?? _defaultJsonHttpPost,
         hlc = HybridLogicalClock(
           nodeId: nodeId,
           bridge: bridge ?? RustCoreBridge.instance(),
         ) {
+    this.serverUrl = serverUrl;
     resetToDefaultSeed();
   }
 
   final RustCoreBridge _bridge;
+  final JsonHttpPost _httpPost;
   final HybridLogicalClock hlc;
 
   List<Map<String, dynamic>> budgetPools = <Map<String, dynamic>>[];
@@ -134,8 +183,13 @@ class FlutterLedgerEngine {
   Map<String, String> settings = <String, String>{};
   List<Map<String, dynamic>> syncOplog = <Map<String, dynamic>>[];
 
+  String serverUrl = 'http://127.0.0.1:3001';
+  String? serverEpochId;
+  bool serverResetDetected = false;
   bool isOfflineMode = false;
+  bool isSyncing = false;
   String? lastSyncAt;
+  String? lastSyncError;
   int syncedOplogCount = 0;
   List<Map<String, dynamic>> conflicts = <Map<String, dynamic>>[];
   Set<int> dismissedRecurringRuleIds = <int>{};
@@ -146,7 +200,6 @@ class FlutterLedgerEngine {
   int _assetSeq = 2;
   int _monthlyBudgetSeq = 4;
   int _recurringSeq = 2;
-  int _conflictSeq = 0;
 
   int get pendingSyncCount => math.max(0, syncOplog.length - syncedOplogCount);
 
@@ -374,7 +427,6 @@ class FlutterLedgerEngine {
       'name': 'JLPT_N2考试专项',
       'tag_type': 'PROJECT',
       'target_budget': '800.00',
-      'linked_pool_id': 'POOL_FLEX',
       'is_active': true,
     },
     <String, dynamic>{
@@ -382,7 +434,6 @@ class FlutterLedgerEngine {
       'name': '单片机硬件实验',
       'tag_type': 'SCENE',
       'target_budget': null,
-      'linked_pool_id': 'POOL_FLEX',
       'is_active': true,
     },
     <String, dynamic>{
@@ -390,7 +441,6 @@ class FlutterLedgerEngine {
       'name': '靠存货/刷饭卡度日',
       'tag_type': 'STOCK_CONSUME',
       'target_budget': null,
-      'linked_pool_id': 'POOL_DAILY',
       'is_active': true,
     },
   ];
@@ -495,7 +545,11 @@ class FlutterLedgerEngine {
     conflicts = <Map<String, dynamic>>[];
     dismissedRecurringRuleIds = <int>{};
     isOfflineMode = false;
+    isSyncing = false;
+    serverEpochId = null;
+    serverResetDetected = false;
     lastSyncAt = null;
+    lastSyncError = null;
     syncedOplogCount = 0;
     settings = <String, String>{
       'fx_default_cashback_rate': '0.0100',
@@ -507,7 +561,6 @@ class FlutterLedgerEngine {
     _assetSeq = 2;
     _monthlyBudgetSeq = 4;
     _recurringSeq = 2;
-    _conflictSeq = 0;
   }
 
   /// Resets engine state to a completely clean empty personal ledger (0 transactions,
@@ -530,7 +583,11 @@ class FlutterLedgerEngine {
     syncOplog = <Map<String, dynamic>>[];
     conflicts = <Map<String, dynamic>>[];
     dismissedRecurringRuleIds = <int>{};
+    isSyncing = false;
+    serverEpochId = null;
+    serverResetDetected = false;
     lastSyncAt = null;
+    lastSyncError = null;
     syncedOplogCount = 0;
     settings = <String, String>{
       'fx_default_cashback_rate': '0.0100',
@@ -542,7 +599,6 @@ class FlutterLedgerEngine {
     _assetSeq = 0;
     _monthlyBudgetSeq = 4;
     _recurringSeq = 0;
-    _conflictSeq = 0;
   }
 
   String _nextTxId() {
@@ -668,10 +724,7 @@ class FlutterLedgerEngine {
           final tagId = ov['project_tag_id'];
           parsedItems[i]['project_tag_id'] = tagId;
           if (tagId != null && !ov.containsKey('budget_pool_id')) {
-            final tagMatch = projectTags.where((t) => t['id'] == tagId).toList();
-            if (tagMatch.isNotEmpty && tagMatch.first['linked_pool_id'] != null) {
-              parsedItems[i]['budget_pool_id'] = tagMatch.first['linked_pool_id'];
-            }
+            parsedItems[i]['budget_pool_id'] = 'POOL_FLEX';
           }
         }
       }
@@ -2452,12 +2505,14 @@ class FlutterLedgerEngine {
     required String name,
     String tagType = 'PROJECT',
     String? targetBudget,
-    String? linkedPoolId = 'POOL_FLEX',
     bool isActive = true,
     String? startDate,
     String? endDate,
   }) {
     final cleanName = name.trim();
+    if (cleanName.isEmpty) {
+      throw ArgumentError('专项名称不能为空');
+    }
     final idx = projectTags.indexWhere(
       (t) => (id != null && t['id'] == id) || t['name'] == cleanName,
     );
@@ -2465,16 +2520,20 @@ class FlutterLedgerEngine {
         (targetBudget != null && targetBudget.trim().isNotEmpty)
             ? _bridge.formatCny(targetBudget.trim())
             : null;
+    final cleanStart =
+        startDate != null && startDate.trim().isNotEmpty ? startDate.trim() : null;
+    final cleanEnd =
+        endDate != null && endDate.trim().isNotEmpty ? endDate.trim() : null;
 
     if (idx != -1) {
       final tag = projectTags[idx];
       tag['name'] = cleanName;
       tag['tag_type'] = tagType;
       tag['target_budget'] = formattedTarget;
-      tag['linked_pool_id'] = linkedPoolId;
+      tag.remove('linked_pool_id');
       tag['is_active'] = isActive;
-      if (startDate != null) tag['start_date'] = startDate;
-      if (endDate != null) tag['end_date'] = endDate;
+      if (startDate != null) tag['start_date'] = cleanStart;
+      if (endDate != null) tag['end_date'] = cleanEnd;
       _appendOpLog('PROJECT_TAG', tag['id'] as String, 'UPSERT', tag);
       return _cloneMap(tag);
     }
@@ -2486,10 +2545,9 @@ class FlutterLedgerEngine {
       'name': cleanName,
       'tag_type': tagType,
       'target_budget': formattedTarget,
-      'linked_pool_id': linkedPoolId,
       'is_active': isActive,
-      if (startDate != null) 'start_date': startDate,
-      if (endDate != null) 'end_date': endDate,
+      if (cleanStart != null) 'start_date': cleanStart,
+      if (cleanEnd != null) 'end_date': cleanEnd,
     };
     projectTags.add(tag);
     _appendOpLog('PROJECT_TAG', newId, 'UPSERT', tag);
@@ -2596,109 +2654,368 @@ class FlutterLedgerEngine {
   // Mobile Sync Indicator, Pull-to-Refresh Sync, Conflict Resolution & Backup
   // --------------------------------------------------------------------------
 
-  Map<String, dynamic> syncNow() {
+  String _normalizedServerUrl([String? override]) {
+    final raw = (override ?? serverUrl).trim().replaceAll(RegExp(r'/+$'), '');
+    if (raw.isEmpty) {
+      throw const FormatException('请先填写服务端同步地址');
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null ||
+        !(uri.scheme == 'http' || uri.scheme == 'https') ||
+        uri.host.isEmpty) {
+      throw FormatException('同步地址格式无效: $raw');
+    }
+    return raw;
+  }
+
+  static bool _asBool(dynamic v, {bool fallback = false}) {
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    if (v is String) return v == '1' || v.toLowerCase() == 'true';
+    return fallback;
+  }
+
+  void _recomputeSeqWatermarks() {
+    var maxVoucherId = 0;
+    for (final v in vouchers) {
+      final id = (v['id'] as num?)?.toInt() ?? 0;
+      if (id > maxVoucherId) maxVoucherId = id;
+    }
+    _voucherSeq = maxVoucherId;
+
+    var maxAssetId = 0;
+    for (final a in fixedAssets) {
+      final id = (a['id'] as num?)?.toInt() ?? 0;
+      if (id > maxAssetId) maxAssetId = id;
+    }
+    _assetSeq = maxAssetId;
+
+    var maxMbId = 0;
+    for (final b in monthlyBudgets) {
+      final id = (b['id'] as num?)?.toInt() ?? 0;
+      if (id > maxMbId) maxMbId = id;
+    }
+    _monthlyBudgetSeq = maxMbId;
+
+    var maxRuleId = 0;
+    for (final r in recurringRules) {
+      final id = (r['id'] as num?)?.toInt() ?? 0;
+      if (id > maxRuleId) maxRuleId = id;
+    }
+    _recurringSeq = maxRuleId;
+  }
+
+  Future<Map<String, dynamic>> syncWithServer({String? baseUrl}) async {
     if (isOfflineMode) {
       return <String, dynamic>{
         'success': false,
-        'message': '当前处于「仅存本地」模式，未向云端同步',
+        'skipped': true,
+        'message': '当前处于「仅存本地」模式，已暂停向云端同步',
       };
     }
-    final pushed = pendingSyncCount;
-    syncedOplogCount = syncOplog.length;
-    lastSyncAt = _nowIso();
+    if (serverResetDetected) {
+      return <String, dynamic>{
+        'success': false,
+        'serverResetDetected': true,
+        'message': '检测到云端数据曾发生重置或还原，请先在同步中心确认恢复方式',
+      };
+    }
+    if (isSyncing) {
+      return <String, dynamic>{
+        'success': false,
+        'message': '正在同步中，请稍候...',
+      };
+    }
+
+    isSyncing = true;
+    lastSyncError = null;
+    try {
+      final targetBase = _normalizedServerUrl(baseUrl);
+      if (baseUrl != null) {
+        serverUrl = targetBase;
+      }
+
+      final startIdx = syncedOplogCount.clamp(0, syncOplog.length);
+      final opsToPush = syncOplog.sublist(startIdx);
+      final data = await _httpPost(
+        Uri.parse('$targetBase/api/sync/exchange'),
+        <String, dynamic>{'ops': opsToPush},
+      );
+
+      final remoteEpoch = data['serverEpochId'] as String?;
+      if (serverEpochId != null &&
+          remoteEpoch != null &&
+          remoteEpoch != serverEpochId) {
+        serverResetDetected = true;
+        return <String, dynamic>{
+          'success': false,
+          'serverResetDetected': true,
+          'message': '检测到服务端数据已被重置，已保护性挂起自动同步！请打开同步中心确认处理。',
+        };
+      }
+      if (remoteEpoch != null && remoteEpoch.isNotEmpty) {
+        serverEpochId = remoteEpoch;
+      }
+
+      if (data['serverOps'] is List) {
+        for (final op in data['serverOps'] as List<dynamic>) {
+          if (op is Map && op['hlc'] is String) {
+            try {
+              hlc.receive(op['hlc'] as String);
+            } catch (_) {}
+          }
+        }
+      }
+
+      if (data['fullBundle'] is Map) {
+        importFullSyncBundle(
+          Map<String, dynamic>.from(data['fullBundle'] as Map<dynamic, dynamic>),
+        );
+      }
+      if (data['conflicts'] is List) {
+        conflicts = (data['conflicts'] as List<dynamic>)
+            .whereType<Map<dynamic, dynamic>>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      syncedOplogCount = syncOplog.length;
+      lastSyncAt = _nowIso();
+      lastSyncError = null;
+
+      return <String, dynamic>{
+        'success': true,
+        'pushedCount': opsToPush.length,
+        'appliedCount': (data['appliedCount'] as num?)?.toInt() ?? 0,
+        'totalOplogCount': syncOplog.length,
+        'pendingConflicts': pendingConflicts.length,
+      };
+    } catch (e) {
+      lastSyncError = e.toString();
+      return <String, dynamic>{
+        'success': false,
+        'error': lastSyncError,
+        'message': '连接服务端失败: $e',
+      };
+    } finally {
+      isSyncing = false;
+    }
+  }
+
+  Future<Map<String, dynamic>> pullFromServerReset({String? baseUrl}) async {
+    isSyncing = true;
+    lastSyncError = null;
+    try {
+      final targetBase = _normalizedServerUrl(baseUrl);
+      if (baseUrl != null) {
+        serverUrl = targetBase;
+      }
+      final data = await _httpPost(
+        Uri.parse('$targetBase/api/sync/exchange'),
+        <String, dynamic>{'ops': <dynamic>[]},
+      );
+      if (data['serverEpochId'] is String) {
+        serverEpochId = data['serverEpochId'] as String;
+      }
+      serverResetDetected = false;
+      if (data['fullBundle'] is Map) {
+        importFullSyncBundle(
+          Map<String, dynamic>.from(data['fullBundle'] as Map<dynamic, dynamic>),
+        );
+      }
+      if (data['conflicts'] is List) {
+        conflicts = (data['conflicts'] as List<dynamic>)
+            .whereType<Map<dynamic, dynamic>>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      syncedOplogCount = syncOplog.length;
+      lastSyncAt = _nowIso();
+      return <String, dynamic>{
+        'success': true,
+        'totalOplogCount': syncOplog.length,
+      };
+    } catch (e) {
+      lastSyncError = e.toString();
+      rethrow;
+    } finally {
+      isSyncing = false;
+    }
+  }
+
+  Future<Map<String, dynamic>> pushLocalBundleToServer({String? baseUrl}) async {
+    isSyncing = true;
+    lastSyncError = null;
+    try {
+      final targetBase = _normalizedServerUrl(baseUrl);
+      if (baseUrl != null) {
+        serverUrl = targetBase;
+      }
+      final bundle = exportFullSyncBundle();
+      final res = await _httpPost(
+        Uri.parse('$targetBase/api/sync/reseed'),
+        <String, dynamic>{'bundle': bundle},
+      );
+      serverEpochId = null;
+      serverResetDetected = false;
+      syncedOplogCount = syncOplog.length;
+      lastSyncAt = _nowIso();
+      lastSyncError = null;
+      return <String, dynamic>{
+        'success': true,
+        'restored': res['restored'] == true,
+        'oplogCount':
+            (res['oplogCount'] as num?)?.toInt() ?? syncOplog.length,
+        'transactionsCount': transactions.length,
+      };
+    } catch (e) {
+      lastSyncError = e.toString();
+      rethrow;
+    } finally {
+      isSyncing = false;
+    }
+  }
+
+  Future<Map<String, dynamic>> resolveConflict(
+    String conflictId,
+    String resolution, {
+    String? baseUrl,
+  }) async {
+    final targetBase = _normalizedServerUrl(baseUrl);
+    final res = await _httpPost(
+      Uri.parse(
+        '$targetBase/api/conflicts/${Uri.encodeComponent(conflictId)}/resolve',
+      ),
+      <String, dynamic>{'resolution': resolution},
+    );
+    if (res['conflicts'] is List) {
+      conflicts = (res['conflicts'] as List<dynamic>)
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    return syncWithServer(baseUrl: targetBase);
+  }
+
+  Map<String, dynamic> exportFullSyncBundle() {
     return <String, dynamic>{
-      'success': true,
-      'pushedCount': pushed,
-      'totalOplogCount': syncOplog.length,
-      'pendingConflicts': pendingConflicts.length,
-    };
-  }
-
-  void simulateConflictForDemo() {
-    _conflictSeq += 1;
-    final sampleId = 'cf_mobile_$_conflictSeq';
-    conflicts.add(<String, dynamic>{
-      'id': sampleId,
-      'conflict_type': 'TRANSACTION_LWW',
-      'entity_type': 'TRANSACTION',
-      'entity_id': 'demo_tx_$_conflictSeq',
-      'status': 'PENDING',
-      'winner_summary': '手机端：咸蛋黄拌面 ¥16.65 (#高频饮食)',
-      'loser_summary': '桌面端：咸蛋黄拌面 ¥16.80 (#高频饮食)',
-      'created_at': _nowIso(),
-    });
-  }
-
-  void resolveConflict(String conflictId, String resolution) {
-    final idx = conflicts.indexWhere((c) => c['id'] == conflictId);
-    if (idx == -1) return;
-    conflicts[idx]['status'] = 'RESOLVED';
-    conflicts[idx]['resolution'] = resolution;
-    conflicts[idx]['resolved_at'] = _nowIso();
-  }
-
-  String exportBackupJson() {
-    final bundle = <String, dynamic>{
       'nodeId': hlc.nodeId,
       'exportedAt': _nowIso(),
-      'budgetPools': budgetPools,
-      'monthlyBudgets': monthlyBudgets,
-      'categories': categories,
-      'projectTags': projectTags,
-      'vouchers': vouchers,
-      'fixedAssets': fixedAssets,
-      'recurringRules': recurringRules,
-      'transactions': transactions,
-      'settings': settings,
-      'oplogs': syncOplog,
+      'budgetPools': _cloneListOfMaps(budgetPools),
+      'monthlyBudgets': _cloneListOfMaps(monthlyBudgets),
+      'categories': _cloneListOfMaps(categories),
+      'projectTags': _cloneListOfMaps(projectTags),
+      'vouchers': _cloneListOfMaps(vouchers),
+      'fixedAssets': _cloneListOfMaps(fixedAssets),
+      'recurringRules': _cloneListOfMaps(recurringRules),
+      'transactions': _cloneListOfMaps(transactions),
+      'settings': Map<String, String>.from(settings),
+      'oplogs': _cloneListOfMaps(syncOplog),
     };
-    return const JsonEncoder.withIndent('  ').convert(bundle);
   }
 
-  Map<String, int> importBackupJson(String rawJson) {
-    final decoded = jsonDecode(rawJson);
-    if (decoded is! Map) {
-      throw const FormatException('JSON 备份必须是对象格式');
-    }
-    final map = Map<String, dynamic>.from(decoded);
+  String exportBackupJson() =>
+      const JsonEncoder.withIndent('  ').convert(exportFullSyncBundle());
+
+  Map<String, int> importFullSyncBundle(Map<String, dynamic> map) {
     if (map['budgetPools'] is List) {
       budgetPools = (map['budgetPools'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            row['is_monthly_budget'] = _asBool(
+              row['is_monthly_budget'],
+              fallback: true,
+            );
+            return row;
+          })
+          .where(
+            (p) => p['id'] != 'POOL_FUND' && p['id'] != 'POOL_ASSET',
+          )
           .toList();
     }
     if (map['monthlyBudgets'] is List) {
       monthlyBudgets = (map['monthlyBudgets'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .where(
+            (b) =>
+                b['pool_id'] != 'POOL_FUND' && b['pool_id'] != 'POOL_ASSET',
+          )
           .toList();
     }
     if (map['categories'] is List) {
       categories = (map['categories'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            if (row['default_pool_id'] == 'POOL_FUND' ||
+                row['default_pool_id'] == 'POOL_ASSET') {
+              row['default_pool_id'] = 'POOL_FLEX';
+            }
+            return row;
+          })
           .toList();
     }
     if (map['projectTags'] is List) {
       projectTags = (map['projectTags'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            row.remove('linked_pool_id');
+            row['is_active'] = _asBool(row['is_active'], fallback: true);
+            return row;
+          })
           .toList();
     }
     if (map['vouchers'] is List) {
       vouchers = (map['vouchers'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) => Map<String, dynamic>.from(e))
           .toList();
     }
     if (map['fixedAssets'] is List) {
       fixedAssets = (map['fixedAssets'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) => Map<String, dynamic>.from(e))
           .toList();
     }
     if (map['recurringRules'] is List) {
       recurringRules = (map['recurringRules'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            row['auto_reserve_budget'] = _asBool(
+              row['auto_reserve_budget'],
+              fallback: true,
+            );
+            row['is_active'] = _asBool(row['is_active'], fallback: true);
+            return row;
+          })
+          .where((r) => r['rule_type'] != 'AUTO_INVEST')
           .toList();
     }
     if (map['transactions'] is List) {
       transactions = (map['transactions'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            if (row['header'] is Map) {
+              final h = Map<String, dynamic>.from(row['header'] as Map<dynamic, dynamic>);
+              h['is_deleted'] = _asBool(h['is_deleted']);
+              row['header'] = h;
+            }
+            if (row['items'] is List) {
+              row['items'] = (row['items'] as List<dynamic>)
+                  .whereType<Map<dynamic, dynamic>>()
+                  .map((it) {
+                    final m = Map<String, dynamic>.from(it);
+                    m['is_primary_item'] = _asBool(m['is_primary_item']);
+                    return m;
+                  })
+                  .toList();
+            }
+            return row;
+          })
           .toList();
     }
     if (map['settings'] is Map) {
@@ -2708,14 +3025,26 @@ class FlutterLedgerEngine {
     }
     if (map['oplogs'] is List) {
       syncOplog = (map['oplogs'] as List<dynamic>)
-          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .whereType<Map<dynamic, dynamic>>()
+          .map((e) => Map<String, dynamic>.from(e))
           .toList();
     }
-    syncedOplogCount = syncOplog.length;
+    _recomputeSeqWatermarks();
     return <String, int>{
       'transactionsCount': transactions.length,
       'poolsCount': budgetPools.length,
       'vouchersCount': vouchers.length,
     };
+  }
+
+  Map<String, int> importBackupJson(String rawJson) {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! Map) {
+      throw const FormatException('JSON 备份必须是对象格式');
+    }
+    final summary = importFullSyncBundle(Map<String, dynamic>.from(decoded));
+    syncedOplogCount = 0;
+    lastSyncAt = null;
+    return summary;
   }
 }

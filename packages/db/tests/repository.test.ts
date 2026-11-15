@@ -615,10 +615,17 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
             'POOL_FLEX',
           ]);
 
+          const ptCols = (repo.db.prepare('PRAGMA table_info(projects_and_tags)').all() as Array<{ name: string }>).map(
+            (c) => c.name
+          );
+          expect(ptCols).not.toContain('linked_pool_id');
+          expect(ptCols).toContain('start_date');
+          expect(ptCols).toContain('end_date');
+
           const tag = repo.db
-            .prepare("SELECT linked_pool_id FROM projects_and_tags WHERE id = 'TAG_JLPT_N2'")
-            .get() as { linked_pool_id: string };
-          expect(tag.linked_pool_id).toBe('POOL_FLEX');
+            .prepare("SELECT id, target_budget FROM projects_and_tags WHERE id = 'TAG_JLPT_N2'")
+            .get() as { id: string; target_budget: number };
+          expect(tag.id).toBe('TAG_JLPT_N2');
 
           const oplogs = repo.db.prepare('SELECT entity_type, entity_id FROM sync_oplog').all() as Array<{
             entity_type: string;

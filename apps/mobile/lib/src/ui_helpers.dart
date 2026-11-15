@@ -169,8 +169,7 @@ Future<Map<String, String?>?> showTargetPickerSheet(
                           ? Icon(Icons.check_circle, color: cs.secondary)
                           : null,
                       onTap: () => Navigator.of(ctx).pop(<String, String?>{
-                        'budget_pool_id':
-                            (tag['linked_pool_id'] as String?) ?? 'POOL_FLEX',
+                        'budget_pool_id': 'POOL_FLEX',
                         'project_tag_id': tag['id'] as String,
                       }),
                     ),

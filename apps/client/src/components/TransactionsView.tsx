@@ -196,9 +196,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   ): { budget_pool_id?: string; project_tag_id: string | null } => {
     if (selection.startsWith('PROJECT:')) {
       const projId = selection.slice(8);
-      const pt = engine.state.projectTags.find((p) => p.id === projId);
       return {
-        budget_pool_id: pt?.linked_pool_id || 'POOL_FLEX',
+        budget_pool_id: 'POOL_FLEX',
         project_tag_id: projId,
       };
     }

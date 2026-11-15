@@ -338,7 +338,6 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
         name: '心愿单：树莓派5代集群搭建',
         tag_type: 'PROJECT',
         target_budget: '1500.00',
-        linked_pool_id: newPool.id,
       });
       expect(wishGoal.id).toBeDefined();
       expect(wishGoal.target_budget).toBe('1500.00');

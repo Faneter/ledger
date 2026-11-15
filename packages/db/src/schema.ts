@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS projects_and_tags (
                             'STOCK_CONSUME' -- 零元消耗打卡标记
                         )),
     target_budget       NUMERIC(10, 2) DEFAULT NULL,
-    linked_pool_id      VARCHAR(32) REFERENCES budget_pools(id),
+    start_date          DATE DEFAULT NULL,
+    end_date            DATE DEFAULT NULL,
     is_active           BOOLEAN NOT NULL DEFAULT 1,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -297,10 +298,10 @@ INSERT OR IGNORE INTO categories (id, name, default_pool_id, keywords, sort_orde
 -- ----------------------------------------------------------------------------
 -- 3. 初始化专项项目标签
 -- ----------------------------------------------------------------------------
-INSERT OR IGNORE INTO projects_and_tags (id, name, tag_type, target_budget, linked_pool_id) VALUES
-('TAG_JLPT_N2',    'JLPT_N2考试专项', 'PROJECT',       800.00, 'POOL_FLEX'),
-('TAG_MCU_LAB',    '单片机硬件实验',   'SCENE',         NULL,   'POOL_FLEX'),
-('TAG_STOCK_EAT',  '靠存货/刷饭卡度日','STOCK_CONSUME', NULL,   'POOL_DAILY');
+INSERT OR IGNORE INTO projects_and_tags (id, name, tag_type, target_budget) VALUES
+('TAG_JLPT_N2',    'JLPT_N2考试专项', 'PROJECT',       800.00),
+('TAG_MCU_LAB',    '单片机硬件实验',   'SCENE',         NULL),
+('TAG_STOCK_EAT',  '靠存货/刷饭卡度日','STOCK_CONSUME', NULL);
 
 -- ----------------------------------------------------------------------------
 -- 4. 默认月度预算 2026-11 (4个常规月度池合计 1500.00 元)

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,18 +7,28 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:geek_ledger_mobile/main.dart';
 import 'package:geek_ledger_mobile/src/ledger_engine.dart';
 
+Future<void> _setPhoneViewport(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(360, 780);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+}
+
 void main() {
   testWidgets(
-      'V2 3-Tab Shell & Overview Dashboard shows seed budgets, savings pill and pending rule banner',
+      'V2 3-Tab Shell & Overview Dashboard shows seed budgets, honest unsynced pill and pending rule banner at 360x780',
       (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine();
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
 
     // AppBar shell elements
-    expect(find.text('Geek Ledger · Rust FFI'), findsOneWidget);
+    expect(find.text('Geek Ledger'), findsOneWidget);
     expect(find.text('2026-11'), findsOneWidget);
-    expect(find.text('已同步'), findsOneWidget);
+    expect(find.text('未同步'), findsOneWidget);
 
     // 3-Tab NavigationBar + FAB
     expect(find.text('今日看板'), findsOneWidget);
@@ -64,6 +76,7 @@ void main() {
   testWidgets(
       'Half-screen Geek Formula BottomSheet supports live split preview, primary item toggle and voucher mounting',
       (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine();
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
@@ -120,6 +133,7 @@ void main() {
   testWidgets(
       'Mastercard FX pre-auth hold shows pending banner and settles via SettleFxDialog',
       (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine();
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
@@ -170,8 +184,86 @@ void main() {
   });
 
   testWidgets(
+      'Switching month, creating monthly pool, and creating detached project budget work with zero controller disposal errors or overflows',
+      (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
+    final engine = FlutterLedgerEngine();
+    await tester.pumpWidget(GeekLedgerApp(engine: engine));
+    await tester.pumpAndSettle();
+
+    // 1. Switch billing month via AppBar month pill (typing custom YYYY-MM)
+    await tester.tap(find.text('2026-11'));
+    await tester.pumpAndSettle();
+    expect(find.text('切换账单月份'), findsOneWidget);
+
+    final monthField = find
+        .descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        )
+        .first;
+    await tester.enterText(monthField, '2026-12');
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+
+    expect(find.text('2026-12'), findsOneWidget);
+
+    // 2. Create a new Monthly Budget Pool via Overview dialog
+    final mainScroll = find.byType(Scrollable).first;
+    final addPoolBtn = find.text('新增/调配');
+    await tester.scrollUntilVisible(addPoolBtn, 200, scrollable: mainScroll);
+    await tester.tap(addPoolBtn);
+    await tester.pumpAndSettle();
+    expect(find.text('新增月度预算池'), findsOneWidget);
+
+    final poolFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(poolFields.at(0), '夜宵专项补贴');
+    await tester.enterText(poolFields.at(1), '180.00');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+
+    expect(find.text('夜宵专项补贴'), findsOneWidget);
+    expect(
+      engine.budgetPools.any((p) => p['name'] == '夜宵专项补贴'),
+      isTrue,
+    );
+
+    // 3. Switch to 流水与专项 -> 专项立项 and create a detached Project Budget
+    await tester.tap(find.text('流水与专项'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('专项立项'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('新增专项'));
+    await tester.pumpAndSettle();
+    expect(find.text('新增跨期独立专项预算'), findsOneWidget);
+    // Verify 关联预算池 was completely removed
+    expect(find.text('关联预算池'), findsNothing);
+
+    final projFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(projFields.at(0), '毕业旅行基金');
+    await tester.enterText(projFields.at(1), '2400.00');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+
+    expect(find.text('#毕业旅行基金'), findsOneWidget);
+    final created = engine.projectTags.firstWhere(
+      (t) => t['name'] == '毕业旅行基金',
+    );
+    expect(created.containsKey('linked_pool_id'), isFalse);
+    expect(created['target_budget'], '2400.00');
+  });
+
+  testWidgets(
       'Timeline split item expansion, pool rebind, swipe-delete undo and Projects view work end-to-end',
       (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine();
     engine.recordFromDsl('N2报名费 550 #JLPT_N2考试专项', txDate: '2026-11-15');
     engine.recordFromDsl('牛奶 28 + 排针 15 = 35', txDate: '2026-11-16');
@@ -229,16 +321,22 @@ void main() {
   });
 
   testWidgets(
-      'Wallet & Engine tab renders voucher deck, executes recurring rule, and resolves sync conflict',
+      'Wallet & Engine tab + Real HTTP sync with unreachable vs live mock server',
       (WidgetTester tester) async {
-    final engine = FlutterLedgerEngine();
-    await tester.pumpWidget(GeekLedgerApp(engine: engine));
+    await _setPhoneViewport(tester);
+
+    // Phase 1: Failing HTTP transport keeps pending ops and marks 未连云端
+    final offlineEngine = FlutterLedgerEngine(
+      httpPost: (_, __) async =>
+          throw const SocketException('Connection refused'),
+    );
+    await tester.pumpWidget(GeekLedgerApp(engine: offlineEngine));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('卡包与引擎'));
     await tester.pumpAndSettle();
 
-    // Voucher deck + recurring rule 1-tap execution
+    // Voucher deck + recurring rule 1-tap execution + fixed assets
     expect(find.text('微信支付10元立减金'), findsOneWidget);
     expect(find.text('美团外卖5元无门槛优惠券'), findsOneWidget);
     expect(
@@ -253,36 +351,101 @@ void main() {
     await tester.tap(find.text('立即入账').first);
     await tester.pumpAndSettle();
 
-    expect(engine.transactions.length, 1);
-    expect(find.textContaining('周期账单已入账:'), findsOneWidget);
+    expect(offlineEngine.transactions.length, 1);
+    expect(offlineEngine.pendingSyncCount, greaterThan(0));
 
-    // Scroll down to Fixed Assets section
-    await tester.scrollUntilVisible(
-      find.text('二手 iPhone 13 mini'),
-      250,
-      scrollable: walletScroll,
+    // Open Sync Dialog -> attempt sync -> fails honestly without resetting pending count
+    await tester.tap(find.textContaining('待传'));
+    await tester.pumpAndSettle();
+    expect(find.text('云端同步与差异处理'), findsOneWidget);
+    expect(find.text('模拟冲突演示'), findsNothing);
+
+    await tester.tap(find.text('立即与服务端同步'));
+    await tester.pumpAndSettle();
+    expect(offlineEngine.pendingSyncCount, greaterThan(0));
+    expect(offlineEngine.lastSyncAt, isNull);
+    expect(find.textContaining('连接服务端失败:'), findsOneWidget);
+
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+    expect(find.text('未连云端'), findsOneWidget);
+  });
+
+  test(
+      'FlutterLedgerEngine exchanges ops, detects server reset, and resolves conflicts via HTTP transport',
+      () async {
+    var epoch = 'epoch_srv_1';
+    var resolved = false;
+    final recordedPaths = <String>[];
+
+    final engine = FlutterLedgerEngine(
+      serverUrl: 'http://127.0.0.1:3001',
+      httpPost: (Uri uri, Map<String, dynamic> body) async {
+        recordedPaths.add(uri.path);
+        if (uri.path == '/api/sync/exchange') {
+          final ops = (body['ops'] as List<dynamic>? ?? <dynamic>[]);
+          return <String, dynamic>{
+            'serverNodeId': 'server-test',
+            'serverEpochId': epoch,
+            'appliedCount': ops.length,
+            'serverOps': <dynamic>[],
+            'conflicts': resolved
+                ? <dynamic>[]
+                : <Map<String, dynamic>>[
+                    <String, dynamic>{
+                      'id': 'cf_1',
+                      'entity_type': 'TRANSACTION',
+                      'entity_id': 'tx_remote_1',
+                      'status': 'PENDING',
+                      'winner_summary': '桌面端修改 ¥18.00',
+                      'loser_summary': '手机端修改 ¥16.50',
+                    },
+                  ],
+            'fullBundle': <String, dynamic>{
+              'transactions': <dynamic>[],
+              'oplogs': ops,
+            },
+          };
+        } else if (uri.path == '/api/conflicts/cf_1/resolve') {
+          resolved = true;
+          return <String, dynamic>{'conflicts': <dynamic>[]};
+        } else if (uri.path == '/api/sync/reseed') {
+          return <String, dynamic>{
+            'restored': true,
+            'oplogCount': ((body['bundle'] as Map)['oplogs'] as List).length,
+          };
+        }
+        throw StateError('Unexpected path: ${uri.path}');
+      },
     );
-    expect(find.text('二手 iPhone 13 mini'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('希捷3T监控级硬盘+硬盘盒'),
-      250,
-      scrollable: walletScroll,
-    );
-    expect(find.text('希捷3T监控级硬盘+硬盘盒'), findsOneWidget);
+    engine.recordFromDsl('测试面条 18 #饮食');
+    expect(engine.pendingSyncCount, 1);
 
-    // Open Sync & Conflict center from AppBar SyncStatusPill
-    await tester.tap(find.textContaining('待同步'));
-    await tester.pumpAndSettle();
+    final syncRes = await engine.syncWithServer();
+    expect(syncRes['success'], isTrue);
+    expect(engine.pendingSyncCount, 0);
+    expect(engine.serverEpochId, 'epoch_srv_1');
+    expect(engine.pendingConflicts.length, 1);
 
-    expect(find.text('并发冲突裁决 (0)'), findsOneWidget);
-    await tester.tap(find.text('模拟冲突演示'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('检测到多端同时修改差异'), findsOneWidget);
-    await tester.tap(find.text('保留手机版'));
-    await tester.pumpAndSettle();
-
+    await engine.resolveConflict('cf_1', 'KEEP_WINNER');
     expect(engine.pendingConflicts, isEmpty);
-    expect(find.text('已保留手机版本'), findsOneWidget);
+
+    // Simulate server epoch change -> serverResetDetected protection triggers
+    epoch = 'epoch_srv_reset_2';
+    final resetCheck = await engine.syncWithServer();
+    expect(resetCheck['success'], isFalse);
+    expect(resetCheck['serverResetDetected'], isTrue);
+    expect(engine.serverResetDetected, isTrue);
+
+    final pushRes = await engine.pushLocalBundleToServer();
+    expect(pushRes['restored'], isTrue);
+    expect(engine.serverResetDetected, isFalse);
+    expect(recordedPaths, <String>[
+      '/api/sync/exchange',
+      '/api/conflicts/cf_1/resolve',
+      '/api/sync/exchange',
+      '/api/sync/exchange',
+      '/api/sync/reseed',
+    ]);
   });
 }

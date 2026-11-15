@@ -116,6 +116,12 @@ export class LedgerRepository {
         .prepare("SELECT 1 FROM budget_pools WHERE id IN ('POOL_FUND', 'POOL_ASSET') LIMIT 1")
         .get()
     );
+    const ptCols = this.db
+      .prepare('PRAGMA table_info(projects_and_tags)')
+      .all() as Array<{ name: string }>;
+    const hasLinkedPoolColInPt = ptCols.some((c) => c.name === 'linked_pool_id');
+    const hasPtStartDate = ptCols.some((c) => c.name === 'start_date');
+    const hasPtEndDate = ptCols.some((c) => c.name === 'end_date');
 
     if (
       !hasLegacyAccountColsInTx &&
@@ -123,7 +129,10 @@ export class LedgerRepository {
       !hasLegacyVoucherConstraint &&
       !hasAccountsTable &&
       !hasAccountDashboardView &&
-      !hasDeprecatedPools
+      !hasDeprecatedPools &&
+      !hasLinkedPoolColInPt &&
+      hasPtStartDate &&
+      hasPtEndDate
     ) {
       return;
     }
@@ -272,13 +281,50 @@ export class LedgerRepository {
           `);
         }
 
+        if (hasLinkedPoolColInPt) {
+          const startExpr = hasPtStartDate ? 'start_date' : 'NULL';
+          const endExpr = hasPtEndDate ? 'end_date' : 'NULL';
+          this.db.exec(`
+            CREATE TABLE projects_and_tags_new (
+                id                  VARCHAR(32) PRIMARY KEY,
+                name                VARCHAR(64) NOT NULL UNIQUE,
+                tag_type            VARCHAR(24) NOT NULL CHECK (tag_type IN (
+                                        'PROJECT',
+                                        'SCENE',
+                                        'STOCK_CONSUME'
+                                    )),
+                target_budget       NUMERIC(10, 2) DEFAULT NULL,
+                start_date          DATE DEFAULT NULL,
+                end_date            DATE DEFAULT NULL,
+                is_active           BOOLEAN NOT NULL DEFAULT 1,
+                created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT INTO projects_and_tags_new (
+                id, name, tag_type, target_budget, start_date, end_date, is_active, created_at
+            )
+            SELECT
+                id, name, tag_type, target_budget, ${startExpr}, ${endExpr}, is_active, created_at
+            FROM projects_and_tags;
+
+            DROP TABLE projects_and_tags;
+            ALTER TABLE projects_and_tags_new RENAME TO projects_and_tags;
+          `);
+        } else {
+          if (!hasPtStartDate) {
+            this.db.exec('ALTER TABLE projects_and_tags ADD COLUMN start_date DATE DEFAULT NULL;');
+          }
+          if (!hasPtEndDate) {
+            this.db.exec('ALTER TABLE projects_and_tags ADD COLUMN end_date DATE DEFAULT NULL;');
+          }
+        }
+
         this.db.exec('DROP TABLE IF EXISTS accounts;');
         this.db.exec("DELETE FROM sync_oplog WHERE entity_type = 'ACCOUNT';");
 
         // 清理未被引用的废置预算池 (POOL_FUND / POOL_ASSET)
         this.db.exec(`
           UPDATE categories SET default_pool_id = 'POOL_FLEX' WHERE default_pool_id IN ('POOL_FUND', 'POOL_ASSET');
-          UPDATE projects_and_tags SET linked_pool_id = 'POOL_FLEX' WHERE linked_pool_id IN ('POOL_FUND', 'POOL_ASSET');
         `);
         const refItems = (
           this.db
@@ -1259,14 +1305,15 @@ export class LedgerRepository {
           } else {
             this.db.prepare(`
               INSERT OR REPLACE INTO projects_and_tags (
-                id, name, tag_type, target_budget, linked_pool_id, is_active
-              ) VALUES (?, ?, ?, ?, ?, ?)
+                id, name, tag_type, target_budget, start_date, end_date, is_active
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)
             `).run(
               payload.id || winningOp.entity_id,
               payload.name,
               payload.tag_type,
               payload.target_budget != null ? formatCny(payload.target_budget) : null,
-              payload.linked_pool_id ?? null,
+              payload.start_date ?? null,
+              payload.end_date ?? null,
               payload.is_active ? 1 : 0
             );
           }
@@ -1627,20 +1674,17 @@ export class LedgerRepository {
       // 4. 还原项目与标签
       if (bundle.projectTags && bundle.projectTags.length > 0) {
         const stmt = this.db.prepare(`
-          INSERT OR REPLACE INTO projects_and_tags (id, name, tag_type, target_budget, linked_pool_id, is_active)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT OR REPLACE INTO projects_and_tags (id, name, tag_type, target_budget, start_date, end_date, is_active)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
         for (const t of bundle.projectTags) {
-          const safeLinkedPoolId =
-            t.linked_pool_id === 'POOL_FUND' || t.linked_pool_id === 'POOL_ASSET'
-              ? 'POOL_FLEX'
-              : (t.linked_pool_id ?? null);
           stmt.run(
             t.id,
             t.name,
             t.tag_type,
             t.target_budget != null ? formatCny(t.target_budget) : null,
-            safeLinkedPoolId,
+            t.start_date ?? null,
+            t.end_date ?? null,
             t.is_active ? 1 : 0
           );
         }
@@ -2660,29 +2704,33 @@ export class LedgerRepository {
       this.db
         .prepare(`
           UPDATE projects_and_tags SET
-            name = ?, tag_type = ?, target_budget = ?, linked_pool_id = ?, is_active = ?
+            name = ?, tag_type = ?, target_budget = ?, start_date = ?, end_date = ?, is_active = ?
           WHERE id = ?
         `)
         .run(
           tag.name,
           tag.tag_type ?? existing.tag_type,
-          tag.target_budget ? formatCny(tag.target_budget) : existing.target_budget,
-          tag.linked_pool_id !== undefined ? tag.linked_pool_id : existing.linked_pool_id,
+          tag.target_budget !== undefined
+            ? (tag.target_budget ? formatCny(tag.target_budget) : null)
+            : existing.target_budget,
+          tag.start_date !== undefined ? tag.start_date : existing.start_date,
+          tag.end_date !== undefined ? tag.end_date : existing.end_date,
           tag.is_active !== undefined ? (tag.is_active ? 1 : 0) : existing.is_active,
           existing.id
         );
     } else {
       this.db
         .prepare(`
-          INSERT INTO projects_and_tags (id, name, tag_type, target_budget, linked_pool_id, is_active)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO projects_and_tags (id, name, tag_type, target_budget, start_date, end_date, is_active)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
           tag.name,
           tag.tag_type ?? 'PROJECT',
           tag.target_budget ? formatCny(tag.target_budget) : null,
-          tag.linked_pool_id ?? null,
+          tag.start_date ?? null,
+          tag.end_date ?? null,
           tag.is_active !== false ? 1 : 0
         );
     }

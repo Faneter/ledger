@@ -350,10 +350,6 @@ fn parse_project_tags(arr: &[JsonVal]) -> Result<Vec<ProjectTagDef>, String> {
             target_budget: v
                 .get_non_null("target_budget")
                 .and_then(|x| x.as_num_or_str()),
-            linked_pool_id: v
-                .get_non_null("linked_pool_id")
-                .and_then(|x| x.as_str())
-                .map(ToString::to_string),
             is_active: v.get("is_active").and_then(|x| x.as_bool()).unwrap_or(true),
         });
     }

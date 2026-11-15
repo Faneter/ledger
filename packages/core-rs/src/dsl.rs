@@ -24,7 +24,6 @@ pub struct ProjectTagDef {
     pub name: String,
     pub tag_type: String,
     pub target_budget: Option<String>,
-    pub linked_pool_id: Option<String>,
     pub is_active: bool,
 }
 
@@ -67,18 +66,17 @@ pub fn default_categories() -> Vec<CategoryDef> {
 }
 
 pub fn default_project_tags() -> Vec<ProjectTagDef> {
-    let rows: &[(&str, &str, &str, Option<&str>, &str)] = &[
-        ("TAG_JLPT_N2", "JLPT_N2考试专项", "PROJECT", Some("800.00"), "POOL_FLEX"),
-        ("TAG_MCU_LAB", "单片机硬件实验", "SCENE", None, "POOL_FLEX"),
-        ("TAG_STOCK_EAT", "靠存货/刷饭卡度日", "STOCK_CONSUME", None, "POOL_DAILY"),
+    let rows: &[(&str, &str, &str, Option<&str>)] = &[
+        ("TAG_JLPT_N2", "JLPT_N2考试专项", "PROJECT", Some("800.00")),
+        ("TAG_MCU_LAB", "单片机硬件实验", "SCENE", None),
+        ("TAG_STOCK_EAT", "靠存货/刷饭卡度日", "STOCK_CONSUME", None),
     ];
     rows.iter()
-        .map(|&(id, name, tt, tb, pool)| ProjectTagDef {
+        .map(|&(id, name, tt, tb)| ProjectTagDef {
             id: id.to_string(),
             name: name.to_string(),
             tag_type: tt.to_string(),
             target_budget: tb.map(ToString::to_string),
-            linked_pool_id: Some(pool.to_string()),
             is_active: true,
         })
         .collect()
@@ -1026,10 +1024,8 @@ pub fn parse_quick_input_dsl(
             let resolved = resolve_tag_or_category(&tag_tok, cats, tags, budget_pools);
             if let Some(pt) = resolved.project_tag {
                 item_project_tag_id = Some(pt.id.clone());
-                if item_pool_id.is_none() {
-                    if let Some(ref lp) = pt.linked_pool_id {
-                        item_pool_id = Some(lp.clone());
-                    }
+                if item_pool_id.is_none() && pt.tag_type == "PROJECT" {
+                    item_pool_id = Some(String::from("POOL_FLEX"));
                 }
             }
             if let Some(bp) = resolved.budget_pool {
@@ -1119,10 +1115,8 @@ pub fn parse_quick_input_dsl(
                 if pt.is_some_and(|p| p.id == "TAG_JLPT_N2") {
                     item.category_id = Some(String::from("CAT_EXAM_CERT"));
                 }
-                if item.pool_id.is_none() {
-                    if let Some(lp) = pt.and_then(|p| p.linked_pool_id.clone()) {
-                        item.pool_id = Some(lp);
-                    }
+                if item.pool_id.is_none() && pt.is_some_and(|p| p.tag_type == "PROJECT") {
+                    item.pool_id = Some(String::from("POOL_FLEX"));
                 }
             }
         }

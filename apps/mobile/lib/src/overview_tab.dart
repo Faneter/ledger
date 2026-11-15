@@ -42,125 +42,48 @@ class OverviewTab extends StatelessWidget {
         engine.budgetPools.where((p) => p['id'] == poolId).toList();
     final def = defList.isNotEmpty ? defList.first : null;
 
-    final nameCtrl = TextEditingController(
-      text: isEdit ? existingPoolStatus['pool_name'] as String : '',
-    );
-    final allocCtrl = TextEditingController(
-      text: isEdit
-          ? existingPoolStatus['base_allocation'] as String
-          : '300.00',
-    );
-    final descCtrl = TextEditingController(
-      text: (def?['description'] as String?) ?? '',
-    );
-    var rollover =
-        (def?['rollover_strategy'] as String?) ?? 'ACCUMULATE';
-
-    final saved = await showDialog<bool>(
+    final result = await showDialog<_PoolDialogResult>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text(isEdit ? '调配预算池额度' : '新增月度预算池'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '资金池名称',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: allocCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: '$selectedMonth 基准预算 (CNY)',
-                    prefixText: '¥ ',
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  key: ValueKey<String>(rollover),
-                  initialValue: rollover,
-                  decoration: const InputDecoration(
-                    labelText: '跨月结余策略',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem(
-                      value: 'ACCUMULATE',
-                      child: Text('结余滚存下月'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'RESET',
-                      child: Text('月末清零'),
-                    ),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) setLocal(() => rollover = v);
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: descCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '用途说明 (选填)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (nameCtrl.text.trim().isEmpty) return;
-                if ((double.tryParse(allocCtrl.text.trim()) ?? -1) < 0) return;
-                Navigator.of(ctx).pop(true);
-              },
-              child: const Text('保存'),
-            ),
-          ],
-        ),
+      builder: (_) => _PoolEditorDialog(
+        isEdit: isEdit,
+        selectedMonth: selectedMonth,
+        initialName: isEdit ? (existingPoolStatus['pool_name'] as String) : '',
+        initialAlloc: isEdit
+            ? (existingPoolStatus['base_allocation'] as String)
+            : '300.00',
+        initialRollover: (def?['rollover_strategy'] as String?) ?? 'ACCUMULATE',
+        initialDescription: (def?['description'] as String?) ?? '',
       ),
     );
 
-    if (saved == true) {
+    if (result == null) return;
+    try {
       engine.upsertBudgetPool(
         id: poolId,
-        name: nameCtrl.text.trim(),
-        rolloverStrategy: rollover,
-        description: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+        name: result.name,
+        rolloverStrategy: result.rolloverStrategy,
+        description: result.description.isEmpty ? null : result.description,
         isMonthlyBudget: true,
       );
       engine.setMonthlyBudget(
         yearMonth: selectedMonth,
         poolId: poolId,
-        baseAllocation: allocCtrl.text.trim(),
+        baseAllocation: result.baseAllocation,
       );
       onEngineChanged();
       if (context.mounted) {
         showLedgerSnackBar(
           context,
           isEdit
-              ? '已更新【${nameCtrl.text.trim()}】本月预算'
-              : '已创建资金池【${nameCtrl.text.trim()}】',
+              ? '已更新【${result.name}】本月预算'
+              : '已创建资金池【${result.name}】',
         );
       }
+    } catch (e) {
+      if (context.mounted) {
+        showLedgerSnackBar(context, '保存预算池失败: $e', isError: true);
+      }
     }
-
-    nameCtrl.dispose();
-    allocCtrl.dispose();
-    descCtrl.dispose();
   }
 
   @override
@@ -398,6 +321,7 @@ class OverviewTab extends StatelessWidget {
                     DropdownButtonFormField<int?>(
                       key: ValueKey<int?>(selectedVoucherId),
                       initialValue: selectedVoucherId,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: '叠加卡券核销（可选）',
                         border: OutlineInputBorder(),
@@ -413,6 +337,7 @@ class OverviewTab extends StatelessWidget {
                             value: v['id'] as int,
                             child: Text(
                               '${v['title']} (成本 ¥${v['acquire_cost']} / 满 ¥${v['min_spend']})',
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ),
@@ -428,14 +353,15 @@ class OverviewTab extends StatelessWidget {
 
           // 5. Four Monthly Budget Pool Water-Level Progress Bars
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              Text(
-                '月度预算池水位 (${pools.length})',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
+              Expanded(
+                child: Text(
+                  '月度预算池水位 (${pools.length})',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
               ),
               TextButton.icon(
                 onPressed: () => _openPoolEditorDialog(context),
@@ -614,6 +540,178 @@ class OverviewTab extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PoolDialogResult {
+  const _PoolDialogResult({
+    required this.name,
+    required this.baseAllocation,
+    required this.rolloverStrategy,
+    required this.description,
+  });
+
+  final String name;
+  final String baseAllocation;
+  final String rolloverStrategy;
+  final String description;
+}
+
+class _PoolEditorDialog extends StatefulWidget {
+  const _PoolEditorDialog({
+    required this.isEdit,
+    required this.selectedMonth,
+    required this.initialName,
+    required this.initialAlloc,
+    required this.initialRollover,
+    required this.initialDescription,
+  });
+
+  final bool isEdit;
+  final String selectedMonth;
+  final String initialName;
+  final String initialAlloc;
+  final String initialRollover;
+  final String initialDescription;
+
+  @override
+  State<_PoolEditorDialog> createState() => _PoolEditorDialogState();
+}
+
+class _PoolEditorDialogState extends State<_PoolEditorDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _allocCtrl;
+  late final TextEditingController _descCtrl;
+  late String _rollover;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.initialName);
+    _allocCtrl = TextEditingController(text: widget.initialAlloc);
+    _descCtrl = TextEditingController(text: widget.initialDescription);
+    _rollover = widget.initialRollover;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _allocCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.isEdit ? '调配预算池额度' : '新增月度预算池'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(
+                labelText: '资金池名称',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _allocCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: '${widget.selectedMonth} 基准预算 (CNY)',
+                prefixText: '¥ ',
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              key: ValueKey<String>(_rollover),
+              initialValue: _rollover,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: '跨月结余策略',
+                border: OutlineInputBorder(),
+              ),
+              items: const <DropdownMenuItem<String>>[
+                DropdownMenuItem(
+                  value: 'ACCUMULATE',
+                  child: Text('结余滚存下月'),
+                ),
+                DropdownMenuItem(
+                  value: 'RESET',
+                  child: Text('月末清零'),
+                ),
+              ],
+              onChanged: (v) {
+                if (v != null) setState(() => _rollover = v);
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _descCtrl,
+              decoration: const InputDecoration(
+                labelText: '用途说明 (选填)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final name = _nameCtrl.text.trim();
+            if (name.isEmpty) {
+              setState(() => _error = '请输入资金池名称');
+              return;
+            }
+            final rawAlloc = _allocCtrl.text.trim().isEmpty
+                ? '0.00'
+                : _allocCtrl.text.trim();
+            final parsed = double.tryParse(rawAlloc);
+            if (parsed == null || parsed < 0) {
+              setState(() => _error = '请输入有效的非负数字额度');
+              return;
+            }
+            Navigator.of(context).pop(
+              _PoolDialogResult(
+                name: name,
+                baseAllocation: rawAlloc,
+                rolloverStrategy: _rollover,
+                description: _descCtrl.text.trim(),
+              ),
+            );
+          },
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }

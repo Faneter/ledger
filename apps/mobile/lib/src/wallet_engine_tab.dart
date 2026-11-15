@@ -92,282 +92,54 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
   }
 
   Future<void> _showAddRuleDialog() async {
-    final titleCtrl = TextEditingController();
-    final amtCtrl = TextEditingController(text: '20.00');
-    final dayCtrl = TextEditingController(text: '1');
-    var cycle = 'MONTHLY';
-    var currency = 'CNY';
-    var poolId = 'POOL_FIXED';
-
-    final ok = await showDialog<bool>(
+    final res = await showDialog<_AddRuleResult>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('新增周期性扣款规则'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                TextField(
-                  controller: titleCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '规则名称（如 校园宽带 / iCloud）',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: <Widget>[
-                    Expanded(
-                      flex: 2,
-                      child: TextField(
-                        controller: amtCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: '金额',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        key: ValueKey<String>(currency),
-                        initialValue: currency,
-                        decoration: const InputDecoration(
-                          labelText: '币种',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: const <DropdownMenuItem<String>>[
-                          DropdownMenuItem(value: 'CNY', child: Text('CNY')),
-                          DropdownMenuItem(value: 'USD', child: Text('USD')),
-                          DropdownMenuItem(value: 'JPY', child: Text('JPY')),
-                          DropdownMenuItem(value: 'EUR', child: Text('EUR')),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) setLocal(() => currency = v);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        key: ValueKey<String>(cycle),
-                        initialValue: cycle,
-                        decoration: const InputDecoration(
-                          labelText: '周期',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: const <DropdownMenuItem<String>>[
-                          DropdownMenuItem(value: 'MONTHLY', child: Text('每月')),
-                          DropdownMenuItem(value: 'YEARLY', child: Text('每年')),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) setLocal(() => cycle = v);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: dayCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: '触发日 (1-31)',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  key: ValueKey<String>(poolId),
-                  initialValue: poolId,
-                  decoration: const InputDecoration(
-                    labelText: '关联资金池',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: widget.engine.budgetPools
-                      .map(
-                        (p) => DropdownMenuItem<String>(
-                          value: p['id'] as String,
-                          child: Text(p['name'] as String),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) {
-                    if (v != null) setLocal(() => poolId = v);
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (titleCtrl.text.trim().isEmpty) return;
-                if ((double.tryParse(amtCtrl.text.trim()) ?? 0) <= 0) return;
-                Navigator.of(ctx).pop(true);
-              },
-              child: const Text('保存规则'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => _AddRuleDialog(budgetPools: widget.engine.budgetPools),
     );
-
-    if (ok == true && mounted) {
+    if (res == null || !mounted) return;
+    try {
       widget.engine.upsertRecurringRule(
-        title: titleCtrl.text.trim(),
-        cronCycle: cycle,
-        triggerDay: int.tryParse(dayCtrl.text.trim()) ?? 1,
-        currency: currency,
-        amount: amtCtrl.text.trim(),
-        budgetPoolId: poolId,
+        title: res.title,
+        cronCycle: res.cronCycle,
+        triggerDay: res.triggerDay,
+        currency: res.currency,
+        amount: res.amount,
+        budgetPoolId: res.budgetPoolId,
       );
       widget.onEngineChanged();
-      showLedgerSnackBar(context, '已新增周期规则【${titleCtrl.text.trim()}】');
+      showLedgerSnackBar(context, '已新增周期规则【${res.title}】');
+    } catch (e) {
+      showLedgerSnackBar(context, '保存规则失败: $e', isError: true);
     }
-
-    titleCtrl.dispose();
-    amtCtrl.dispose();
-    dayCtrl.dispose();
   }
 
   Future<void> _showAddAssetDialog() async {
-    final nameCtrl = TextEditingController();
-    final costCtrl = TextEditingController();
-    final targetCtrl = TextEditingController(text: '2.00');
-    final dateCtrl = TextEditingController(text: getLocalTodayDateStr());
-
-    final ok = await showDialog<bool>(
+    final res = await showDialog<_AddAssetResult>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新增大件固定资产'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: '资产名称（如 显示器 / Mac mini）',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: costCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: '购入净成本 (CNY)',
-                  prefixText: '¥ ',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: targetCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: '目标日均成本 (CNY/天)',
-                  prefixText: '¥ ',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: dateCtrl,
-                decoration: const InputDecoration(
-                  labelText: '购入日期 (YYYY-MM-DD)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (nameCtrl.text.trim().isEmpty) return;
-              if ((double.tryParse(costCtrl.text.trim()) ?? 0) <= 0) return;
-              Navigator.of(ctx).pop(true);
-            },
-            child: const Text('登记'),
-          ),
-        ],
-      ),
+      builder: (_) => const _AddAssetDialog(),
     );
-
-    if (ok == true && mounted) {
+    if (res == null || !mounted) return;
+    try {
       widget.engine.upsertFixedAsset(
-        assetName: nameCtrl.text.trim(),
-        purchaseDate: dateCtrl.text.trim(),
-        purchaseNetCost: costCtrl.text.trim(),
-        targetDailyCost:
-            targetCtrl.text.trim().isEmpty ? '1.00' : targetCtrl.text.trim(),
+        assetName: res.assetName,
+        purchaseDate: res.purchaseDate,
+        purchaseNetCost: res.purchaseNetCost,
+        targetDailyCost: res.targetDailyCost,
       );
       widget.onEngineChanged();
-      showLedgerSnackBar(context, '已添加资产【${nameCtrl.text.trim()}】');
+      showLedgerSnackBar(context, '已添加资产【${res.assetName}】');
+    } catch (e) {
+      showLedgerSnackBar(context, '添加资产失败: $e', isError: true);
     }
-
-    nameCtrl.dispose();
-    costCtrl.dispose();
-    targetCtrl.dispose();
-    dateCtrl.dispose();
   }
 
   Future<void> _showResaleDialog(Map<String, dynamic> asset) async {
-    final ctrl = TextEditingController();
     final recovery = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('二手出售回血 · ${asset['asset_name']}'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: '二手实际回收人民币金额 (CNY)',
-            prefixText: '¥ ',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final amt = double.tryParse(ctrl.text.trim());
-              if (amt == null || amt < 0) return;
-              Navigator.of(ctx).pop(ctrl.text.trim());
-            },
-            child: const Text('确认卖出'),
-          ),
-        ],
+      builder: (_) => _AssetResaleDialog(
+        assetName: asset['asset_name'] as String,
       ),
     );
-    ctrl.dispose();
-
     if (recovery != null && mounted) {
       widget.engine.recordAssetResale(asset['id'] as int, recovery);
       widget.onEngineChanged();
@@ -443,7 +215,7 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
             )
           else
             SizedBox(
-              height: 164,
+              height: 176,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: filteredVouchers.length,
@@ -457,14 +229,15 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
 
           // 2. Recurring Rules
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              Text(
-                '周期性扣款规则 (${engine.recurringRules.length})',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
+              Expanded(
+                child: Text(
+                  '周期性扣款规则 (${engine.recurringRules.length})',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
               ),
               TextButton.icon(
                 onPressed: _showAddRuleDialog,
@@ -647,14 +420,15 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
 
           // 4. Fixed Assets Daily Cost Tracker
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              Text(
-                '固定资产日均成本 (${assets.length})',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
+              Expanded(
+                child: Text(
+                  '固定资产日均成本 (${assets.length})',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
               ),
               TextButton.icon(
                 onPressed: _showAddAssetDialog,
@@ -667,19 +441,28 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
           for (final asset in assets)
             Card(
               margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                title: Text(
-                  asset['asset_name'] as String,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(
-                  '购于 ${asset['purchase_date']} · 已持有 ${asset['days_held']} 天 · 目标 ¥${asset['target_daily_cost']}/天',
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(
                   children: <Widget>[
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            asset['asset_name'] as String,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '购于 ${asset['purchase_date']} · 已持有 ${asset['days_held']} 天 · 目标 ¥${asset['target_daily_cost']}/天',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: <Widget>[
                         Text(
@@ -693,8 +476,12 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
                       ],
                     ),
                     if (asset['status'] == 'IN_USE') ...<Widget>[
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 2),
                       IconButton(
+                        visualDensity: VisualDensity.compact,
+                        constraints:
+                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                        padding: const EdgeInsets.all(4),
                         tooltip: '二手回血',
                         icon: const Icon(Icons.sell_outlined, size: 19),
                         onPressed: () => _showResaleDialog(asset),
@@ -839,6 +626,427 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
   }
 }
 
+class _AddRuleResult {
+  const _AddRuleResult({
+    required this.title,
+    required this.cronCycle,
+    required this.triggerDay,
+    required this.currency,
+    required this.amount,
+    required this.budgetPoolId,
+  });
+
+  final String title;
+  final String cronCycle;
+  final int triggerDay;
+  final String currency;
+  final String amount;
+  final String budgetPoolId;
+}
+
+class _AddRuleDialog extends StatefulWidget {
+  const _AddRuleDialog({required this.budgetPools});
+
+  final List<Map<String, dynamic>> budgetPools;
+
+  @override
+  State<_AddRuleDialog> createState() => _AddRuleDialogState();
+}
+
+class _AddRuleDialogState extends State<_AddRuleDialog> {
+  final _titleCtrl = TextEditingController();
+  final _amtCtrl = TextEditingController(text: '20.00');
+  final _dayCtrl = TextEditingController(text: '1');
+  String _cycle = 'MONTHLY';
+  String _currency = 'CNY';
+  late String _poolId;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final ids = widget.budgetPools.map((p) => p['id'] as String).toList();
+    _poolId = ids.contains('POOL_FIXED')
+        ? 'POOL_FIXED'
+        : (ids.isNotEmpty ? ids.first : 'POOL_FIXED');
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _amtCtrl.dispose();
+    _dayCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新增周期性扣款规则'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _titleCtrl,
+              decoration: const InputDecoration(
+                labelText: '规则名称（如 校园宽带 / iCloud）',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: _amtCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: '金额',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey<String>(_currency),
+                    initialValue: _currency,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: '币种',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(value: 'CNY', child: Text('CNY')),
+                      DropdownMenuItem(value: 'USD', child: Text('USD')),
+                      DropdownMenuItem(value: 'JPY', child: Text('JPY')),
+                      DropdownMenuItem(value: 'EUR', child: Text('EUR')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _currency = v);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey<String>(_cycle),
+                    initialValue: _cycle,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: '周期',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(value: 'MONTHLY', child: Text('每月')),
+                      DropdownMenuItem(value: 'YEARLY', child: Text('每年')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _cycle = v);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _dayCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '触发日 (1-31)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              key: ValueKey<String>(_poolId),
+              initialValue: _poolId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: '关联资金池',
+                border: OutlineInputBorder(),
+              ),
+              items: widget.budgetPools
+                  .map(
+                    (p) => DropdownMenuItem<String>(
+                      value: p['id'] as String,
+                      child: Text(
+                        p['name'] as String,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => _poolId = v);
+              },
+            ),
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final title = _titleCtrl.text.trim();
+            if (title.isEmpty) {
+              setState(() => _error = '请输入规则名称');
+              return;
+            }
+            if ((double.tryParse(_amtCtrl.text.trim()) ?? 0) <= 0) {
+              setState(() => _error = '请输入大于 0 的有效金额');
+              return;
+            }
+            Navigator.of(context).pop(
+              _AddRuleResult(
+                title: title,
+                cronCycle: _cycle,
+                triggerDay: (int.tryParse(_dayCtrl.text.trim()) ?? 1)
+                    .clamp(1, 31),
+                currency: _currency,
+                amount: _amtCtrl.text.trim(),
+                budgetPoolId: _poolId,
+              ),
+            );
+          },
+          child: const Text('保存规则'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AddAssetResult {
+  const _AddAssetResult({
+    required this.assetName,
+    required this.purchaseDate,
+    required this.purchaseNetCost,
+    required this.targetDailyCost,
+  });
+
+  final String assetName;
+  final String purchaseDate;
+  final String purchaseNetCost;
+  final String targetDailyCost;
+}
+
+class _AddAssetDialog extends StatefulWidget {
+  const _AddAssetDialog();
+
+  @override
+  State<_AddAssetDialog> createState() => _AddAssetDialogState();
+}
+
+class _AddAssetDialogState extends State<_AddAssetDialog> {
+  final _nameCtrl = TextEditingController();
+  final _costCtrl = TextEditingController();
+  final _targetCtrl = TextEditingController(text: '2.00');
+  late final TextEditingController _dateCtrl;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _dateCtrl = TextEditingController(text: getLocalTodayDateStr());
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _costCtrl.dispose();
+    _targetCtrl.dispose();
+    _dateCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新增大件固定资产'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(
+                labelText: '资产名称（如 显示器 / Mac mini）',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _costCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: '购入净成本 (CNY)',
+                prefixText: '¥ ',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _targetCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: '目标日均成本 (CNY/天)',
+                prefixText: '¥ ',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _dateCtrl,
+              decoration: const InputDecoration(
+                labelText: '购入日期 (YYYY-MM-DD)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final name = _nameCtrl.text.trim();
+            if (name.isEmpty) {
+              setState(() => _error = '请输入资产名称');
+              return;
+            }
+            if ((double.tryParse(_costCtrl.text.trim()) ?? 0) <= 0) {
+              setState(() => _error = '请输入大于 0 的购入成本');
+              return;
+            }
+            Navigator.of(context).pop(
+              _AddAssetResult(
+                assetName: name,
+                purchaseDate: _dateCtrl.text.trim(),
+                purchaseNetCost: _costCtrl.text.trim(),
+                targetDailyCost: _targetCtrl.text.trim().isEmpty
+                    ? '1.00'
+                    : _targetCtrl.text.trim(),
+              ),
+            );
+          },
+          child: const Text('登记'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AssetResaleDialog extends StatefulWidget {
+  const _AssetResaleDialog({required this.assetName});
+
+  final String assetName;
+
+  @override
+  State<_AssetResaleDialog> createState() => _AssetResaleDialogState();
+}
+
+class _AssetResaleDialogState extends State<_AssetResaleDialog> {
+  final _ctrl = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('二手出售回血 · ${widget.assetName}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: '二手实际回收人民币金额 (CNY)',
+              prefixText: '¥ ',
+              border: const OutlineInputBorder(),
+              errorText: _error,
+            ),
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final amt = double.tryParse(_ctrl.text.trim());
+            if (amt == null || amt < 0) {
+              setState(() => _error = '请输入有效的非负金额');
+              return;
+            }
+            Navigator.of(context).pop(_ctrl.text.trim());
+          },
+          child: const Text('确认卖出'),
+        ),
+      ],
+    );
+  }
+}
+
 class BuyVoucherDialog extends StatefulWidget {
   const BuyVoucherDialog({super.key});
 
@@ -882,11 +1090,15 @@ class _BuyVoucherDialogState extends State<BuyVoucherDialog> {
             DropdownButtonFormField<String>(
               key: ValueKey<String>(_voucherType),
               initialValue: _voucherType,
+              isExpanded: true,
               decoration: const InputDecoration(labelText: '卡券类型'),
               items: const <DropdownMenuItem<String>>[
                 DropdownMenuItem<String>(
                   value: 'PREPAID_COUPON',
-                  child: Text('有偿购入立减金 (成本核销结转)'),
+                  child: Text(
+                    '有偿购入立减金 (成本核销结转)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 DropdownMenuItem<String>(
                   value: 'FREE_COUPON',

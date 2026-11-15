@@ -36,10 +36,10 @@ describe('Stage 3: Quick-Parse Input DSL Compiler (极速公式与自然语言�
       const jlpt = DEFAULT_PROJECT_TAGS.find((t) => t.id === 'TAG_JLPT_N2');
       expect(jlpt?.name).toBe('JLPT_N2考试专项');
       expect(jlpt?.target_budget).toBe('800.00');
-      expect(jlpt?.linked_pool_id).toBe('POOL_FLEX');
+      expect(jlpt?.tag_type).toBe('PROJECT');
 
       const mcu = DEFAULT_PROJECT_TAGS.find((t) => t.id === 'TAG_MCU_LAB');
-      expect(mcu?.linked_pool_id).toBe('POOL_FLEX');
+      expect(mcu?.tag_type).toBe('SCENE');
     });
   });
 

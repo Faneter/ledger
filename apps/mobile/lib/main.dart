@@ -223,7 +223,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   Future<void> _pullSync() async {
     final engine = _engine;
     if (engine == null) return;
-    final res = engine.syncNow();
+    final res = await engine.syncWithServer();
     _refresh();
     if (!mounted) return;
     if (res['success'] == true) {
@@ -234,7 +234,8 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
     } else {
       showLedgerSnackBar(
         context,
-        (res['message'] as String?) ?? '同步已跳过',
+        (res['message'] as String?) ?? '同步未完成',
+        isError: res['skipped'] != true,
       );
     }
   }
@@ -273,56 +274,13 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
     }.toList()
       ..sort((a, b) => b.compareTo(a));
 
-    final customCtrl = TextEditingController(text: _selectedMonth);
     final chosen = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('切换账单月份'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: months.map((ym) {
-                  return ChoiceChip(
-                    label: Text(ym),
-                    selected: ym == _selectedMonth,
-                    onSelected: (_) => Navigator.of(ctx).pop(ym),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: customCtrl,
-                decoration: const InputDecoration(
-                  labelText: '或输入月份 (YYYY-MM)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final text = customCtrl.text.trim();
-              if (RegExp(r'^\d{4}-\d{2}$').hasMatch(text)) {
-                Navigator.of(ctx).pop(text);
-              }
-            },
-            child: const Text('确定'),
-          ),
-        ],
+      builder: (_) => _MonthPickerDialog(
+        initialMonth: _selectedMonth,
+        months: months,
       ),
     );
-    customCtrl.dispose();
     if (chosen != null && mounted) {
       setState(() {
         _selectedMonth = chosen;
@@ -388,11 +346,11 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 12,
+        titleSpacing: 10,
         title: const Text(
-          'Geek Ledger · Rust FFI',
+          'Geek Ledger',
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         ),
         actions: <Widget>[
           Padding(
@@ -417,12 +375,12 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
                       Text(
                         _selectedMonth,
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(width: 2),
-                      const Icon(Icons.arrow_drop_down, size: 16),
+                      const SizedBox(width: 1),
+                      const Icon(Icons.arrow_drop_down, size: 15),
                     ],
                   ),
                 ),
@@ -436,17 +394,21 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
           if (widget.onToggleTheme != null)
             IconButton(
               visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              padding: const EdgeInsets.all(4),
               tooltip: '切换深浅色主题',
               icon: Icon(
                 isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                size: 20,
+                size: 19,
               ),
               onPressed: widget.onToggleTheme,
             ),
           IconButton(
             visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            padding: const EdgeInsets.all(4),
             tooltip: '重设至 2026-11 默认种子',
-            icon: const Icon(Icons.restart_alt, size: 20),
+            icon: const Icon(Icons.restart_alt, size: 19),
             onPressed: () {
               engine.resetToDefaultSeed();
               _dslController.clear();
@@ -486,6 +448,96 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MonthPickerDialog extends StatefulWidget {
+  const _MonthPickerDialog({
+    required this.initialMonth,
+    required this.months,
+  });
+
+  final String initialMonth;
+  final List<String> months;
+
+  @override
+  State<_MonthPickerDialog> createState() => _MonthPickerDialogState();
+}
+
+class _MonthPickerDialogState extends State<_MonthPickerDialog> {
+  late final TextEditingController _customCtrl;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _customCtrl = TextEditingController(text: widget.initialMonth);
+  }
+
+  @override
+  void dispose() {
+    _customCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('切换账单月份'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: widget.months.map((ym) {
+                return ChoiceChip(
+                  label: Text(ym),
+                  selected: ym == widget.initialMonth,
+                  onSelected: (_) => Navigator.of(context).pop(ym),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _customCtrl,
+              decoration: InputDecoration(
+                labelText: '或输入月份 (YYYY-MM)',
+                border: const OutlineInputBorder(),
+                errorText: _error,
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final text = _customCtrl.text.trim();
+            if (!RegExp(r'^\d{4}-\d{2}$').hasMatch(text)) {
+              setState(() => _error = '请输入 YYYY-MM 格式，如 2026-12');
+              return;
+            }
+            final m = int.tryParse(text.substring(5, 7)) ?? 0;
+            if (m < 1 || m > 12) {
+              setState(() => _error = '月份需在 01-12 之间');
+              return;
+            }
+            Navigator.of(context).pop(text);
+          },
+          child: const Text('确定'),
+        ),
+      ],
     );
   }
 }

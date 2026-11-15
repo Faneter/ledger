@@ -235,7 +235,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     tag_type: TagType;
     start_date: string;
     end_date: string;
-    linked_pool_id: string;
     is_active: boolean;
   }>({
     id: '',
@@ -244,7 +243,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     tag_type: 'PROJECT',
     start_date: '2026-11-01',
     end_date: '2026-12-31',
-    linked_pool_id: '',
     is_active: true,
   });
 
@@ -351,7 +349,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       tag_type: 'PROJECT',
       start_date: `${yearMonth}-01`,
       end_date: `${yearMonth}-30`,
-      linked_pool_id: '',
       is_active: true,
     });
     setWishModalOpen(true);
@@ -366,7 +363,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
       tag_type: tag.tag_type,
       start_date: tag.start_date || '',
       end_date: tag.end_date || '',
-      linked_pool_id: tag.linked_pool_id || 'POOL_FLEX',
       is_active: tag.is_active,
     });
     setWishModalOpen(true);
@@ -385,7 +381,6 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
         tag_type: 'PROJECT',
         start_date: wishForm.start_date || null,
         end_date: wishForm.end_date || null,
-        linked_pool_id: null,
         is_active: wishForm.is_active,
       });
       showToast(

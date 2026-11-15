@@ -120,7 +120,6 @@ export interface ProjectTag {
   name: string;
   tag_type: TagType;
   target_budget: string | null;
-  linked_pool_id: string | null;
   is_active: boolean;
   start_date?: string | null;
   end_date?: string | null;

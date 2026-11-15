@@ -202,12 +202,7 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
       String? tagId;
       if (_targetType == 'PROJECT') {
         tagId = _targetId;
-        final match = widget.engine.projectTags
-            .where((t) => t['id'] == _targetId)
-            .toList();
-        poolId = match.isNotEmpty
-            ? (match.first['linked_pool_id'] as String?) ?? 'POOL_FLEX'
-            : 'POOL_FLEX';
+        poolId = 'POOL_FLEX';
       } else {
         poolId = _targetId;
       }
@@ -531,35 +526,46 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
               children: <Widget>[
                 Row(
                   children: <Widget>[
-                    Text(
-                      '实时拆单沙盒',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: cs.primary,
+                    Expanded(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: <Widget>[
+                          Text(
+                            '实时拆单沙盒',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: cs.primary,
+                                ),
                           ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: cs.secondaryContainer,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              formatAllocationMode(
+                                parsed['allocation_mode'] as String?,
+                              ),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: cs.onSecondaryContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: cs.secondaryContainer,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        formatAllocationMode(
-                          parsed['allocation_mode'] as String?,
-                        ),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: cs.onSecondaryContainer,
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
                     Text(
                       '实付 ¥${parsed['total_net']}',
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(

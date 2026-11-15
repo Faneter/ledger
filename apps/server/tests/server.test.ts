@@ -836,7 +836,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
           id: 'TAG_SERVER_TEST',
           name: '心愿单：测试立项',
           target_budget: '500.00',
-          linked_pool_id: 'POOL_SERVER_TEST',
         },
       });
       expect(tagRes.statusCode).toBe(200);
@@ -908,7 +907,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         name: '心愿单：HHKB 静电容键盘',
         tag_type: 'PROJECT',
         target_budget: '1800.00',
-        linked_pool_id: 'POOL_CUSTOM_EQUIP',
       });
 
       // 4. 购买一张立减金
@@ -998,7 +996,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         (t: any) => t.id === 'TAG_CUSTOM_HHKB'
       );
       expect(customTag).toBeDefined();
-      expect(customTag.linked_pool_id).toBe('POOL_CUSTOM_EQUIP');
+      expect(customTag.target_budget).toBe('1800.00');
 
       const customVoucher = stateRes.body.vouchers.find(
         (v: any) => v.id === voucher.id

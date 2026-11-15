@@ -462,14 +462,6 @@ export class LocalLedgerEngine {
           cleaned = true;
         }
       }
-      if (Array.isArray(target.projectTags)) {
-        for (const tag of target.projectTags) {
-          if (tag.linked_pool_id && poolsToRemove.has(tag.linked_pool_id)) {
-            tag.linked_pool_id = 'POOL_FLEX';
-            cleaned = true;
-          }
-        }
-      }
       if (Array.isArray(target.categories)) {
         for (const cat of target.categories) {
           if (cat.default_pool_id && poolsToRemove.has(cat.default_pool_id)) {
@@ -1515,7 +1507,6 @@ export class LocalLedgerEngine {
       if (tag.target_budget !== undefined) {
         target.target_budget = tag.target_budget ? formatCny(tag.target_budget) : null;
       }
-      if (tag.linked_pool_id !== undefined) target.linked_pool_id = tag.linked_pool_id;
       if (tag.is_active !== undefined) target.is_active = Boolean(tag.is_active);
       if (tag.start_date !== undefined) target.start_date = tag.start_date;
       if (tag.end_date !== undefined) target.end_date = tag.end_date;
@@ -1526,7 +1517,6 @@ export class LocalLedgerEngine {
         name: tag.name,
         tag_type: tag.tag_type ?? 'PROJECT',
         target_budget: tag.target_budget ? formatCny(tag.target_budget) : null,
-        linked_pool_id: tag.linked_pool_id ?? null,
         is_active: tag.is_active ?? true,
         start_date: tag.start_date ?? null,
         end_date: tag.end_date ?? null,

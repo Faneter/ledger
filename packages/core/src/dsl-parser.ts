@@ -154,7 +154,6 @@ export const DEFAULT_PROJECT_TAGS: ProjectTag[] = [
     name: 'JLPT_N2考试专项',
     tag_type: 'PROJECT',
     target_budget: '800.00',
-    linked_pool_id: 'POOL_FLEX',
     is_active: true,
   },
   {
@@ -162,7 +161,6 @@ export const DEFAULT_PROJECT_TAGS: ProjectTag[] = [
     name: '单片机硬件实验',
     tag_type: 'SCENE',
     target_budget: null,
-    linked_pool_id: 'POOL_FLEX',
     is_active: true,
   },
   {
@@ -170,7 +168,6 @@ export const DEFAULT_PROJECT_TAGS: ProjectTag[] = [
     name: '靠存货/刷饭卡度日',
     tag_type: 'STOCK_CONSUME',
     target_budget: null,
-    linked_pool_id: 'POOL_DAILY',
     is_active: true,
   },
 ];
