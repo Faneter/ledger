@@ -2,35 +2,83 @@
 import 'package:flutter/material.dart';
 
 import 'src/ledger_engine.dart';
-import 'src/rust_bridge.dart';
+import 'src/overview_tab.dart';
+import 'src/quick_record_sheet.dart';
+import 'src/sync_dialog.dart';
+import 'src/timeline_tab.dart';
+import 'src/ui_helpers.dart';
+import 'src/wallet_engine_tab.dart';
 
 void main() {
   runApp(const GeekLedgerApp());
 }
 
-class GeekLedgerApp extends StatelessWidget {
+class GeekLedgerApp extends StatefulWidget {
   const GeekLedgerApp({super.key, this.engine});
 
   final FlutterLedgerEngine? engine;
 
   @override
+  State<GeekLedgerApp> createState() => _GeekLedgerAppState();
+}
+
+class _GeekLedgerAppState extends State<GeekLedgerApp> {
+  ThemeMode _themeMode = ThemeMode.light;
+
+  ThemeData _buildTheme(Brightness brightness) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF0F766E),
+      brightness: brightness,
+    );
+    return ThemeData(
+      colorScheme: scheme,
+      useMaterial3: true,
+      cardTheme: CardThemeData(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.45),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Geek Student Ledger',
+      title: 'Geek Ledger · Rust FFI',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF0F766E),
-        useMaterial3: true,
+      themeMode: _themeMode,
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      home: LedgerHomeScreen(
+        engine: widget.engine,
+        themeMode: _themeMode,
+        onToggleTheme: () {
+          setState(() {
+            _themeMode = _themeMode == ThemeMode.dark
+                ? ThemeMode.light
+                : ThemeMode.dark;
+          });
+        },
       ),
-      home: LedgerHomeScreen(engine: engine),
     );
   }
 }
 
 class LedgerHomeScreen extends StatefulWidget {
-  const LedgerHomeScreen({super.key, this.engine});
+  const LedgerHomeScreen({
+    super.key,
+    this.engine,
+    this.themeMode = ThemeMode.light,
+    this.onToggleTheme,
+  });
 
   final FlutterLedgerEngine? engine;
+  final ThemeMode themeMode;
+  final VoidCallback? onToggleTheme;
 
   @override
   State<LedgerHomeScreen> createState() => _LedgerHomeScreenState();
@@ -49,10 +97,23 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   void initState() {
     super.initState();
     try {
-      _engine = widget.engine ?? FlutterLedgerEngine();
+      final engine = widget.engine ?? FlutterLedgerEngine();
+      _engine = engine;
+      _selectedMonth = _resolveInitialMonth(engine);
     } catch (e) {
       _initError = e.toString();
     }
+  }
+
+  static String _resolveInitialMonth(FlutterLedgerEngine engine) {
+    final todayYm = getLocalTodayDateStr().substring(0, 7);
+    if (engine.monthlyBudgets.any((b) => b['year_month'] == todayYm)) {
+      return todayYm;
+    }
+    if (engine.monthlyBudgets.isNotEmpty) {
+      return (engine.monthlyBudgets.last['year_month'] as String?) ?? todayYm;
+    }
+    return todayYm;
   }
 
   @override
@@ -61,19 +122,12 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
     super.dispose();
   }
 
-  void _showMessage(String msg, {bool isError = false}) {
+  void _refresh() {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
-        ),
-      );
+    setState(() {});
   }
 
-  void _submitDsl() {
+  void _submitInlineDsl() {
     final engine = _engine;
     final raw = _dslController.text.trim();
     if (engine == null || raw.isEmpty) return;
@@ -89,69 +143,238 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
       setState(() {
         _selectedVoucherId = null;
       });
-      _showMessage('已记账: ${h['merchant_or_note']} ¥${h['total_net']}');
+      showLedgerSnackBar(
+        context,
+        '已记账: ${h['merchant_or_note']} ¥${h['total_net']}',
+      );
     } catch (e) {
-      _showMessage('解析失败: $e', isError: true);
+      showLedgerSnackBar(context, '解析失败: $e', isError: true);
     }
+  }
+
+  Future<void> _openQuickRecordSheet({
+    String initialMode = 'dsl',
+  }) async {
+    final engine = _engine;
+    if (engine == null) return;
+    final prefill = _dslController.text.trim();
+    final tx = await showQuickRecordModal(
+      context,
+      engine,
+      initialMode: initialMode,
+      initialDsl: prefill.isNotEmpty ? prefill : null,
+    );
+    if (tx == null || !mounted) return;
+    final h = tx['header'] as Map<String, dynamic>;
+    _selectedMonth = (h['tx_date'] as String).substring(0, 7);
+    if (prefill.isNotEmpty) {
+      _dslController.clear();
+    }
+    setState(() {
+      _selectedVoucherId = null;
+    });
+    showLedgerSnackBar(
+      context,
+      '已记账: ${h['merchant_or_note']} ¥${h['total_net']}',
+    );
   }
 
   Future<void> _showSettleFxDialog(Map<String, dynamic> tx) async {
     final engine = _engine;
     if (engine == null) return;
     final h = tx['header'] as Map<String, dynamic>;
-    final settledStr = await showDialog<String>(
+    final result = await showDialog<Map<String, String>>(
       context: context,
-      builder: (ctx) => _SettleFxDialog(
-        merchantOrNote: h['merchant_or_note'] as String,
-        originalCurrency: h['original_currency'] as String,
+      builder: (ctx) => SettleFxDialog(
+        merchantOrNote: (h['merchant_or_note'] as String?) ?? '',
+        originalCurrency: (h['original_currency'] as String?) ?? 'USD',
         originalAmount: (h['original_amount'] as String?) ?? '',
+        holdAmountCny: (h['total_gross'] as String?) ?? '0.00',
         initialSettledAmount: (h['total_gross'] as String?) ?? '',
+        initialCashbackRate: (h['fx_cashback_rate'] as String?) ??
+            (engine.settings['fx_default_cashback_rate'] ?? '0.0100'),
       ),
     );
-    if (settledStr == null || settledStr.isEmpty) return;
+    if (result == null || !mounted) return;
+    final settledAmt = result['settledAmountCny'];
+    if (settledAmt == null || settledAmt.isEmpty) return;
+
     try {
-      engine.settleMastercardTransaction(h['id'] as String, settledStr);
-      if (mounted) setState(() {});
-      _showMessage('外币清算完成');
+      final updated = engine.settleMastercardTransaction(
+        h['id'] as String,
+        settledAmt,
+        cashbackRate: result['cashbackRate'],
+      );
+      final uh = updated['header'] as Map<String, dynamic>;
+      _refresh();
+      if (mounted) {
+        showLedgerSnackBar(
+          context,
+          '外币清算完成 · 实付净额 ¥${uh['total_net']}',
+        );
+      }
     } catch (e) {
-      _showMessage('清算失败: $e', isError: true);
+      if (mounted) {
+        showLedgerSnackBar(context, '清算失败: $e', isError: true);
+      }
     }
   }
 
-  Future<void> _showBuyVoucherDialog() async {
+  Future<void> _pullSync() async {
     final engine = _engine;
     if (engine == null) return;
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (ctx) => const _BuyVoucherDialog(),
-    );
+    final res = engine.syncNow();
+    _refresh();
+    if (!mounted) return;
+    if (res['success'] == true) {
+      showLedgerSnackBar(
+        context,
+        '云端 HLC 同步完成（推送 ${res['pushedCount']} 条 · 累计 ${res['totalOplogCount']} 条）',
+      );
+    } else {
+      showLedgerSnackBar(
+        context,
+        (res['message'] as String?) ?? '同步已跳过',
+      );
+    }
+  }
 
-    if (result != null) {
-      try {
-        engine.upsertVoucher(
-          voucherType: result['voucherType']!,
-          faceValue: result['faceValue']!,
-          acquireCost: result['acquireCost']!,
-          minSpend: result['minSpend']!,
+  Future<void> _openSyncDialog() async {
+    final engine = _engine;
+    if (engine == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => SyncAndConflictDialog(
+        engine: engine,
+        onEngineChanged: _refresh,
+      ),
+    );
+    if (mounted) {
+      _selectedMonth = engine.monthlyBudgets.any(
+        (b) => b['year_month'] == _selectedMonth,
+      )
+          ? _selectedMonth
+          : _resolveInitialMonth(engine);
+      _refresh();
+    }
+  }
+
+  Future<void> _openMonthPickerDialog() async {
+    final engine = _engine;
+    if (engine == null) return;
+    final months = <String>{
+      _selectedMonth,
+      getLocalTodayDateStr().substring(0, 7),
+      for (final b in engine.monthlyBudgets)
+        if (b['year_month'] is String) b['year_month'] as String,
+      for (final tx in engine.transactions)
+        ((tx['header'] as Map<String, dynamic>)['tx_date'] as String)
+            .substring(0, 7),
+    }.toList()
+      ..sort((a, b) => b.compareTo(a));
+
+    final customCtrl = TextEditingController(text: _selectedMonth);
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('切换账单月份'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: months.map((ym) {
+                  return ChoiceChip(
+                    label: Text(ym),
+                    selected: ym == _selectedMonth,
+                    onSelected: (_) => Navigator.of(ctx).pop(ym),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: customCtrl,
+                decoration: const InputDecoration(
+                  labelText: '或输入月份 (YYYY-MM)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final text = customCtrl.text.trim();
+              if (RegExp(r'^\d{4}-\d{2}$').hasMatch(text)) {
+                Navigator.of(ctx).pop(text);
+              }
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    customCtrl.dispose();
+    if (chosen != null && mounted) {
+      setState(() {
+        _selectedMonth = chosen;
+      });
+    }
+  }
+
+  Widget _buildActiveTab(FlutterLedgerEngine engine) {
+    switch (_tabIndex) {
+      case 0:
+        return OverviewTab(
+          engine: engine,
+          selectedMonth: _selectedMonth,
+          dslController: _dslController,
+          selectedVoucherId: _selectedVoucherId,
+          onVoucherChanged: (id) => setState(() => _selectedVoucherId = id),
+          onSubmitInlineDsl: _submitInlineDsl,
+          onOpenQuickSheet: () => _openQuickRecordSheet(),
+          onSettleFx: _showSettleFxDialog,
+          onPullSync: _pullSync,
+          onEngineChanged: _refresh,
         );
-        if (mounted) setState(() {});
-        _showMessage('卡券已入库');
-      } catch (e) {
-        _showMessage('入库失败: $e', isError: true);
-      }
+      case 1:
+        return TimelineAndProjectsTab(
+          engine: engine,
+          onSettleFx: _showSettleFxDialog,
+          onPullSync: _pullSync,
+          onEngineChanged: _refresh,
+        );
+      case 2:
+      default:
+        return WalletAndEngineTab(
+          engine: engine,
+          selectedMonth: _selectedMonth,
+          onMonthChanged: (ym) => setState(() => _selectedMonth = ym),
+          onOpenSyncDialog: _openSyncDialog,
+          onPullSync: _pullSync,
+          onEngineChanged: _refresh,
+        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_initError != null || _engine == null) {
+    if (_initError != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Geek Student Ledger')),
+        appBar: AppBar(title: const Text('Geek Ledger · 初始化失败')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
-            child: Text(
-              'Rust Core FFI 初始化失败:\n${_initError ?? "Unknown error"}',
+            child: SelectableText(
+              'Rust Core FFI 初始化失败：\n$_initError',
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
@@ -160,462 +383,109 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
     }
 
     final engine = _engine!;
-    final dashboard = engine.getMonthlyBudgetDashboard(_selectedMonth);
-    final dailySummary = engine.getDailyBudgetSummary(_selectedMonth);
-    final pools = (dashboard['pools'] as List<dynamic>)
-        .cast<Map<String, dynamic>>();
-    final recentTxs = engine.getRecentTransactions(50);
-    final availableVouchers = engine.vouchers
-        .where((v) => v['status'] == 'AVAILABLE')
-        .toList();
-    final assets = engine.getFixedAssetsWithCost();
-
-    final body = switch (_tabIndex) {
-      0 => _buildOverviewTab(
-          engine,
-          dashboard,
-          dailySummary,
-          pools,
-          availableVouchers,
-        ),
-      1 => _buildTransactionsTab(engine, recentTxs),
-      2 => _buildVouchersTab(engine),
-      _ => _buildAssetsAndSyncTab(engine, assets),
-    };
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Geek Ledger · Rust FFI'),
+        titleSpacing: 12,
+        title: const Text(
+          'Geek Ledger · Rust FFI',
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
         actions: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: _openMonthPickerDialog,
+              child: Tooltip(
+                message: '切换账单月份',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        _selectedMonth,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      const Icon(Icons.arrow_drop_down, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SyncStatusPill(
+            engine: engine,
+            onTap: _openSyncDialog,
+          ),
+          if (widget.onToggleTheme != null)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: '切换深浅色主题',
+              icon: Icon(
+                isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                size: 20,
+              ),
+              onPressed: widget.onToggleTheme,
+            ),
           IconButton(
+            visualDensity: VisualDensity.compact,
             tooltip: '重设至 2026-11 默认种子',
-            icon: const Icon(Icons.restart_alt),
+            icon: const Icon(Icons.restart_alt, size: 20),
             onPressed: () {
               engine.resetToDefaultSeed();
+              _dslController.clear();
               setState(() {
-                _selectedMonth = '2026-11';
                 _selectedVoucherId = null;
+                _selectedMonth = _resolveInitialMonth(engine);
               });
-              _showMessage('已恢复 2026-11 种子状态');
+              showLedgerSnackBar(context, '已重设至 2026-11 默认种子');
             },
           ),
         ],
       ),
-      body: body,
-      floatingActionButton: _tabIndex == 2
-          ? FloatingActionButton.extended(
-              onPressed: _showBuyVoucherDialog,
-              icon: const Icon(Icons.add),
-              label: const Text('买券/添券'),
-            )
-          : null,
+      body: _buildActiveTab(engine),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openQuickRecordSheet(),
+        icon: const Icon(Icons.add),
+        label: const Text('记一笔'),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
         onDestinationSelected: (idx) => setState(() => _tabIndex = idx),
         destinations: const <NavigationDestination>[
-          NavigationDestination(icon: Icon(Icons.dashboard_outlined), label: '预算看板'),
-          NavigationDestination(icon: Icon(Icons.receipt_long_outlined), label: '流水'),
-          NavigationDestination(icon: Icon(Icons.confirmation_number_outlined), label: '卡包'),
-          NavigationDestination(icon: Icon(Icons.devices_other_outlined), label: '资产与同步'),
+          NavigationDestination(
+            icon: Icon(Icons.today_outlined),
+            selectedIcon: Icon(Icons.today),
+            label: '今日看板',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            selectedIcon: Icon(Icons.receipt_long),
+            label: '流水与专项',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.account_balance_wallet_outlined),
+            selectedIcon: Icon(Icons.account_balance_wallet),
+            label: '卡包与引擎',
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _buildOverviewTab(
-    FlutterLedgerEngine engine,
-    Map<String, dynamic> dashboard,
-    Map<String, dynamic> dailySummary,
-    List<Map<String, dynamic>> pools,
-    List<Map<String, dynamic>> availableVouchers,
-  ) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: <Widget>[
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                const Text(
-                  '极速记账 DSL（Rust 引擎解析）',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _dslController,
-                  decoration: InputDecoration(
-                    hintText: '例: 咸蛋黄拌面 16.8-0.15 #饮食 或 Porkbun \$4.35 冻结31.95',
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.send),
-                      onPressed: _submitDsl,
-                    ),
-                  ),
-                  onSubmitted: (_) => _submitDsl(),
-                ),
-                if (availableVouchers.isNotEmpty) ...<Widget>[
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<int?>(
-                    key: ValueKey<int?>(_selectedVoucherId),
-                    initialValue: _selectedVoucherId,
-                    decoration: const InputDecoration(
-                      labelText: '叠加卡券核销（可选）',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: <DropdownMenuItem<int?>>[
-                      const DropdownMenuItem<int?>(
-                        value: null,
-                        child: Text('不使用卡券'),
-                      ),
-                      ...availableVouchers.map(
-                        (v) => DropdownMenuItem<int?>(
-                          value: v['id'] as int,
-                          child: Text(
-                            '${v['title']} (成本 ¥${v['acquire_cost']} / 满 ¥${v['min_spend']})',
-                          ),
-                        ),
-                      ),
-                    ],
-                    onChanged: (val) => setState(() => _selectedVoucherId = val),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          color: Theme.of(context).colorScheme.primaryContainer,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  dailySummary['poolName'] as String,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '今日可用: ¥${dailySummary['dailyAvailableAmount']} / 天',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-                const SizedBox(height: 4),
-                Text('公式: ${dailySummary['formula']} · 累计省钱 ¥${dailySummary['totalSavedWool']}'),
-                const SizedBox(height: 6),
-                Text(
-                  '$_selectedMonth 总预算 ¥${dashboard['totalMonthlyBudget']} · 已支净额 ¥${dashboard['totalMonthlySpent']}',
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        for (final pool in pools)
-          Card(
-            child: ListTile(
-              title: Text(pool['pool_name'] as String),
-              subtitle: Text(
-                '可用 ¥${pool['total_available_budget']} · 已用 ¥${pool['spent_net']} · 优惠 ¥${pool['total_saved_discount']}',
-              ),
-              trailing: Text(
-                '¥${pool['remaining_budget']}',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildTransactionsTab(
-    FlutterLedgerEngine engine,
-    List<Map<String, dynamic>> txs,
-  ) {
-    if (txs.isEmpty) {
-      return const Center(child: Text('暂无交易流水，去预算看板记一笔吧'));
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: txs.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (ctx, i) {
-        final tx = txs[i];
-        final h = tx['header'] as Map<String, dynamic>;
-        final isPendingFx = h['settlement_status'] == 'PENDING_HOLD';
-        return Card(
-          child: ListTile(
-            title: Text(h['merchant_or_note'] as String),
-            subtitle: Text(
-              '${h['tx_date']} · ${h['tx_type']} · 原价 ¥${h['total_gross']}'
-              '${isPendingFx ? ' · 待清算(冻结¥${h['hold_amount_cny']})' : ''}',
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  '¥${h['total_net']}',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                if (isPendingFx)
-                  IconButton(
-                    tooltip: '外币清算',
-                    icon: const Icon(Icons.currency_exchange),
-                    onPressed: () => _showSettleFxDialog(tx),
-                  ),
-                IconButton(
-                  tooltip: '删除流水',
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () {
-                    engine.deleteTransaction(h['id'] as String);
-                    setState(() {});
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildVouchersTab(FlutterLedgerEngine engine) {
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
-      itemCount: engine.vouchers.length,
-      itemBuilder: (ctx, i) {
-        final v = engine.vouchers[i];
-        return Card(
-          child: ListTile(
-            title: Text(v['title'] as String),
-            subtitle: Text(
-              '${v['voucher_type']} · 面额 ¥${v['face_value']} · 成本 ¥${v['acquire_cost']} · 状态 ${v['status']}',
-            ),
-            trailing: IconButton(
-              icon: const Icon(Icons.delete_outline),
-              onPressed: () {
-                engine.deleteVoucher(v['id'] as int);
-                setState(() {});
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildAssetsAndSyncTab(
-    FlutterLedgerEngine engine,
-    List<Map<String, dynamic>> assets,
-  ) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: <Widget>[
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.memory),
-            title: const Text('Rust FFI Core Engine 状态正常'),
-            subtitle: Text(
-              'HLC 节点: ${engine.hlc.nodeId} · 本地 OpLog 条数: ${engine.syncOplog.length}',
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        for (final asset in assets)
-          Card(
-            child: ListTile(
-              title: Text(asset['asset_name'] as String),
-              subtitle: Text(
-                '购于 ${asset['purchase_date']} · 已持有 ${asset['days_held']} 天 · 目标 ¥${asset['target_daily_cost']}/天',
-              ),
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: <Widget>[
-                  Text(
-                    '¥${asset['current_daily_cost']}/天',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  if (asset['status'] == 'IN_USE')
-                    Text(
-                      '${RustCoreBridge.instance().formatCny(asset['net_cost'] as Object)} 元净成本',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _SettleFxDialog extends StatefulWidget {
-  const _SettleFxDialog({
-    required this.merchantOrNote,
-    required this.originalCurrency,
-    required this.originalAmount,
-    required this.initialSettledAmount,
-  });
-
-  final String merchantOrNote;
-  final String originalCurrency;
-  final String originalAmount;
-  final String initialSettledAmount;
-
-  @override
-  State<_SettleFxDialog> createState() => _SettleFxDialogState();
-}
-
-class _SettleFxDialogState extends State<_SettleFxDialog> {
-  late final TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialSettledAmount);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('万事达外币预授权清算'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              '${widget.merchantOrNote} (${widget.originalCurrency} ${widget.originalAmount})',
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _controller,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: '银行实际入账人民币金额 (CNY)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: const Text('确认入账'),
-        ),
-      ],
-    );
-  }
-}
-
-class _BuyVoucherDialog extends StatefulWidget {
-  const _BuyVoucherDialog();
-
-  @override
-  State<_BuyVoucherDialog> createState() => _BuyVoucherDialogState();
-}
-
-class _BuyVoucherDialogState extends State<_BuyVoucherDialog> {
-  late final TextEditingController _faceCtrl;
-  late final TextEditingController _costCtrl;
-  late final TextEditingController _minCtrl;
-  String _voucherType = 'PREPAID_COUPON';
-
-  @override
-  void initState() {
-    super.initState();
-    _faceCtrl = TextEditingController(text: '15.00');
-    _costCtrl = TextEditingController(text: '8.90');
-    _minCtrl = TextEditingController(text: '20.00');
-  }
-
-  @override
-  void dispose() {
-    _faceCtrl.dispose();
-    _costCtrl.dispose();
-    _minCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('购买 / 新增卡券'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            DropdownButtonFormField<String>(
-              key: ValueKey<String>(_voucherType),
-              initialValue: _voucherType,
-              decoration: const InputDecoration(labelText: '卡券类型'),
-              items: const <DropdownMenuItem<String>>[
-                DropdownMenuItem<String>(
-                  value: 'PREPAID_COUPON',
-                  child: Text('有偿购入立减金 (成本核销结转)'),
-                ),
-                DropdownMenuItem<String>(
-                  value: 'FREE_COUPON',
-                  child: Text('免费领券'),
-                ),
-              ],
-              onChanged: (v) {
-                if (v != null) {
-                  setState(() => _voucherType = v);
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _faceCtrl,
-              decoration: const InputDecoration(labelText: '面额 (CNY)'),
-            ),
-            TextField(
-              controller: _costCtrl,
-              decoration: const InputDecoration(labelText: '购券成本 (CNY)'),
-            ),
-            TextField(
-              controller: _minCtrl,
-              decoration: const InputDecoration(labelText: '使用门槛 (CNY)'),
-            ),
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(<String, String>{
-            'voucherType': _voucherType,
-            'faceValue': _faceCtrl.text.trim(),
-            'acquireCost': _costCtrl.text.trim(),
-            'minSpend': _minCtrl.text.trim(),
-          }),
-          child: const Text('入库'),
-        ),
-      ],
     );
   }
 }

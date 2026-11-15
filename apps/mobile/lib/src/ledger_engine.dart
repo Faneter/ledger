@@ -134,11 +134,24 @@ class FlutterLedgerEngine {
   Map<String, String> settings = <String, String>{};
   List<Map<String, dynamic>> syncOplog = <Map<String, dynamic>>[];
 
+  bool isOfflineMode = false;
+  String? lastSyncAt;
+  int syncedOplogCount = 0;
+  List<Map<String, dynamic>> conflicts = <Map<String, dynamic>>[];
+  Set<int> dismissedRecurringRuleIds = <int>{};
+
   int _txSeq = 0;
   int _itemSeq = 0;
   int _voucherSeq = 2;
   int _assetSeq = 2;
   int _monthlyBudgetSeq = 4;
+  int _recurringSeq = 2;
+  int _conflictSeq = 0;
+
+  int get pendingSyncCount => math.max(0, syncOplog.length - syncedOplogCount);
+
+  List<Map<String, dynamic>> get pendingConflicts =>
+      conflicts.where((c) => c['status'] == 'PENDING').toList();
 
   static const List<Map<String, dynamic>> _seedBudgetPools =
       <Map<String, dynamic>>[
@@ -479,6 +492,11 @@ class FlutterLedgerEngine {
     recurringRules = _cloneListOfMaps(_seedRecurringRules);
     transactions = <Map<String, dynamic>>[];
     syncOplog = <Map<String, dynamic>>[];
+    conflicts = <Map<String, dynamic>>[];
+    dismissedRecurringRuleIds = <int>{};
+    isOfflineMode = false;
+    lastSyncAt = null;
+    syncedOplogCount = 0;
     settings = <String, String>{
       'fx_default_cashback_rate': '0.0100',
       'fx_default_hold_ratio': '1.020',
@@ -488,6 +506,43 @@ class FlutterLedgerEngine {
     _voucherSeq = 2;
     _assetSeq = 2;
     _monthlyBudgetSeq = 4;
+    _recurringSeq = 2;
+    _conflictSeq = 0;
+  }
+
+  /// Resets engine state to a completely clean empty personal ledger (0 transactions,
+  /// 0 vouchers, 0 initial monthly budget amounts, standard 4 pools & categories kept).
+  void resetToCleanState() {
+    budgetPools = _cloneListOfMaps(_seedBudgetPools);
+    monthlyBudgets = _seedMonthlyBudgets202611
+        .map((row) => <String, dynamic>{
+              ..._cloneMap(row),
+              'base_allocation': '0.00',
+              'rollover_from_prev': '0.00',
+            })
+        .toList();
+    categories = _cloneListOfMaps(_seedCategories);
+    projectTags = <Map<String, dynamic>>[];
+    vouchers = <Map<String, dynamic>>[];
+    fixedAssets = <Map<String, dynamic>>[];
+    recurringRules = <Map<String, dynamic>>[];
+    transactions = <Map<String, dynamic>>[];
+    syncOplog = <Map<String, dynamic>>[];
+    conflicts = <Map<String, dynamic>>[];
+    dismissedRecurringRuleIds = <int>{};
+    lastSyncAt = null;
+    syncedOplogCount = 0;
+    settings = <String, String>{
+      'fx_default_cashback_rate': '0.0100',
+      'fx_default_hold_ratio': '1.020',
+    };
+    _txSeq = 0;
+    _itemSeq = 0;
+    _voucherSeq = 0;
+    _assetSeq = 0;
+    _monthlyBudgetSeq = 4;
+    _recurringSeq = 0;
+    _conflictSeq = 0;
   }
 
   String _nextTxId() {
@@ -576,10 +631,12 @@ class FlutterLedgerEngine {
   // Write Operation 1 & 2: DSL & Manual Expense / Income Recording
   // --------------------------------------------------------------------------
 
-  Map<String, dynamic> recordFromDsl(
+  Map<String, dynamic> _compileDsl(
     String rawText, {
-    String? txDate,
     int? appliedVoucherId,
+    int? primaryItemOverrideIndex,
+    Map<int, Map<String, String?>>? itemTargetOverrides,
+    bool strictVoucherValidation = true,
   }) {
     final parsed = _bridge.parseQuickInputDsl(
       rawText,
@@ -589,9 +646,9 @@ class FlutterLedgerEngine {
       fxConfig: _getFxConfig(),
     );
 
-    final effectiveDate =
-        (txDate != null && txDate.isNotEmpty) ? txDate : getLocalTodayDateStr();
     final txType = parsed['tx_type'] as String;
+    var allocationMode =
+        (parsed['allocation_mode'] as String?) ?? 'SINGLE';
     var totalGross = parsed['total_gross'] as String;
     var paymentDiscount = parsed['payment_discount'] as String;
     var platformDiscount = parsed['platform_discount'] as String;
@@ -600,73 +657,251 @@ class FlutterLedgerEngine {
         .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
         .toList();
 
+    if (itemTargetOverrides != null && itemTargetOverrides.isNotEmpty) {
+      for (var i = 0; i < parsedItems.length; i++) {
+        final ov = itemTargetOverrides[i];
+        if (ov == null) continue;
+        if (ov.containsKey('budget_pool_id') && ov['budget_pool_id'] != null) {
+          parsedItems[i]['budget_pool_id'] = ov['budget_pool_id'];
+        }
+        if (ov.containsKey('project_tag_id')) {
+          final tagId = ov['project_tag_id'];
+          parsedItems[i]['project_tag_id'] = tagId;
+          if (tagId != null && !ov.containsKey('budget_pool_id')) {
+            final tagMatch = projectTags.where((t) => t['id'] == tagId).toList();
+            if (tagMatch.isNotEmpty && tagMatch.first['linked_pool_id'] != null) {
+              parsedItems[i]['budget_pool_id'] = tagMatch.first['linked_pool_id'];
+            }
+          }
+        }
+      }
+    }
+
+    var allocationOverridden = false;
+    if (primaryItemOverrideIndex != null && parsedItems.isNotEmpty) {
+      allocationOverridden = true;
+      if (primaryItemOverrideIndex < 0) {
+        for (final it in parsedItems) {
+          it['is_primary_item'] = false;
+        }
+        allocationMode = parsedItems.length > 1 ? 'PROPORTIONAL' : 'SINGLE';
+      } else if (primaryItemOverrideIndex < parsedItems.length) {
+        for (var i = 0; i < parsedItems.length; i++) {
+          parsedItems[i]['is_primary_item'] = (i == primaryItemOverrideIndex);
+        }
+        allocationMode = parsedItems.length > 1 ? 'PRIMARY_ITEM' : 'SINGLE';
+      }
+    }
+
+    final baseGrossCents = _FixedMath.toCents(_bridge, totalGross);
+    final baseNetCents = _FixedMath.toCents(_bridge, totalNet);
+    final eligibleVouchers = <Map<String, dynamic>>[];
+    if (txType == 'EXPENSE') {
+      for (final v in vouchers) {
+        if (v['status'] != 'AVAILABLE') continue;
+        final minSpendCents =
+            _FixedMath.toCents(_bridge, v['min_spend'] as Object);
+        if (baseGrossCents >= minSpendCents) {
+          final faceCents =
+              _FixedMath.toCents(_bridge, v['face_value'] as Object);
+          final costCents =
+              _FixedMath.toCents(_bridge, v['acquire_cost'] as Object);
+          final usableFace =
+              baseNetCents < faceCents ? baseNetCents : faceCents;
+          final netSavings = usableFace - costCents;
+          final vc = _cloneMap(v);
+          vc['net_savings'] = _FixedMath.fromCents(
+            netSavings > BigInt.zero ? netSavings : BigInt.zero,
+          );
+          eligibleVouchers.add(vc);
+        }
+      }
+    }
+
     Map<String, dynamic>? voucherToUse;
+    String voucherSavings = '0.00';
+    String? voucherError;
+
     if (appliedVoucherId != null) {
       final idx = vouchers.indexWhere((v) => v['id'] == appliedVoucherId);
       if (idx == -1) {
-        throw ArgumentError('优惠券 "$appliedVoucherId" 不存在');
-      }
-      final v = vouchers[idx];
-      if (v['status'] != 'AVAILABLE') {
-        throw StateError('优惠券「${v['title']}」已被使用或已失效');
-      }
-      if (txType == 'INCOME') {
-        throw StateError('收入交易不可使用优惠券');
-      }
-      final grossCents = _FixedMath.toCents(_bridge, totalGross);
-      final minSpendCents = _FixedMath.toCents(_bridge, v['min_spend'] as Object);
-      if (grossCents < minSpendCents) {
-        throw StateError(
-          '未达到优惠券「${v['title']}」的最低使用门槛（需满 ¥${v['min_spend']}，当前金额 ¥$totalGross）',
-        );
-      }
-
-      if (txType == 'EXPENSE') {
-        final netCents = _FixedMath.toCents(_bridge, totalNet);
-        final faceCents = _FixedMath.toCents(_bridge, v['face_value'] as Object);
-        final cashPaidCents =
-            netCents > faceCents ? netCents - faceCents : BigInt.zero;
-        final cashPaid = _FixedMath.fromCents(cashPaidCents);
-
-        final splitInputs = parsedItems
-            .map(
-              (it) => <String, dynamic>{
-                'name': it['item_name'],
-                'gross': it['item_gross'],
-                'category_id': it['category_id'],
-                'budget_pool_id': it['budget_pool_id'],
-                'project_tag_id': it['project_tag_id'],
-                'is_primary': it['is_primary_item'],
-              },
-            )
-            .toList();
-
-        final alloc = _bridge.computeOrderAllocation(
-          items: splitInputs,
-          cashActuallyPaid: cashPaid,
-          mode: (parsed['allocation_mode'] as String?) ?? 'SINGLE',
-          voucher: <String, dynamic>{
-            'face_value': v['face_value'],
-            'acquire_cost': v['acquire_cost'],
-            'voucher_type': v['voucher_type'],
-          },
-        );
-
-        totalGross = alloc['total_gross'] as String;
-        paymentDiscount = alloc['total_discount'] as String;
-        platformDiscount = '0.00';
-        totalNet = alloc['total_net'] as String;
-
-        final allocItems = alloc['items'] as List<dynamic>;
-        for (var i = 0; i < parsedItems.length; i++) {
-          final ai = allocItems[i] as Map<String, dynamic>;
-          parsedItems[i]['item_gross'] = ai['gross'];
-          parsedItems[i]['allocated_discount'] = ai['allocated_discount'];
-          parsedItems[i]['item_net'] = ai['net'];
+        if (strictVoucherValidation) {
+          throw ArgumentError('优惠券 "$appliedVoucherId" 不存在');
         }
-        voucherToUse = v;
+        voucherError = '优惠券 "$appliedVoucherId" 不存在';
+      } else {
+        final v = vouchers[idx];
+        final grossCents = _FixedMath.toCents(_bridge, totalGross);
+        final minSpendCents =
+            _FixedMath.toCents(_bridge, v['min_spend'] as Object);
+        if (v['status'] != 'AVAILABLE') {
+          final msg = '优惠券「${v['title']}」已被使用或已失效';
+          if (strictVoucherValidation) throw StateError(msg);
+          voucherError = msg;
+        } else if (txType == 'INCOME') {
+          const msg = '收入交易不可使用优惠券';
+          if (strictVoucherValidation) throw StateError(msg);
+          voucherError = msg;
+        } else if (grossCents < minSpendCents) {
+          final msg =
+              '未达到优惠券「${v['title']}」的最低使用门槛（需满 ¥${v['min_spend']}，当前金额 ¥$totalGross）';
+          if (strictVoucherValidation) throw StateError(msg);
+          voucherError = msg;
+        } else if (txType == 'EXPENSE') {
+          final netCents = _FixedMath.toCents(_bridge, totalNet);
+          final faceCents =
+              _FixedMath.toCents(_bridge, v['face_value'] as Object);
+          final cashPaidCents =
+              netCents > faceCents ? netCents - faceCents : BigInt.zero;
+          final cashPaid = _FixedMath.fromCents(cashPaidCents);
+
+          final splitInputs = parsedItems
+              .map(
+                (it) => <String, dynamic>{
+                  'name': it['item_name'],
+                  'gross': it['item_gross'],
+                  'category_id': it['category_id'],
+                  'budget_pool_id': it['budget_pool_id'],
+                  'project_tag_id': it['project_tag_id'],
+                  'is_primary': it['is_primary_item'],
+                },
+              )
+              .toList();
+
+          final hasPrimary =
+              parsedItems.any((it) => it['is_primary_item'] == true);
+          final effectiveVoucherMode = parsedItems.length <= 1
+              ? 'SINGLE'
+              : (allocationMode == 'PRIMARY_ITEM' || hasPrimary)
+                  ? 'PRIMARY_ITEM'
+                  : 'PROPORTIONAL';
+
+          final alloc = _bridge.computeOrderAllocation(
+            items: splitInputs,
+            cashActuallyPaid: cashPaid,
+            mode: effectiveVoucherMode,
+            voucher: <String, dynamic>{
+              'face_value': v['face_value'],
+              'acquire_cost': v['acquire_cost'],
+              'voucher_type': v['voucher_type'],
+            },
+          );
+
+          allocationMode = effectiveVoucherMode;
+          totalGross = alloc['total_gross'] as String;
+          paymentDiscount = alloc['total_discount'] as String;
+          platformDiscount = '0.00';
+          totalNet = alloc['total_net'] as String;
+          voucherSavings =
+              (alloc['voucher_net_savings'] as String?) ?? '0.00';
+
+          final allocItems = alloc['items'] as List<dynamic>;
+          for (var i = 0; i < parsedItems.length; i++) {
+            final ai = allocItems[i] as Map<String, dynamic>;
+            parsedItems[i]['item_gross'] = ai['gross'];
+            parsedItems[i]['allocated_discount'] = ai['allocated_discount'];
+            parsedItems[i]['item_net'] = ai['net'];
+          }
+          voucherToUse = v;
+        }
       }
     }
+
+    if (voucherToUse == null &&
+        allocationOverridden &&
+        txType == 'EXPENSE' &&
+        parsedItems.length > 1) {
+      final splitInputs = parsedItems
+          .map(
+            (it) => <String, dynamic>{
+              'name': it['item_name'],
+              'gross': it['item_gross'],
+              'category_id': it['category_id'],
+              'budget_pool_id': it['budget_pool_id'],
+              'project_tag_id': it['project_tag_id'],
+              'is_primary': it['is_primary_item'],
+            },
+          )
+          .toList();
+      final effectiveMode =
+          allocationMode == 'MANUAL' ? 'PROPORTIONAL' : allocationMode;
+      final allocated = _bridge.allocateSplitDiscounts(
+        items: splitInputs,
+        totalNetPaid: totalNet,
+        mode: effectiveMode,
+      );
+      for (var i = 0; i < parsedItems.length; i++) {
+        parsedItems[i]['item_gross'] = allocated[i]['gross'];
+        parsedItems[i]['allocated_discount'] =
+            allocated[i]['allocated_discount'];
+        parsedItems[i]['item_net'] = allocated[i]['net'];
+      }
+    }
+
+    parsed['allocation_mode'] = allocationMode;
+    parsed['total_gross'] = totalGross;
+    parsed['payment_discount'] = paymentDiscount;
+    parsed['platform_discount'] = platformDiscount;
+    parsed['total_net'] = totalNet;
+    parsed['items'] = parsedItems;
+
+    return <String, dynamic>{
+      'parsed': parsed,
+      'is_fx_detected': parsed['is_fx_detected'] == true ||
+          ((parsed['original_currency'] as String?) ?? 'CNY') != 'CNY',
+      'voucher_info': voucherToUse != null ? _cloneMap(voucherToUse) : null,
+      'voucher_savings': voucherSavings,
+      'voucher_error': voucherError,
+      'eligible_vouchers': eligibleVouchers,
+      '_voucher_ref': voucherToUse,
+    };
+  }
+
+  /// Compiles quick-input DSL in real time for mobile live split preview without mutating state.
+  Map<String, dynamic> previewDsl(
+    String rawText, {
+    int? appliedVoucherId,
+    int? primaryItemOverrideIndex,
+    Map<int, Map<String, String?>>? itemTargetOverrides,
+  }) {
+    final compiled = _compileDsl(
+      rawText,
+      appliedVoucherId: appliedVoucherId,
+      primaryItemOverrideIndex: primaryItemOverrideIndex,
+      itemTargetOverrides: itemTargetOverrides,
+      strictVoucherValidation: false,
+    );
+    compiled.remove('_voucher_ref');
+    return compiled;
+  }
+
+  Map<String, dynamic> recordFromDsl(
+    String rawText, {
+    String? txDate,
+    int? appliedVoucherId,
+    int? primaryItemOverrideIndex,
+    Map<int, Map<String, String?>>? itemTargetOverrides,
+  }) {
+    final compiled = _compileDsl(
+      rawText,
+      appliedVoucherId: appliedVoucherId,
+      primaryItemOverrideIndex: primaryItemOverrideIndex,
+      itemTargetOverrides: itemTargetOverrides,
+      strictVoucherValidation: true,
+    );
+    final parsed = compiled['parsed'] as Map<String, dynamic>;
+    final voucherToUse = compiled['_voucher_ref'] as Map<String, dynamic>?;
+
+    final effectiveDate =
+        (txDate != null && txDate.isNotEmpty) ? txDate : getLocalTodayDateStr();
+    final txType = parsed['tx_type'] as String;
+    final totalGross = parsed['total_gross'] as String;
+    final paymentDiscount = parsed['payment_discount'] as String;
+    final platformDiscount = parsed['platform_discount'] as String;
+    final totalNet = parsed['total_net'] as String;
+    final parsedItems = (parsed['items'] as List<dynamic>)
+        .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+        .toList();
 
     final txId = _nextTxId();
     final nowIso = _nowIso();
@@ -1489,6 +1724,41 @@ class FlutterLedgerEngine {
     return _cloneMap(tx);
   }
 
+  /// Restores a previously soft-deleted transaction and re-binds its voucher if still available.
+  Map<String, dynamic> restoreTransaction(String txId) {
+    final idx = transactions.indexWhere(
+      (t) => (t['header'] as Map<String, dynamic>)['id'] == txId,
+    );
+    if (idx == -1) {
+      throw ArgumentError('Transaction "$txId" not found');
+    }
+    final tx = transactions[idx];
+    final h = tx['header'] as Map<String, dynamic>;
+    final restoreHlc = hlc.now();
+    h['is_deleted'] = false;
+    h['updated_hlc'] = restoreHlc;
+
+    final appliedVoucherId = h['applied_voucher_id'] as int?;
+    if (appliedVoucherId != null) {
+      final vIdx = vouchers.indexWhere((v) => v['id'] == appliedVoucherId);
+      if (vIdx != -1) {
+        final v = vouchers[vIdx];
+        if (v['status'] == 'AVAILABLE') {
+          v['status'] = 'USED';
+          v['used_tx_id'] = txId;
+          _appendOpLog('VOUCHER', '$appliedVoucherId', 'UPSERT', v);
+        } else if (v['used_tx_id'] != txId) {
+          h['applied_voucher_id'] = null;
+        }
+      } else {
+        h['applied_voucher_id'] = null;
+      }
+    }
+
+    _appendOpLog('TRANSACTION', txId, 'UPSERT', tx, restoreHlc);
+    return _cloneMap(tx);
+  }
+
   // --------------------------------------------------------------------------
   // Write Operation 7 & Configuration Management
   // --------------------------------------------------------------------------
@@ -2011,8 +2281,441 @@ class FlutterLedgerEngine {
           budgetPools.add(payload);
         }
         break;
+      case 'PROJECT_TAG':
+        if (opType == 'DELETE') {
+          projectTags.removeWhere((t) => t['id'] == entityId);
+        } else {
+          final idx = projectTags.indexWhere((t) => t['id'] == entityId);
+          if (idx != -1) {
+            projectTags[idx] = payload;
+          } else {
+            projectTags.add(payload);
+          }
+        }
+        break;
+      case 'RECURRING_RULE':
+        final rid = int.tryParse(entityId);
+        if (opType == 'DELETE' && rid != null) {
+          recurringRules.removeWhere((r) => r['id'] == rid);
+        } else {
+          final idx = recurringRules.indexWhere((r) => r['id'] == payload['id']);
+          if (idx != -1) {
+            recurringRules[idx] = payload;
+          } else {
+            recurringRules.add(payload);
+          }
+        }
+        break;
       default:
         break;
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Mobile Dashboard Pending Banners, Projects, Pools, Rules & Settings
+  // --------------------------------------------------------------------------
+
+  /// Returns all non-deleted transactions waiting for Mastercard FX settlement.
+  List<Map<String, dynamic>> getPendingFxTransactions() {
+    return transactions
+        .where((tx) {
+          final h = tx['header'] as Map<String, dynamic>;
+          return h['is_deleted'] != true &&
+              h['settlement_status'] == 'PENDING_HOLD';
+        })
+        .map(_cloneMap)
+        .toList();
+  }
+
+  /// Returns active recurring rules not yet dismissed or recorded in [yearMonth].
+  List<Map<String, dynamic>> getPendingRecurringRules([String? yearMonth]) {
+    final ym = yearMonth ?? getLocalTodayDateStr().substring(0, 7);
+    final recordedTitlesThisMonth = <String>{};
+    for (final tx in transactions) {
+      final h = tx['header'] as Map<String, dynamic>;
+      if (h['is_deleted'] == true) continue;
+      final txDate = (h['tx_date'] as String?) ?? '';
+      if (!txDate.startsWith(ym)) continue;
+      final note = (h['merchant_or_note'] as String?) ?? '';
+      if (note.isNotEmpty) recordedTitlesThisMonth.add(note);
+    }
+
+    return recurringRules
+        .where((rule) {
+          if (rule['is_active'] != true) return false;
+          final id = rule['id'] as int;
+          if (dismissedRecurringRuleIds.contains(id)) return false;
+          final title = (rule['title'] as String?) ?? '';
+          return !recordedTitlesThisMonth.contains(title);
+        })
+        .map(_cloneMap)
+        .toList();
+  }
+
+  void dismissRecurringRule(int ruleId) {
+    dismissedRecurringRuleIds.add(ruleId);
+  }
+
+  Map<String, dynamic> upsertRecurringRule({
+    int? id,
+    required String title,
+    String ruleType = 'FIXED_EXPENSE',
+    String cronCycle = 'MONTHLY',
+    int triggerDay = 1,
+    String currency = 'CNY',
+    required String amount,
+    String? budgetPoolId = 'POOL_FIXED',
+    String? categoryId,
+    bool autoReserveBudget = true,
+    bool isActive = true,
+  }) {
+    final amtFormatted = _bridge.formatCny(amount);
+    final clampedDay = math.min(31, math.max(1, triggerDay));
+    final upperCurr = currency.toUpperCase();
+    final derivedType =
+        upperCurr == 'CNY' ? ruleType : 'FX_SUBSCRIPTION';
+
+    if (id != null) {
+      final idx = recurringRules.indexWhere((r) => r['id'] == id);
+      if (idx == -1) throw ArgumentError('Recurring rule "$id" not found');
+      final r = recurringRules[idx];
+      r['title'] = title.trim();
+      r['rule_type'] = derivedType;
+      r['cron_cycle'] = cronCycle;
+      r['trigger_day'] = clampedDay;
+      r['currency'] = upperCurr;
+      r['amount'] = amtFormatted;
+      r['budget_pool_id'] = budgetPoolId;
+      if (categoryId != null) r['category_id'] = categoryId;
+      r['auto_reserve_budget'] = autoReserveBudget;
+      r['is_active'] = isActive;
+      _appendOpLog('RECURRING_RULE', '$id', 'UPSERT', r);
+      return _cloneMap(r);
+    }
+
+    _recurringSeq += 1;
+    final rule = <String, dynamic>{
+      'id': _recurringSeq,
+      'title': title.trim(),
+      'rule_type': derivedType,
+      'cron_cycle': cronCycle,
+      'trigger_day': clampedDay,
+      'currency': upperCurr,
+      'amount': amtFormatted,
+      'category_id': categoryId ??
+          (derivedType == 'FX_SUBSCRIPTION'
+              ? 'CAT_DIGITAL_SUB'
+              : 'CAT_TELECOM'),
+      'budget_pool_id': budgetPoolId ?? 'POOL_FIXED',
+      'auto_reserve_budget': autoReserveBudget,
+      'is_active': isActive,
+    };
+    recurringRules.add(rule);
+    _appendOpLog('RECURRING_RULE', '${rule['id']}', 'UPSERT', rule);
+    return _cloneMap(rule);
+  }
+
+  void deleteRecurringRule(int ruleId) {
+    final idx = recurringRules.indexWhere((r) => r['id'] == ruleId);
+    if (idx == -1) return;
+    recurringRules.removeAt(idx);
+    dismissedRecurringRuleIds.remove(ruleId);
+    _appendOpLog(
+      'RECURRING_RULE',
+      '$ruleId',
+      'DELETE',
+      <String, dynamic>{'id': ruleId},
+    );
+  }
+
+  void deleteBudgetPool(String poolId) {
+    final inCategories =
+        categories.any((c) => c['default_pool_id'] == poolId);
+    final inItems = transactions.any((tx) {
+      final h = tx['header'] as Map<String, dynamic>;
+      if (h['is_deleted'] == true) return false;
+      final items = tx['items'] as List<dynamic>;
+      return items.any(
+        (it) => (it as Map<String, dynamic>)['budget_pool_id'] == poolId,
+      );
+    });
+    if (inCategories || inItems) {
+      throw StateError('预算池正在被分类或交易使用，无法直接删除！请先重新分配相关交易。');
+    }
+    budgetPools.removeWhere((p) => p['id'] == poolId);
+    monthlyBudgets.removeWhere((b) => b['pool_id'] == poolId);
+    _appendOpLog('BUDGET_POOL', poolId, 'DELETE', <String, dynamic>{'id': poolId});
+  }
+
+  Map<String, dynamic> upsertProjectTag({
+    String? id,
+    required String name,
+    String tagType = 'PROJECT',
+    String? targetBudget,
+    String? linkedPoolId = 'POOL_FLEX',
+    bool isActive = true,
+    String? startDate,
+    String? endDate,
+  }) {
+    final cleanName = name.trim();
+    final idx = projectTags.indexWhere(
+      (t) => (id != null && t['id'] == id) || t['name'] == cleanName,
+    );
+    final formattedTarget =
+        (targetBudget != null && targetBudget.trim().isNotEmpty)
+            ? _bridge.formatCny(targetBudget.trim())
+            : null;
+
+    if (idx != -1) {
+      final tag = projectTags[idx];
+      tag['name'] = cleanName;
+      tag['tag_type'] = tagType;
+      tag['target_budget'] = formattedTarget;
+      tag['linked_pool_id'] = linkedPoolId;
+      tag['is_active'] = isActive;
+      if (startDate != null) tag['start_date'] = startDate;
+      if (endDate != null) tag['end_date'] = endDate;
+      _appendOpLog('PROJECT_TAG', tag['id'] as String, 'UPSERT', tag);
+      return _cloneMap(tag);
+    }
+
+    final newId =
+        id ?? 'TAG_${DateTime.now().millisecondsSinceEpoch}';
+    final tag = <String, dynamic>{
+      'id': newId,
+      'name': cleanName,
+      'tag_type': tagType,
+      'target_budget': formattedTarget,
+      'linked_pool_id': linkedPoolId,
+      'is_active': isActive,
+      if (startDate != null) 'start_date': startDate,
+      if (endDate != null) 'end_date': endDate,
+    };
+    projectTags.add(tag);
+    _appendOpLog('PROJECT_TAG', newId, 'UPSERT', tag);
+    return _cloneMap(tag);
+  }
+
+  void deleteProjectTag(String tagId) {
+    final inUse = transactions.any((tx) {
+      final h = tx['header'] as Map<String, dynamic>;
+      if (h['is_deleted'] == true) return false;
+      final items = tx['items'] as List<dynamic>;
+      return items.any(
+        (it) => (it as Map<String, dynamic>)['project_tag_id'] == tagId,
+      );
+    });
+    if (inUse) {
+      throw StateError('专项预算已被交易流水引用，无法直接删除！');
+    }
+    projectTags.removeWhere((t) => t['id'] == tagId);
+    _appendOpLog('PROJECT_TAG', tagId, 'DELETE', <String, dynamic>{'id': tagId});
+  }
+
+  /// Computes spent, target, remaining and tx counts per project tag.
+  Map<String, dynamic> getProjectTagsSummary([String? currentDateStr]) {
+    final today = currentDateStr ?? getLocalTodayDateStr();
+    var totalTargetCents = BigInt.zero;
+    var totalSpentCents = BigInt.zero;
+    final rows = <Map<String, dynamic>>[];
+
+    for (final tag in projectTags) {
+      final tagId = tag['id'] as String;
+      final endDate = tag['end_date'] as String?;
+      final effectiveActive = (tag['is_active'] != false) &&
+          (endDate == null || endDate.isEmpty || today.compareTo(endDate) <= 0);
+      final targetStr = tag['target_budget'] as String?;
+      final targetCents = targetStr != null && targetStr.isNotEmpty
+          ? _FixedMath.toCents(_bridge, targetStr)
+          : BigInt.zero;
+
+      var tagSpentCents = BigInt.zero;
+      var txCount = 0;
+      for (final tx in transactions) {
+        final h = tx['header'] as Map<String, dynamic>;
+        if (h['is_deleted'] == true || h['tx_type'] != 'EXPENSE') continue;
+        final items = tx['items'] as List<dynamic>;
+        var matched = false;
+        for (final rawItem in items) {
+          final it = rawItem as Map<String, dynamic>;
+          if (it['project_tag_id'] == tagId) {
+            matched = true;
+            tagSpentCents +=
+                _FixedMath.toCents(_bridge, it['item_net'] as Object);
+          }
+        }
+        if (matched) txCount += 1;
+      }
+
+      totalTargetCents += targetCents;
+      totalSpentCents += tagSpentCents;
+
+      final copy = _cloneMap(tag);
+      copy['effective_active'] = effectiveActive;
+      copy['spent_net'] = _FixedMath.fromCents(tagSpentCents);
+      copy['remaining_budget'] = targetStr != null
+          ? _FixedMath.fromCents(targetCents - tagSpentCents)
+          : null;
+      copy['tx_count'] = txCount;
+      rows.add(copy);
+    }
+
+    return <String, dynamic>{
+      'projects': rows,
+      'active_count':
+          rows.where((r) => r['effective_active'] == true).length,
+      'total_target': _FixedMath.fromCents(totalTargetCents),
+      'total_spent': _FixedMath.fromCents(totalSpentCents),
+      'total_remaining':
+          _FixedMath.fromCents(totalTargetCents - totalSpentCents),
+    };
+  }
+
+  void updateFxSettings({
+    String? defaultHoldRatio,
+    String? defaultCashbackRate,
+    String? monthlyCashbackCapCny,
+  }) {
+    if (defaultHoldRatio != null && defaultHoldRatio.trim().isNotEmpty) {
+      settings['fx_default_hold_ratio'] = defaultHoldRatio.trim();
+    }
+    if (defaultCashbackRate != null && defaultCashbackRate.trim().isNotEmpty) {
+      settings['fx_default_cashback_rate'] = defaultCashbackRate.trim();
+    }
+    if (monthlyCashbackCapCny != null) {
+      final cleanCap = monthlyCashbackCapCny.trim();
+      if (cleanCap.isEmpty) {
+        settings.remove('fx_monthly_cashback_cap_cny');
+      } else {
+        settings['fx_monthly_cashback_cap_cny'] = _bridge.formatCny(cleanCap);
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Mobile Sync Indicator, Pull-to-Refresh Sync, Conflict Resolution & Backup
+  // --------------------------------------------------------------------------
+
+  Map<String, dynamic> syncNow() {
+    if (isOfflineMode) {
+      return <String, dynamic>{
+        'success': false,
+        'message': '当前处于「仅存本地」模式，未向云端同步',
+      };
+    }
+    final pushed = pendingSyncCount;
+    syncedOplogCount = syncOplog.length;
+    lastSyncAt = _nowIso();
+    return <String, dynamic>{
+      'success': true,
+      'pushedCount': pushed,
+      'totalOplogCount': syncOplog.length,
+      'pendingConflicts': pendingConflicts.length,
+    };
+  }
+
+  void simulateConflictForDemo() {
+    _conflictSeq += 1;
+    final sampleId = 'cf_mobile_$_conflictSeq';
+    conflicts.add(<String, dynamic>{
+      'id': sampleId,
+      'conflict_type': 'TRANSACTION_LWW',
+      'entity_type': 'TRANSACTION',
+      'entity_id': 'demo_tx_$_conflictSeq',
+      'status': 'PENDING',
+      'winner_summary': '手机端：咸蛋黄拌面 ¥16.65 (#高频饮食)',
+      'loser_summary': '桌面端：咸蛋黄拌面 ¥16.80 (#高频饮食)',
+      'created_at': _nowIso(),
+    });
+  }
+
+  void resolveConflict(String conflictId, String resolution) {
+    final idx = conflicts.indexWhere((c) => c['id'] == conflictId);
+    if (idx == -1) return;
+    conflicts[idx]['status'] = 'RESOLVED';
+    conflicts[idx]['resolution'] = resolution;
+    conflicts[idx]['resolved_at'] = _nowIso();
+  }
+
+  String exportBackupJson() {
+    final bundle = <String, dynamic>{
+      'nodeId': hlc.nodeId,
+      'exportedAt': _nowIso(),
+      'budgetPools': budgetPools,
+      'monthlyBudgets': monthlyBudgets,
+      'categories': categories,
+      'projectTags': projectTags,
+      'vouchers': vouchers,
+      'fixedAssets': fixedAssets,
+      'recurringRules': recurringRules,
+      'transactions': transactions,
+      'settings': settings,
+      'oplogs': syncOplog,
+    };
+    return const JsonEncoder.withIndent('  ').convert(bundle);
+  }
+
+  Map<String, int> importBackupJson(String rawJson) {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! Map) {
+      throw const FormatException('JSON 备份必须是对象格式');
+    }
+    final map = Map<String, dynamic>.from(decoded);
+    if (map['budgetPools'] is List) {
+      budgetPools = (map['budgetPools'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['monthlyBudgets'] is List) {
+      monthlyBudgets = (map['monthlyBudgets'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['categories'] is List) {
+      categories = (map['categories'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['projectTags'] is List) {
+      projectTags = (map['projectTags'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['vouchers'] is List) {
+      vouchers = (map['vouchers'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['fixedAssets'] is List) {
+      fixedAssets = (map['fixedAssets'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['recurringRules'] is List) {
+      recurringRules = (map['recurringRules'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['transactions'] is List) {
+      transactions = (map['transactions'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    if (map['settings'] is Map) {
+      settings = (map['settings'] as Map<dynamic, dynamic>).map(
+        (k, v) => MapEntry(k.toString(), v.toString()),
+      );
+    }
+    if (map['oplogs'] is List) {
+      syncOplog = (map['oplogs'] as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+          .toList();
+    }
+    syncedOplogCount = syncOplog.length;
+    return <String, int>{
+      'transactionsCount': transactions.length,
+      'poolsCount': budgetPools.length,
+      'vouchersCount': vouchers.length,
+    };
   }
 }
