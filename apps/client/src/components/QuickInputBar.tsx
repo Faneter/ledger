@@ -38,6 +38,7 @@ import {
   toDecimal,
   roundCny,
   formatCny,
+  getLocalTodayDateStr,
 } from '@ledger/core';
 
 export interface QuickInputBarProps {
@@ -54,19 +55,27 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   // 记账模式：'visual' (可视化表单) | 'dsl' (极速算式 DSL)
   const [mode, setMode] = useState<'visual' | 'dsl'>('visual');
 
+  // 订阅引擎状态变更，确保卡券核销、设置更新等无需刷新即可响应
+  const [, setEngineVersion] = useState(() => engine.stateVersion);
+  useEffect(() => {
+    return engine.subscribe(() => {
+      setEngineVersion(engine.stateVersion);
+    });
+  }, [engine]);
+
   // 通用公共状态
   const todayStr = useMemo(() => {
-    return '2026-11-12'; // 严格对齐 PRD 基准日
+    return getLocalTodayDateStr();
   }, []);
 
   const [txDate, setTxDate] = useState(todayStr);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 可用卡券列表
+  // 可用卡券列表（基于 stateVersion 感知原地核销状态变化）
   const availableVouchers: Voucher[] = useMemo(() => {
     return engine.state.vouchers.filter((v) => v.status === 'AVAILABLE');
-  }, [engine.state.vouchers]);
+  }, [engine, engine.stateVersion]);
 
   // --------------------------------------------------------------------------
   // Tab A: 可视化表单状态
@@ -132,6 +141,17 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   const [dslInput, setDslInput] = useState('');
   const [selectedVoucherIdDsl, setSelectedVoucherIdDsl] = useState<number | null>(null);
 
+  // 若选中的卡券已被核销或失效，自动清除残留选中值
+  useEffect(() => {
+    const validIds = new Set(availableVouchers.map((v) => v.id));
+    if (selectedVoucherIdVisual != null && !validIds.has(selectedVoucherIdVisual)) {
+      setSelectedVoucherIdVisual(null);
+    }
+    if (selectedVoucherIdDsl != null && !validIds.has(selectedVoucherIdDsl)) {
+      setSelectedVoucherIdDsl(null);
+    }
+  }, [availableVouchers, selectedVoucherIdVisual, selectedVoucherIdDsl]);
+
   // 实时编译解析 DSL
   const preview = useMemo(() => {
     if (!dslInput.trim()) return null;
@@ -140,7 +160,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
     } catch {
       return null;
     }
-  }, [engine, dslInput, selectedVoucherIdDsl]);
+  }, [engine, engine.stateVersion, dslInput, selectedVoucherIdDsl]);
 
   // 成功处理与回调触发
   const triggerSuccess = (msg: string) => {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LocalLedgerEngine } from '../sync/local-replica';
-import { FixedAssetWithCost } from '@ledger/core';
+import { FixedAssetWithCost, getLocalTodayDateStr } from '@ledger/core';
 
 interface AssetAndProjectTrackerProps {
   engine: LocalLedgerEngine;
@@ -10,7 +10,7 @@ interface AssetAndProjectTrackerProps {
 
 export const AssetAndProjectTracker: React.FC<AssetAndProjectTrackerProps> = ({
   engine,
-  currentDate = '2026-11-12',
+  currentDate = getLocalTodayDateStr(),
   onRefresh,
 }) => {
   const [resaleModalAsset, setResaleModalAsset] =

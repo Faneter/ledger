@@ -37,6 +37,8 @@ import {
   DEFAULT_PROJECT_TAGS,
   generateVoucherTitle,
   FxPreferenceConfig,
+  getLocalTodayDateStr,
+  getLocalYearMonthStr,
 } from '@ledger/core';
 
 export { generateVoucherTitle };
@@ -1270,7 +1272,7 @@ export class LocalLedgerEngine {
     const parsed = preview.parsed;
     const hlc = this.hlc.now();
     const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const effectiveDate = txDate ?? new Date().toISOString().slice(0, 10);
+    const effectiveDate = txDate ?? getLocalTodayDateStr();
     const nowIso = new Date().toISOString();
 
     const header: TransactionHeader = {
@@ -1393,7 +1395,7 @@ export class LocalLedgerEngine {
 
     const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nowIso = new Date().toISOString();
-    const effectiveDate = params.tx_date ?? nowIso.slice(0, 10);
+    const effectiveDate = params.tx_date ?? getLocalTodayDateStr();
     const currency = params.currency ?? 'CNY';
     const isFx = currency !== 'CNY';
 
@@ -2681,8 +2683,8 @@ export class LocalLedgerEngine {
   }
 
   public getDailyBudgetSummary(
-    yearMonth = '2026-11',
-    currentDate = '2026-11-12'
+    yearMonth = getLocalYearMonthStr(),
+    currentDate = getLocalTodayDateStr()
   ): DailyBudgetSummary {
     const statuses = this.getMonthlyBudgetStatus(yearMonth);
     const dailyRow = statuses.find((s) => s.pool_id === 'POOL_DAILY');
@@ -2691,10 +2693,15 @@ export class LocalLedgerEngine {
     const spentNet = dailyRow ? dailyRow.spent_net : '0.00';
     const remaining = dailyRow ? dailyRow.remaining_budget : '650.00';
 
-    // 计算当月剩余天数
-    // 假设 2026-11 月共 30 天
-    const currentDay = parseInt(currentDate.slice(8, 10), 10) || 12;
-    const daysInMonth = 30;
+    // 计算当月实际总天数与剩余天数
+    const [yStr, mStr] = yearMonth.split('-');
+    const yearNum = Number(yStr);
+    const monthNum = Number(mStr);
+    const daysInMonth =
+      yearNum > 0 && monthNum >= 1 && monthNum <= 12
+        ? new Date(yearNum, monthNum, 0).getDate()
+        : 30;
+    const currentDay = parseInt(currentDate.slice(8, 10), 10) || 1;
     const remainingDays = Math.max(1, daysInMonth - currentDay + 1);
 
     const remainingDec = Decimal.max(0, toDecimal(remaining));
@@ -2724,7 +2731,7 @@ export class LocalLedgerEngine {
     };
   }
 
-  public getFixedAssetsWithCost(currentDate = '2026-11-12'): FixedAssetWithCost[] {
+  public getFixedAssetsWithCost(currentDate = getLocalTodayDateStr()): FixedAssetWithCost[] {
     const currDateObj = new Date(currentDate);
 
     return this.state.fixedAssets.map((asset) => {

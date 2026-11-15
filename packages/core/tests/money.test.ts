@@ -9,6 +9,7 @@ import {
   equalsCny,
   Decimal,
 } from '../src/money.js';
+import { getLocalTodayDateStr, getLocalYearMonthStr } from '../src/types.js';
 
 describe('money utilities (decimal precision and rounding)', () => {
   describe('toDecimal', () => {
@@ -113,6 +114,14 @@ describe('money utilities (decimal precision and rounding)', () => {
       expect(equalsCny('1.004', '1.00')).toBe(true);
       expect(equalsCny('1.004', '1.01')).toBe(false);
       expect(equalsCny(0, '0.00')).toBe(true);
+    });
+  });
+
+  describe('getLocalTodayDateStr & getLocalYearMonthStr', () => {
+    it('should format local YYYY-MM-DD and YYYY-MM without UTC day shift', () => {
+      const midnightLocal = new Date(2026, 10, 15, 0, 15, 0); // 2026-11-15 00:15 local
+      expect(getLocalTodayDateStr(midnightLocal)).toBe('2026-11-15');
+      expect(getLocalYearMonthStr(midnightLocal)).toBe('2026-11');
     });
   });
 });

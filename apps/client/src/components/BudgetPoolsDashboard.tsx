@@ -51,6 +51,8 @@ import {
   TagType,
   toDecimal,
   formatCny,
+  getLocalTodayDateStr,
+  getLocalYearMonthStr,
 } from '@ledger/core';
 import { LocalLedgerEngine, DailyBudgetSummary } from '../sync/local-replica';
 
@@ -63,11 +65,11 @@ export interface BudgetPoolsDashboardProps {
 
 export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   engine,
-  currentYearMonth = new Date().toISOString().slice(0, 7),
+  currentYearMonth = getLocalYearMonthStr(),
   currentDate,
   onRefresh,
 }) => {
-  const effectiveToday = currentDate || new Date().toISOString().slice(0, 10);
+  const effectiveToday = currentDate || getLocalTodayDateStr();
 
   // 1. 标签页控制 (0: 月度预算资金池, 1: 专项预算)
   const [activeTab, setActiveTab] = useState(0);

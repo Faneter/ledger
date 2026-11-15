@@ -30,7 +30,12 @@ import CheckCircleOutlineRounded from '@mui/icons-material/CheckCircleOutlineRou
 import HourglassTopRounded from '@mui/icons-material/HourglassTopRounded';
 import { LocalLedgerEngine, DailyBudgetSummary } from '../sync/local-replica';
 import { QuickInputBar } from './QuickInputBar';
-import { MonthlyBudgetStatusRow, TransactionAggregate } from '@ledger/core';
+import {
+  MonthlyBudgetStatusRow,
+  TransactionAggregate,
+  getLocalTodayDateStr,
+  getLocalYearMonthStr,
+} from '@ledger/core';
 
 export interface OverviewPageProps {
   engine: LocalLedgerEngine;
@@ -47,15 +52,18 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   const [settleCashbackInputs, setSettleCashbackInputs] = useState<Record<string, string>>({});
   const [settleFeedback, setSettleFeedback] = useState<string | null>(null);
 
+  const currentYearMonth = getLocalYearMonthStr();
+  const todayStr = getLocalTodayDateStr();
+
   // 1. 日常预算与省钱汇总
   const dailySummary: DailyBudgetSummary = useMemo(() => {
-    return engine.getDailyBudgetSummary('2026-11', '2026-11-12');
-  }, [engine, engine.stateVersion]);
+    return engine.getDailyBudgetSummary(currentYearMonth, todayStr);
+  }, [engine, engine.stateVersion, currentYearMonth, todayStr]);
 
   // 2. 常规月度预算总览
   const budgetStatuses: MonthlyBudgetStatusRow[] = useMemo(() => {
-    return engine.getMonthlyBudgetStatus('2026-11');
-  }, [engine, engine.stateVersion]);
+    return engine.getMonthlyBudgetStatus(currentYearMonth);
+  }, [engine, engine.stateVersion, currentYearMonth]);
 
   const regularPools = budgetStatuses.filter((b) =>
     ['POOL_FIXED', 'POOL_DAILY', 'POOL_FLEX', 'POOL_EMERGENCY'].includes(b.pool_id)

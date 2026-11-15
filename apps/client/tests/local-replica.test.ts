@@ -992,4 +992,35 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(settledDsl.header.total_net).toBe('71.80');
     });
   });
+
+  describe('11. 卡券核销状态版本响应与实际月份天数计算', () => {
+    it('核销卡券后应递增 stateVersion 且可用立减金列表中不再包含已核销项', () => {
+      const prevVersion = engine.stateVersion;
+      const beforeAvailable = engine.state.vouchers.filter((v) => v.status === 'AVAILABLE');
+      expect(beforeAvailable.some((v) => v.id === 1)).toBe(true);
+
+      engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: '2026-11-15',
+        amount: '30.00',
+        budget_pool_id: 'POOL_DAILY',
+        merchant_or_note: '测试立减金核销',
+        applied_voucher_id: 1,
+      });
+
+      expect(engine.stateVersion).toBeGreaterThan(prevVersion);
+      const afterAvailable = engine.state.vouchers.filter((v) => v.status === 'AVAILABLE');
+      expect(afterAvailable.some((v) => v.id === 1)).toBe(false);
+    });
+
+    it('getDailyBudgetSummary 应按传入月份实际天数及当前日期计算剩余天数', () => {
+      // 2026-11 共 30 天，15 号含今日剩余 16 天
+      const nov15 = engine.getDailyBudgetSummary('2026-11', '2026-11-15');
+      expect(nov15.remainingDays).toBe(16);
+
+      // 2026-12 共 31 天，15 号含今日剩余 17 天
+      const dec15 = engine.getDailyBudgetSummary('2026-12', '2026-12-15');
+      expect(dec15.remainingDays).toBe(17);
+    });
+  });
 });

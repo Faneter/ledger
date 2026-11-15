@@ -251,6 +251,23 @@ export function generateVoucherTitle(
   }
 }
 
+/**
+ * 获取本地时区的今日日期字符串 (YYYY-MM-DD)，避免 UTC 偏移导致凌晨差一天
+ */
+export function getLocalTodayDateStr(now: Date = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * 获取本地时区的当前年月字符串 (YYYY-MM)
+ */
+export function getLocalYearMonthStr(now: Date = new Date()): string {
+  return getLocalTodayDateStr(now).slice(0, 7);
+}
+
 // ============================================================================
 // 5. 交易流水与凑单分摊相关类型定义
 // ============================================================================
