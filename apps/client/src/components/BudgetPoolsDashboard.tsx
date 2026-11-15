@@ -218,7 +218,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   }>({
     id: '',
     name: '',
-    rollover_strategy: 'RESET',
+    rollover_strategy: 'ACCUMULATE',
     description: '',
     base_allocation: '500.00',
     is_monthly_budget: true,
@@ -256,7 +256,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     setPoolForm({
       id: `POOL_CUSTOM_${Date.now()}`,
       name: '',
-      rollover_strategy: 'RESET',
+      rollover_strategy: 'ACCUMULATE',
       description: '',
       base_allocation: '300.00',
       is_monthly_budget: true,
@@ -270,7 +270,7 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
     setPoolForm({
       id: poolRow.pool_id,
       name: poolRow.pool_name,
-      rollover_strategy: def?.rollover_strategy || 'RESET',
+      rollover_strategy: def?.rollover_strategy === 'RESET' ? 'RESET' : 'ACCUMULATE',
       description: def?.description || '',
       base_allocation: poolRow.base_allocation,
       is_monthly_budget: def?.is_monthly_budget ?? true,

@@ -344,8 +344,8 @@ INSERT OR IGNORE INTO accounts (id, name, account_role, book_balance, frozen_amo
 -- 2. 初始化六大预算池（4个常规月度池 + 2个跨期专项/资产池）
 -- ----------------------------------------------------------------------------
 INSERT OR IGNORE INTO budget_pools (id, name, pool_type, is_monthly_budget, rollover_strategy, sort_order) VALUES
-('POOL_FIXED',     '固定刚需与定投池',   'FIXED',         1, 'RESET',         10),
-('POOL_DAILY',     '高频饮食与洗护池',   'DAILY',         1, 'SWEEP_TO_FUND', 20),
+('POOL_FIXED',     '固定刚需与定投池',   'FIXED',         1, 'ACCUMULATE',    10),
+('POOL_DAILY',     '高频饮食与洗护池',   'DAILY',         1, 'ACCUMULATE',    20),
 ('POOL_FLEX',      '月度弹性发展池',     'FLEX',          1, 'ACCUMULATE',    30),
 ('POOL_EMERGENCY', '医疗与突发应急池',   'EMERGENCY',     1, 'ACCUMULATE',    40),
 ('POOL_FUND',      '年度专项考证基金池', 'SINKING_FUND',  0, 'ACCUMULATE',    50),

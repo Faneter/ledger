@@ -293,17 +293,27 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       expect(fundPoolAfter.total_available_budget).toBe('1370.00');
 
       // 执行跨月结转至 2026-12：
-      // POOL_DAILY (SWEEP_TO_FUND): 滚入 0.00
-      // POOL_FIXED (RESET): 滚入 0.00
-      // POOL_FLEX (ACCUMULATE): 滚入 450.00
+      // POOL_DAILY (已全额划转清零，剩余 0.00): 滚入 0.00
+      // POOL_FIXED (默认 ACCUMULATE，剩余 204.00): 滚入 204.00
+      // POOL_FLEX (ACCUMULATE，剩余 450.00): 滚入 450.00
       const nextMonthPools = repo.executeMonthRollover('2026-11', '2026-12');
       const decDaily = nextMonthPools.find((p) => p.pool_id === 'POOL_DAILY')!;
       const decFixed = nextMonthPools.find((p) => p.pool_id === 'POOL_FIXED')!;
       const decFlex = nextMonthPools.find((p) => p.pool_id === 'POOL_FLEX')!;
 
       expect(decDaily.rollover_from_prev).toBe('0.00');
-      expect(decFixed.rollover_from_prev).toBe('0.00');
+      expect(decFixed.rollover_from_prev).toBe('204.00');
       expect(decFlex.rollover_from_prev).toBe('450.00');
+
+      // 验证显式设为 RESET 的池子在跨月结转时仍清零
+      repo.upsertBudgetPool({
+        id: 'POOL_FIXED',
+        name: '固定刚需与定投池',
+        rollover_strategy: 'RESET',
+      });
+      const nextMonthAfterReset = repo.executeMonthRollover('2026-11', '2026-12');
+      const decFixedReset = nextMonthAfterReset.find((p) => p.pool_id === 'POOL_FIXED')!;
+      expect(decFixedReset.rollover_from_prev).toBe('0.00');
     });
   });
 

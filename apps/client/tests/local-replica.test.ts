@@ -41,8 +41,10 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(engine.state.budgetPools.length).toBe(6);
       expect(engine.state.monthlyBudgets.length).toBe(6);
 
-      const dailyPool = engine.state.budgetPools.find((p) => p.id === 'POOL_DAILY');
-      expect(dailyPool?.rollover_strategy).toBe('SWEEP_TO_FUND');
+      for (const pid of ['POOL_FIXED', 'POOL_DAILY', 'POOL_FLEX', 'POOL_EMERGENCY']) {
+        const pool = engine.state.budgetPools.find((p) => p.id === pid);
+        expect(pool?.rollover_strategy).toBe('ACCUMULATE');
+      }
 
       const dailyBudget = engine.state.monthlyBudgets.find(
         (b) => b.pool_id === 'POOL_DAILY' && b.year_month === '2026-11'
@@ -291,6 +293,9 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
         'POOL_FLEX',
         'POOL_EMERGENCY',
       ]);
+      for (const pool of monthlyPools) {
+        expect(pool.rollover_strategy).toBe('ACCUMULATE');
+      }
       // 验证已清理废置的 POOL_FUND 与 POOL_ASSET，仅保留 4 个月度常规预算池
       expect(engine.state.budgetPools.length).toBe(4);
       expect(engine.state.budgetPools.find((p) => p.id === 'POOL_FUND')).toBeUndefined();
