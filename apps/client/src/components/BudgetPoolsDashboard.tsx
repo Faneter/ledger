@@ -4,8 +4,6 @@ import {
   Card,
   CardContent,
   Typography,
-  Tabs,
-  Tab,
   Button,
   IconButton,
   Dialog,
@@ -32,6 +30,7 @@ import {
   AccordionDetails,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import { PageSectionTabs } from './PageSectionTabs';
 import ExpandMoreRounded from '@mui/icons-material/ExpandMoreRounded';
 import SavingsRounded from '@mui/icons-material/SavingsRounded';
 import FlagRounded from '@mui/icons-material/FlagRounded';
@@ -431,29 +430,20 @@ export const BudgetPoolsDashboard: React.FC<BudgetPoolsDashboardProps> = ({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* 顶部主选项卡切换 */}
-      <Card>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2, pt: 1 }}>
-          <Tabs
-            value={activeTab}
-            onChange={(_, val) => setActiveTab(val)}
-            variant="scrollable"
-            scrollButtons="auto"
-          >
-            <Tab
-              icon={<SavingsRounded fontSize="small" />}
-              iconPosition="start"
-              label="月度预算资金池"
-              sx={{ fontWeight: 700 }}
-            />
-            <Tab
-              icon={<FlagRounded fontSize="small" />}
-              iconPosition="start"
-              label="专项预算"
-              sx={{ fontWeight: 700 }}
-            />
-          </Tabs>
-        </Box>
-      </Card>
+      <PageSectionTabs
+        value={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            label: '月度预算资金池',
+            icon: <SavingsRounded fontSize="small" />,
+          },
+          {
+            label: '专项预算',
+            icon: <FlagRounded fontSize="small" />,
+          },
+        ]}
+      />
 
       {/* ===================================================================== */}
       {/* Tab 0: 月度预算资金池 (Monthly Pools) */}

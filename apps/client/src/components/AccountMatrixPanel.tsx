@@ -4,8 +4,6 @@ import {
   Card,
   CardContent,
   Typography,
-  Tabs,
-  Tab,
   Button,
   IconButton,
   Dialog,
@@ -27,6 +25,7 @@ import {
   FormControlLabel,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import { PageSectionTabs } from './PageSectionTabs';
 import ConfirmationNumberRounded from '@mui/icons-material/ConfirmationNumberRounded';
 import EventRepeatRounded from '@mui/icons-material/EventRepeatRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
@@ -362,29 +361,20 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* 顶部主选项卡切换 */}
-      <Card>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2, pt: 1 }}>
-          <Tabs
-            value={activeTab}
-            onChange={(_, val) => setActiveTab(val)}
-            variant="scrollable"
-            scrollButtons="auto"
-          >
-            <Tab
-              icon={<ConfirmationNumberRounded fontSize="small" />}
-              iconPosition="start"
-              label="优惠券卡包"
-              sx={{ fontWeight: 700 }}
-            />
-            <Tab
-              icon={<EventRepeatRounded fontSize="small" />}
-              iconPosition="start"
-              label="周期性扣款"
-              sx={{ fontWeight: 700 }}
-            />
-          </Tabs>
-        </Box>
-      </Card>
+      <PageSectionTabs
+        value={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            label: '优惠券卡包',
+            icon: <ConfirmationNumberRounded fontSize="small" />,
+          },
+          {
+            label: '周期性扣款',
+            icon: <EventRepeatRounded fontSize="small" />,
+          },
+        ]}
+      />
 
       {/* ===================================================================== */}
       {/* Tab 0: 优惠券卡包 (Vouchers) */}
