@@ -879,4 +879,68 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(Number(afterDeleteUnion?.book_balance)).toBeCloseTo(initialBalance, 2);
     });
   });
+
+  describe('9. JSON 备份导入导出与废置池清理', () => {
+    it('exportFullSyncBundle + importFullSyncBundle 应完整恢复流水、预算池与优惠券，并过滤未引用的废置池', () => {
+      engine.resetToCleanState();
+      engine.recordManualTransaction({
+        tx_type: 'EXPENSE',
+        tx_date: '2026-11-15',
+        account_id: 'ACC_UNION_MAIN',
+        amount: '28.50',
+        budget_pool_id: 'POOL_DAILY',
+        merchant_or_note: '晚餐备份测试',
+      });
+      engine.upsertVoucher({
+        voucher_type: 'FREE_COUPON',
+        face_value: '5.00',
+        acquire_cost: '0.00',
+        min_spend: '20.00',
+      });
+
+      const exported = engine.exportFullSyncBundle();
+      // 模拟旧备份中含有未被引用的废置池
+      exported.budgetPools = [
+        ...(exported.budgetPools || []),
+        {
+          id: 'POOL_FUND',
+          name: '年度专项考证基金池',
+          pool_type: 'SINKING_FUND',
+          is_monthly_budget: false,
+          rollover_strategy: 'ACCUMULATE',
+          description: '旧版考证专项池',
+          sort_order: 50,
+        },
+        {
+          id: 'POOL_ASSET',
+          name: '数码大件固定资产库',
+          pool_type: 'CAPITAL_ASSET',
+          is_monthly_budget: false,
+          rollover_strategy: 'ACCUMULATE',
+          description: '旧版资产池',
+          sort_order: 60,
+        },
+      ];
+
+      // 重置为空白账本后导入备份
+      engine.resetToCleanState();
+      expect(engine.state.transactions.length).toBe(0);
+      expect(engine.state.vouchers.length).toBe(0);
+
+      const summary = engine.importFullSyncBundle(exported);
+      expect(summary.transactionsCount).toBe(1);
+      expect(summary.poolsCount).toBe(4);
+      expect(summary.vouchersCount).toBe(1);
+
+      expect(engine.state.transactions[0].header.merchant_or_note).toBe('晚餐备份测试');
+      expect(engine.state.vouchers.length).toBe(1);
+      expect(engine.state.budgetPools.find((p) => p.id === 'POOL_FUND')).toBeUndefined();
+      expect(engine.state.budgetPools.find((p) => p.id === 'POOL_ASSET')).toBeUndefined();
+      expect(engine.state.pendingSyncOps.length).toBe(engine.state.oplogs.length);
+    });
+
+    it('importFullSyncBundle 传入无效对象时应抛出清晰错误提示', () => {
+      expect(() => engine.importFullSyncBundle({})).toThrow(/缺少账本核心数据/);
+    });
+  });
 });

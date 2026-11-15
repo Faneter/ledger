@@ -805,6 +805,68 @@ export class LocalLedgerEngine {
   // --------------------------------------------------------------------------
   // 持久化存储与状态重置
   // --------------------------------------------------------------------------
+  private cleanupDeprecatedPoolsFromState(target: Partial<LocalReplicaState>): boolean {
+    const DEPRECATED_POOL_IDS = new Set(['POOL_FUND', 'POOL_ASSET']);
+    const referencedPools = new Set<string>();
+
+    if (Array.isArray(target.transactions)) {
+      for (const tx of target.transactions) {
+        if (tx?.header?.is_deleted) continue;
+        if (Array.isArray(tx?.items)) {
+          for (const it of tx.items) {
+            if (it?.budget_pool_id) referencedPools.add(it.budget_pool_id);
+          }
+        }
+      }
+    }
+    if (Array.isArray(target.recurringRules)) {
+      for (const r of target.recurringRules) {
+        if (r?.budget_pool_id) referencedPools.add(r.budget_pool_id);
+      }
+    }
+
+    const poolsToRemove = new Set(
+      Array.from(DEPRECATED_POOL_IDS).filter((id) => !referencedPools.has(id))
+    );
+
+    let cleaned = false;
+    if (poolsToRemove.size > 0) {
+      if (Array.isArray(target.budgetPools)) {
+        const nextPools = target.budgetPools.filter((p: BudgetPool) => !poolsToRemove.has(p.id));
+        if (nextPools.length !== target.budgetPools.length) {
+          target.budgetPools = nextPools;
+          cleaned = true;
+        }
+      }
+      if (Array.isArray(target.monthlyBudgets)) {
+        const nextBudgets = target.monthlyBudgets.filter(
+          (b: MonthlyBudget) => !poolsToRemove.has(b.pool_id)
+        );
+        if (nextBudgets.length !== target.monthlyBudgets.length) {
+          target.monthlyBudgets = nextBudgets;
+          cleaned = true;
+        }
+      }
+      if (Array.isArray(target.projectTags)) {
+        for (const tag of target.projectTags) {
+          if (tag.linked_pool_id && poolsToRemove.has(tag.linked_pool_id)) {
+            tag.linked_pool_id = null;
+            cleaned = true;
+          }
+        }
+      }
+      if (Array.isArray(target.categories)) {
+        for (const cat of target.categories) {
+          if (cat.default_pool_id && poolsToRemove.has(cat.default_pool_id)) {
+            cat.default_pool_id = 'POOL_FLEX';
+            cleaned = true;
+          }
+        }
+      }
+    }
+    return cleaned;
+  }
+
   private loadFromStorage(): LocalReplicaState | null {
     try {
       const raw = getStorage().getItem(LOCAL_STORAGE_KEY);
@@ -816,67 +878,7 @@ export class LocalLedgerEngine {
           parsed.fxConfig = { defaultHoldRatio: '1.020', defaultCashbackRate: '0.0100' };
         }
 
-        // 清理已废置且未被有效流水/规则引用的历史非月度池 (POOL_FUND / POOL_ASSET)
-        const DEPRECATED_POOL_IDS = new Set(['POOL_FUND', 'POOL_ASSET']);
-        const referencedPools = new Set<string>();
-        if (Array.isArray(parsed.transactions)) {
-          for (const tx of parsed.transactions) {
-            if (tx?.header?.is_deleted) continue;
-            if (Array.isArray(tx?.items)) {
-              for (const it of tx.items) {
-                if (it?.budget_pool_id) referencedPools.add(it.budget_pool_id);
-              }
-            }
-          }
-        }
-        if (Array.isArray(parsed.recurringRules)) {
-          for (const r of parsed.recurringRules) {
-            if (r?.budget_pool_id) referencedPools.add(r.budget_pool_id);
-          }
-        }
-
-        const poolsToRemove = new Set(
-          Array.from(DEPRECATED_POOL_IDS).filter((id) => !referencedPools.has(id))
-        );
-
-        let cleaned = false;
-        if (poolsToRemove.size > 0) {
-          if (Array.isArray(parsed.budgetPools)) {
-            const nextPools = parsed.budgetPools.filter(
-              (p: BudgetPool) => !poolsToRemove.has(p.id)
-            );
-            if (nextPools.length !== parsed.budgetPools.length) {
-              parsed.budgetPools = nextPools;
-              cleaned = true;
-            }
-          }
-          if (Array.isArray(parsed.monthlyBudgets)) {
-            const nextBudgets = parsed.monthlyBudgets.filter(
-              (b: MonthlyBudget) => !poolsToRemove.has(b.pool_id)
-            );
-            if (nextBudgets.length !== parsed.monthlyBudgets.length) {
-              parsed.monthlyBudgets = nextBudgets;
-              cleaned = true;
-            }
-          }
-          if (Array.isArray(parsed.projectTags)) {
-            for (const tag of parsed.projectTags) {
-              if (tag.linked_pool_id && poolsToRemove.has(tag.linked_pool_id)) {
-                tag.linked_pool_id = null;
-                cleaned = true;
-              }
-            }
-          }
-          if (Array.isArray(parsed.categories)) {
-            for (const cat of parsed.categories) {
-              if (cat.default_pool_id && poolsToRemove.has(cat.default_pool_id)) {
-                cat.default_pool_id = 'POOL_FLEX';
-                cleaned = true;
-              }
-            }
-          }
-        }
-
+        const cleaned = this.cleanupDeprecatedPoolsFromState(parsed);
         if (cleaned) {
           getStorage().setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsed));
         }
@@ -2834,6 +2836,7 @@ export class LocalLedgerEngine {
       }
 
       // 4. 重放聚合根状态
+      this.serverResetDetected = false;
       this.replayMergedEntities(mergeResult.winningEntities);
       this.recalculateAllBalances();
       this.saveToStorage();
@@ -3110,6 +3113,94 @@ export class LocalLedgerEngine {
       restored: true,
       restoredAccounts: bundle.accounts.length,
       restoredOpLogs: bundle.oplogs.length,
+    };
+  }
+
+  /**
+   * 仅将本机完整账本推送至云端服务端覆盖恢复（不会清空云端前的模拟销毁调用）
+   */
+  public async pushLocalBundleToServer(apiBaseUrl = ''): Promise<{
+    restoredTransactions: number;
+    restoredOpLogs: number;
+  }> {
+    const bundle = this.exportFullSyncBundle();
+    const reseedRes = await fetch(`${apiBaseUrl}/api/sync/reseed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bundle }),
+    });
+    if (!reseedRes.ok) {
+      const errText = await reseedRes.text().catch(() => '');
+      throw new Error(`云端恢复失败 (${reseedRes.status}): ${errText || '服务端返回异常'}`);
+    }
+
+    this.serverResetDetected = false;
+    this.state.pendingSyncOps = [];
+    this.state.lastSyncAt = new Date().toISOString();
+    this.saveToStorage();
+
+    return {
+      restoredTransactions: (bundle.transactions ?? []).length,
+      restoredOpLogs: bundle.oplogs.length,
+    };
+  }
+
+  /**
+   * 从导出的 JSON 备份文件导入完整账本数据
+   */
+  public importFullSyncBundle(bundle: Partial<FullSyncBundle>): {
+    transactionsCount: number;
+    poolsCount: number;
+    vouchersCount: number;
+  } {
+    if (!bundle || typeof bundle !== 'object') {
+      throw new Error('无效的备份文件格式');
+    }
+
+    const hasCoreArray =
+      Array.isArray(bundle.transactions) ||
+      Array.isArray(bundle.budgetPools) ||
+      Array.isArray(bundle.vouchers) ||
+      Array.isArray(bundle.monthlyBudgets);
+
+    if (!hasCoreArray) {
+      throw new Error('备份文件中缺少账本核心数据（流水、预算池或卡券）');
+    }
+
+    const cloneOrFallback = <T>(val: T[] | undefined, fallback: T[]): T[] =>
+      Array.isArray(val) ? JSON.parse(JSON.stringify(val)) : JSON.parse(JSON.stringify(fallback));
+
+    this.state.accounts = cloneOrFallback(bundle.accounts, CLEAN_SEED_ACCOUNTS);
+    this.state.budgetPools = cloneOrFallback(bundle.budgetPools, CLEAN_SEED_BUDGET_POOLS);
+    this.state.categories = cloneOrFallback(bundle.categories, DEFAULT_CATEGORIES);
+    this.state.projectTags = cloneOrFallback(bundle.projectTags, []);
+    this.state.recurringRules = cloneOrFallback(bundle.recurringRules, []);
+    this.state.fixedAssets = cloneOrFallback(bundle.fixedAssets, []);
+    this.state.vouchers = cloneOrFallback(bundle.vouchers, []);
+    this.state.monthlyBudgets = cloneOrFallback(bundle.monthlyBudgets, CLEAN_SEED_MONTHLY_BUDGETS);
+    this.state.transactions = cloneOrFallback(bundle.transactions, []);
+    this.state.oplogs = cloneOrFallback(bundle.oplogs, []);
+
+    this.cleanupDeprecatedPoolsFromState(this.state);
+
+    this.state.pendingSyncOps = JSON.parse(JSON.stringify(this.state.oplogs));
+    this.state.conflicts = [];
+    this.serverResetDetected = false;
+
+    let maxHlc: string | undefined;
+    for (const op of this.state.oplogs) {
+      if (op?.hlc && (!maxHlc || HybridLogicalClock.compare(op.hlc, maxHlc) > 0)) {
+        maxHlc = op.hlc;
+      }
+    }
+    this.hlc = new HybridLogicalClock(this.state.nodeId, maxHlc);
+    this.recalculateAllBalances();
+    this.saveToStorage();
+
+    return {
+      transactionsCount: this.state.transactions.filter((t) => !t.header?.is_deleted).length,
+      poolsCount: this.state.budgetPools.filter((p) => p.is_monthly_budget).length,
+      vouchersCount: this.state.vouchers.length,
     };
   }
 

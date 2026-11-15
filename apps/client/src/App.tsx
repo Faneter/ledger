@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ThemeProvider,
   CssBaseline,
@@ -22,7 +22,6 @@ import {
   DialogTitle,
   DialogContent,
   Chip,
-  Badge,
   useMediaQuery,
   Card,
   CardContent,
@@ -32,23 +31,30 @@ import {
   DialogActions,
   TextField,
   InputAdornment,
+  Switch,
+  FormControlLabel,
+  Tooltip,
+  Snackbar,
+  Alert,
+  CircularProgress,
 } from '@mui/material';
 import SpaceDashboardRounded from '@mui/icons-material/SpaceDashboardRounded';
 import ReceiptLongRounded from '@mui/icons-material/ReceiptLongRounded';
 import SavingsRounded from '@mui/icons-material/SavingsRounded';
-import AccountBalanceWalletRounded from '@mui/icons-material/AccountBalanceWalletRounded';
 import ConfirmationNumberRounded from '@mui/icons-material/ConfirmationNumberRounded';
 import TuneRounded from '@mui/icons-material/TuneRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
 import LightModeRounded from '@mui/icons-material/LightModeRounded';
 import DarkModeRounded from '@mui/icons-material/DarkModeRounded';
-import ShieldRounded from '@mui/icons-material/ShieldRounded';
 import CloudDoneRounded from '@mui/icons-material/CloudDoneRounded';
 import CloudOffRounded from '@mui/icons-material/CloudOffRounded';
+import CloudUploadRounded from '@mui/icons-material/CloudUploadRounded';
+import WarningAmberRounded from '@mui/icons-material/WarningAmberRounded';
 import RestartAltRounded from '@mui/icons-material/RestartAltRounded';
 import CloseRounded from '@mui/icons-material/CloseRounded';
 import SyncRounded from '@mui/icons-material/SyncRounded';
 import FileDownloadRounded from '@mui/icons-material/FileDownloadRounded';
+import FileUploadRounded from '@mui/icons-material/FileUploadRounded';
 import AutoAwesomeRounded from '@mui/icons-material/AutoAwesomeRounded';
 import CleaningServicesRounded from '@mui/icons-material/CleaningServicesRounded';
 
@@ -122,6 +128,169 @@ export const App: React.FC = () => {
   ).length;
   const isOffline = engine.state.isOfflineMode;
 
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [backupToast, setBackupToast] = useState<{
+    open: boolean;
+    message: string;
+    severity: 'success' | 'info' | 'warning' | 'error';
+  }>({ open: false, message: '', severity: 'info' });
+
+  const syncInFlightRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const runSync = useCallback(
+    async (showFeedback = false): Promise<{ success: boolean; message?: string }> => {
+      if (engine.state.isOfflineMode) {
+        return { success: false, message: '当前处于「仅存本地」模式，未向云端同步。' };
+      }
+      if (syncInFlightRef.current) {
+        return { success: false, message: '同步正在进行中，请稍候。' };
+      }
+
+      syncInFlightRef.current = true;
+      setSyncing(true);
+      try {
+        const res = await engine.syncWithServer();
+        if (res.serverResetDetected) {
+          setSyncError(null);
+          const msg = '检测到云端账本为空，请确认是否将本机数据恢复至云端。';
+          setBackupToast({ open: true, severity: 'warning', message: msg });
+          return { success: false, message: msg };
+        }
+        if (res.success) {
+          setSyncError(null);
+          const newPendingConflicts = engine.state.conflicts.filter(
+            (c) => c.status === 'PENDING'
+          ).length;
+          if (newPendingConflicts > 0) {
+            const msg = `发现 ${newPendingConflicts} 处多端修改差异，请点击同步状态确认。`;
+            if (showFeedback) {
+              setBackupToast({ open: true, severity: 'warning', message: msg });
+            }
+            return { success: true, message: msg };
+          }
+          const msg =
+            res.appliedRemoteCount > 0
+              ? `云端同步完成，已更新 ${res.appliedRemoteCount} 条记录。`
+              : '云端同步已完成，数据已保持最新。';
+          if (showFeedback) {
+            setBackupToast({ open: true, severity: 'success', message: msg });
+          }
+          return { success: true, message: msg };
+        }
+
+        const errMsg = res.error || '暂未连接到云端服务';
+        setSyncError(errMsg);
+        if (showFeedback) {
+          setBackupToast({
+            open: true,
+            severity: 'warning',
+            message: '暂未连接到云端服务，变更已安全保存于本机。',
+          });
+        }
+        return { success: false, message: '暂未连接到云端服务，变更已安全保存于本机。' };
+      } catch {
+        setSyncError('暂未连接到云端服务');
+        if (showFeedback) {
+          setBackupToast({
+            open: true,
+            severity: 'warning',
+            message: '暂未连接到云端服务，变更已安全保存于本机。',
+          });
+        }
+        return { success: false, message: '暂未连接到云端服务，变更已安全保存于本机。' };
+      } finally {
+        syncInFlightRef.current = false;
+        setSyncing(false);
+      }
+    },
+    [engine]
+  );
+
+  // 1) 启动时 & 网络恢复时自动静默同步
+  useEffect(() => {
+    if (!engine.state.isOfflineMode) {
+      void runSync(false);
+    }
+    const handleOnline = () => {
+      if (!engine.state.isOfflineMode) {
+        void runSync(false);
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [engine, runSync]);
+
+  // 2) 数据变更后 1200ms 防抖静默自动同步
+  useEffect(() => {
+    if (isOffline || engine.serverResetDetected || engine.state.pendingSyncOps.length === 0) return;
+    const timer = window.setTimeout(() => {
+      void runSync(false);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [engine.stateVersion, isOffline, runSync]);
+
+  const handleOpenSyncStatus = () => {
+    setShowSyncModal(true);
+    if (!isOffline && pendingConflictCount === 0 && !engine.serverResetDetected && (pendingCount > 0 || syncError)) {
+      void runSync(false);
+    }
+  };
+
+  const syncStatusChip = useMemo(() => {
+    if (pendingConflictCount > 0) {
+      return {
+        label: `${pendingConflictCount} 处同步差异待确认`,
+        shortLabel: `${pendingConflictCount} 处差异`,
+        color: 'error' as const,
+        icon: <WarningAmberRounded fontSize="small" />,
+      };
+    }
+    if (syncing) {
+      return {
+        label: '同步中...',
+        shortLabel: '同步中',
+        color: 'info' as const,
+        icon: <CircularProgress size={14} color="inherit" />,
+      };
+    }
+    if (isOffline) {
+      return {
+        label: '仅存本地',
+        shortLabel: '仅本地',
+        color: 'warning' as const,
+        icon: <CloudOffRounded fontSize="small" />,
+      };
+    }
+    if (engine.serverResetDetected) {
+      return {
+        label: '云端空库待确认',
+        shortLabel: '待确认',
+        color: 'warning' as const,
+        icon: <WarningAmberRounded fontSize="small" />,
+      };
+    }
+    if (pendingCount > 0 || syncError) {
+      return {
+        label: pendingCount > 0 ? `本地已存 (${pendingCount} 笔待同步)` : '本地已保存',
+        shortLabel: pendingCount > 0 ? `待传 ${pendingCount}` : '本地已存',
+        color: 'warning' as const,
+        icon: <CloudUploadRounded fontSize="small" />,
+      };
+    }
+    return {
+      label: '已同步',
+      shortLabel: '已同步',
+      color: 'success' as const,
+      icon: <CloudDoneRounded fontSize="small" />,
+    };
+  }, [pendingConflictCount, syncing, isOffline, engine.serverResetDetected, pendingCount, syncError]);
+
+  const lastSyncTooltip = engine.state.lastSyncAt
+    ? `上次同步：${new Date(engine.state.lastSyncAt).toLocaleString()}（点击查看详情）`
+    : '尚未与云端同步（点击查看同步与差异处理）';
+
   const handleToggleTheme = () => {
     setThemeMode((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
@@ -163,8 +332,71 @@ export const App: React.FC = () => {
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
+      setBackupToast({
+        open: true,
+        severity: 'success',
+        message: '已导出完整 JSON 备份文件。',
+      });
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      setBackupToast({
+        open: true,
+        severity: 'error',
+        message: err instanceof Error ? err.message : '导出备份失败',
+      });
+    }
+  };
+
+  const handleImportBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const hasCoreArray =
+        parsed &&
+        typeof parsed === 'object' &&
+        (Array.isArray(parsed.transactions) ||
+          Array.isArray(parsed.budgetPools) ||
+          Array.isArray(parsed.vouchers) ||
+          Array.isArray(parsed.monthlyBudgets));
+
+      if (!hasCoreArray) {
+        setBackupToast({
+          open: true,
+          severity: 'error',
+          message: '所选 JSON 文件不是有效的 GeekLedger 账本备份。',
+        });
+        return;
+      }
+
+      if (
+        !window.confirm(
+          `确定要导入备份文件「${file.name}」吗？\n导入后将使用备份中的数据替换当前本地账本。`
+        )
+      ) {
+        return;
+      }
+
+      const summary = engine.importFullSyncBundle(parsed);
+      setBackupToast({
+        open: true,
+        severity: 'success',
+        message: `备份导入成功：已恢复 ${summary.transactionsCount} 笔流水、${summary.poolsCount} 个预算池、${summary.vouchersCount} 张优惠券。`,
+      });
+      if (!engine.state.isOfflineMode) {
+        void runSync(false);
+      }
+    } catch (err) {
+      setBackupToast({
+        open: true,
+        severity: 'error',
+        message:
+          err instanceof Error
+            ? `导入备份失败：${err.message}`
+            : '导入备份失败：请检查 JSON 文件格式是否正确',
+      });
     }
   };
 
@@ -226,7 +458,7 @@ export const App: React.FC = () => {
                     GeekLedger
                   </Typography>
                   <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
-                    MD3 个人分布式账本
+                    MD3 个人预算记账本
                   </Typography>
                 </Box>
               </Box>
@@ -292,43 +524,35 @@ export const App: React.FC = () => {
 
             {/* 抽屉底部状态与操作控制栏 */}
             <Box sx={{ pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
-              {/* 在线/离线网络状态 */}
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  p: 1,
-                  borderRadius: 2,
-                  bgcolor: (t) =>
-                    t.palette.mode === 'light' ? '#f5f7fc' : '#141a24',
-                  mb: 1.5,
-                  cursor: 'pointer',
-                }}
-                onClick={() => engine.setOfflineMode(!isOffline)}
-                title="点击切换离线/在线状态"
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  {isOffline ? (
-                    <CloudOffRounded fontSize="small" color="warning" />
-                  ) : (
-                    <CloudDoneRounded fontSize="small" color="success" />
-                  )}
-                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                    {isOffline ? '离线无网模式' : '在线同步就绪'}
+              {/* 云同步状态卡片 */}
+              <Tooltip title={lastSyncTooltip}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    p: 1,
+                    borderRadius: '12px',
+                    bgcolor: (t) =>
+                      t.palette.mode === 'light' ? '#f5f7fc' : '#141a24',
+                    mb: 1.5,
+                    cursor: 'pointer',
+                  }}
+                  onClick={handleOpenSyncStatus}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: `${syncStatusChip.color}.main` }}>
+                    {syncStatusChip.icon}
+                    <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                      {syncStatusChip.shortLabel}
+                    </Typography>
+                  </Box>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+                    详情
                   </Typography>
                 </Box>
-                {pendingCount > 0 && (
-                  <Chip
-                    size="small"
-                    label={`待传 ${pendingCount}`}
-                    color="warning"
-                    sx={{ height: 20, fontSize: '0.65rem' }}
-                  />
-                )}
-              </Box>
+              </Tooltip>
 
-              {/* 快捷操作条：深浅色切换、协同中心、重置种子 */}
+              {/* 快捷操作条：深浅色切换、数据重置 */}
               <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <IconButton
                   size="small"
@@ -337,17 +561,6 @@ export const App: React.FC = () => {
                   sx={{ color: 'text.secondary' }}
                 >
                   {themeMode === 'light' ? <DarkModeRounded /> : <LightModeRounded />}
-                </IconButton>
-
-                <IconButton
-                  size="small"
-                  color={pendingConflictCount > 0 ? 'error' : 'primary'}
-                  onClick={() => setShowSyncModal(true)}
-                  title="多端分布式协同演练中心"
-                >
-                  <Badge badgeContent={pendingConflictCount} color="error">
-                    <ShieldRounded />
-                  </Badge>
                 </IconButton>
 
                 <Button
@@ -396,29 +609,17 @@ export const App: React.FC = () => {
                 {NAV_ITEMS.find((it) => it.key === currentTab)?.label}
               </Typography>
 
-              <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+              <Tooltip title={lastSyncTooltip}>
                 <Chip
-                  icon={isOffline ? <CloudOffRounded /> : <CloudDoneRounded />}
-                  label={isOffline ? '离线模式' : '在线同步中'}
-                  color={isOffline ? 'warning' : 'success'}
+                  icon={syncStatusChip.icon}
+                  label={syncStatusChip.label}
+                  color={syncStatusChip.color}
                   variant="outlined"
                   size="small"
-                  onClick={() => engine.setOfflineMode(!isOffline)}
+                  onClick={handleOpenSyncStatus}
                   sx={{ cursor: 'pointer' }}
                 />
-
-                <Button
-                  variant="outlined"
-                  size="small"
-                  color={pendingConflictCount > 0 ? 'error' : 'secondary'}
-                  startIcon={<ShieldRounded />}
-                  onClick={() => setShowSyncModal(true)}
-                  sx={{ borderRadius: 999 }}
-                >
-                  分布式防炸机中心
-                  {pendingConflictCount > 0 && ` (${pendingConflictCount})`}
-                </Button>
-              </Stack>
+              </Tooltip>
             </Box>
           ) : (
             /* 移动端顶栏 AppBar */
@@ -442,19 +643,19 @@ export const App: React.FC = () => {
                   </Typography>
                 </Box>
 
-                <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                  <Chip
+                    icon={syncStatusChip.icon}
+                    label={syncStatusChip.shortLabel}
+                    color={syncStatusChip.color}
+                    variant="outlined"
+                    size="small"
+                    onClick={handleOpenSyncStatus}
+                    sx={{ cursor: 'pointer' }}
+                  />
+
                   <IconButton size="small" onClick={handleToggleTheme}>
                     {themeMode === 'light' ? <DarkModeRounded /> : <LightModeRounded />}
-                  </IconButton>
-
-                  <IconButton
-                    size="small"
-                    color={pendingConflictCount > 0 ? 'error' : 'primary'}
-                    onClick={() => setShowSyncModal(true)}
-                  >
-                    <Badge badgeContent={pendingConflictCount} color="error">
-                      <ShieldRounded />
-                    </Badge>
                   </IconButton>
                 </Stack>
               </Toolbar>
@@ -505,65 +706,89 @@ export const App: React.FC = () => {
                 <Card>
                   <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
                     <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-                      ⚙️ 系统设置与多端协同中心
+                      ⚙️ 偏好设置、云同步与数据备份
                     </Typography>
                     <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>
-                      基于混合逻辑时钟 (HLC) 与 OpLogs 增量日志的本地优先离线账本引擎
+                      管理云端自动同步、外币记账默认规则与本地数据备份
                     </Typography>
 
                     <Divider sx={{ mb: 3 }} />
 
                     <Stack spacing={2.5}>
-                      {/* 1. 分布式多端同步与防炸机中心 */}
-                      <Stack
-                        direction={{ xs: 'column', sm: 'row' }}
-                        spacing={2}
-                        sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
-                      >
-                        <Box>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                            分布式协同与防炸机中心
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            当前本地待同步 OpLogs: {pendingCount} 条 · 未决并发冲突:{' '}
-                            {pendingConflictCount} 项
-                          </Typography>
-                        </Box>
-                        <Button
-                          variant="contained"
-                          color="primary"
-                          startIcon={<ShieldRounded />}
-                          onClick={() => setShowSyncModal(true)}
+                      {/* 1. 云端自动同步 */}
+                      <Stack spacing={1.5}>
+                        <Stack
+                          direction={{ xs: 'column', sm: 'row' }}
+                          spacing={2}
+                          sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
                         >
-                          分布式协同与防炸机中心
-                        </Button>
-                      </Stack>
+                          <Box>
+                            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                                云端同步状态
+                              </Typography>
+                              <Chip
+                                size="small"
+                                color={syncStatusChip.color}
+                                icon={syncStatusChip.icon}
+                                label={syncStatusChip.label}
+                              />
+                            </Stack>
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              {pendingConflictCount > 0
+                                ? `发现 ${pendingConflictCount} 处多端修改差异，请打开同步详情确认保留哪份内容。`
+                                : isOffline
+                                ? '已开启「仅在本地保存」，记账数据暂不同步至云端。'
+                                : pendingCount > 0
+                                ? `本地已安全保存 ${pendingCount} 笔最新变更，将在后台自动同步；` +
+                                  (engine.state.lastSyncAt
+                                    ? `上次同步：${new Date(engine.state.lastSyncAt).toLocaleString()}`
+                                    : '尚未连接过云端')
+                                : engine.state.lastSyncAt
+                                ? `已于 ${new Date(engine.state.lastSyncAt).toLocaleString()} 完成云端同步`
+                                : '已开启后台自动同步，记账变动将静默同步至云端'}
+                            </Typography>
+                          </Box>
 
-                      <Divider />
+                          <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+                            <Button
+                              variant="contained"
+                              color="primary"
+                              size="small"
+                              startIcon={
+                                syncing ? <CircularProgress size={16} color="inherit" /> : <SyncRounded />
+                              }
+                              disabled={syncing || isOffline}
+                              onClick={() => void runSync(true)}
+                            >
+                              {syncing ? '同步中...' : '立即同步'}
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              color={pendingConflictCount > 0 ? 'warning' : 'inherit'}
+                              size="small"
+                              onClick={() => setShowSyncModal(true)}
+                            >
+                              {pendingConflictCount > 0 ? `处理差异 (${pendingConflictCount})` : '同步详情'}
+                            </Button>
+                          </Stack>
+                        </Stack>
 
-                      {/* 2. 网络离线切换 */}
-                      <Stack
-                        direction={{ xs: 'column', sm: 'row' }}
-                        spacing={2}
-                        sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
-                      >
-                        <Box>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                            本地网络连接状态
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            {isOffline
-                              ? '当前处于纯前端离线脱网模式，所有变动暂存于 IndexedDB / LocalStorage'
-                              : '当前处于在线模式，自动保持后台同步心跳'}
-                          </Typography>
-                        </Box>
-                        <Button
-                          variant="outlined"
-                          color={isOffline ? 'warning' : 'primary'}
-                          onClick={() => engine.setOfflineMode(!isOffline)}
-                        >
-                          {isOffline ? '切换至在线模式' : '模拟断网离线'}
-                        </Button>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={isOffline}
+                              onChange={(e) => engine.setOfflineMode(e.target.checked)}
+                              color="warning"
+                            />
+                          }
+                          label={
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                              仅在本地保存（暂停云端同步）
+                            </Typography>
+                          }
+                          sx={{ m: 0 }}
+                        />
                       </Stack>
 
                       <Divider />
@@ -635,7 +860,7 @@ export const App: React.FC = () => {
 
                       <Divider />
 
-                      {/* 4. 完整 JSON 数据备份与导出 */}
+                      {/* 3. 数据备份与恢复 */}
                       <Stack
                         direction={{ xs: 'column', sm: 'row' }}
                         spacing={2}
@@ -643,20 +868,37 @@ export const App: React.FC = () => {
                       >
                         <Box>
                           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                            数据导出与灾备备份
+                            数据备份与恢复
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            将当前预算池、专项预算、优惠券、周期扣款与账单流水打包导出为标准 JSON 格式文件
+                            将当前预算池、专项预算、优惠券、周期扣款与账单流水导出为 JSON 备份，或从备份文件完整恢复
                           </Typography>
                         </Box>
-                        <Button
-                          variant="outlined"
-                          color="info"
-                          startIcon={<FileDownloadRounded />}
-                          onClick={handleExportBackup}
-                        >
-                          导出完整 JSON 备份
-                        </Button>
+                        <Stack direction="row" spacing={1.5} sx={{ flexShrink: 0, flexWrap: 'wrap' }}>
+                          <Button
+                            variant="outlined"
+                            color="info"
+                            startIcon={<FileDownloadRounded />}
+                            onClick={handleExportBackup}
+                          >
+                            导出 JSON 备份
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            color="primary"
+                            startIcon={<FileUploadRounded />}
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            导入 JSON 备份
+                          </Button>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".json,application/json"
+                            style={{ display: 'none' }}
+                            onChange={handleImportBackupFile}
+                          />
+                        </Stack>
                       </Stack>
 
                       <Divider />
@@ -815,13 +1057,31 @@ export const App: React.FC = () => {
         </Dialog>
 
         {/* ================================================================= */}
-        {/* 5. 分布式多端同步与防炸机演练中心弹窗 */}
+        {/* 5. 云端同步与差异处理弹窗 */}
         {/* ================================================================= */}
         <SyncAndConflictModal
           engine={engine}
           isOpen={showSyncModal}
           onClose={() => setShowSyncModal(false)}
+          syncing={syncing}
+          onManualSync={() => runSync(true)}
         />
+
+        {/* 全局操作提示 Snackbar */}
+        <Snackbar
+          open={backupToast.open}
+          autoHideDuration={4000}
+          onClose={() => setBackupToast((prev) => ({ ...prev, open: false }))}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert
+            severity={backupToast.severity}
+            onClose={() => setBackupToast((prev) => ({ ...prev, open: false }))}
+            sx={{ width: '100%' }}
+          >
+            {backupToast.message}
+          </Alert>
+        </Snackbar>
 
         {/* ================================================================= */}
         {/* 6. 数据重置模式选择弹窗 */}
