@@ -3,12 +3,11 @@ package com.example.geek_ledger_mobile
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
+import android.os.Bundle
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.io.File
 
 class MainActivity : FlutterActivity() {
   companion object {
@@ -21,26 +20,17 @@ class MainActivity : FlutterActivity() {
   private var pendingSaveContent: String? = null
   private var pendingSaveFileName: String? = null
 
+  override fun onCreate(savedInstanceState: Bundle?) {
+    NativePlatformHelper.init(this)
+    super.onCreate(savedInstanceState)
+  }
+
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+    NativePlatformHelper.init(this)
     super.configureFlutterEngine(flutterEngine)
     MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
       .setMethodCallHandler { call, result ->
         when (call.method) {
-          "getStoragePath" -> {
-            val file = File(filesDir, "geek_ledger_state.json")
-            result.success(file.absolutePath)
-          }
-          "getMonetSeedColor" -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-              try {
-                result.success(getColor(android.R.color.system_accent1_500))
-              } catch (_: Exception) {
-                result.success(null)
-              }
-            } else {
-              result.success(null)
-            }
-          }
           "pickJsonFile" -> {
             if (pendingResult != null) {
               result.error("BUSY", "文件选择器已打开，请先完成当前操作", null)

@@ -1,5 +1,4 @@
-// ignore: deprecated_member_use
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'src/ledger_engine.dart';
 import 'src/overview_tab.dart';
@@ -35,6 +34,7 @@ class GeekLedgerApp extends StatefulWidget {
 class _GeekLedgerAppState extends State<GeekLedgerApp>
     with WidgetsBindingObserver {
   FlutterLedgerEngine? _ownedEngine;
+  EngineChangeNotifier? _engineNotifier;
   String? _initError;
   int? _monetSeedArgb;
 
@@ -44,39 +44,47 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _monetSeedArgb = widget.monetSeedArgb;
+    _monetSeedArgb =
+        widget.monetSeedArgb ?? MobilePlatformBridge.getMonetSeedColorSync();
     if (widget.engine == null) {
-      _initApp();
+      _initOwnedEngineSync();
+    }
+    _attachEngineNotifier(_activeEngine);
+  }
+
+  @override
+  void didUpdateWidget(covariant GeekLedgerApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.engine != widget.engine) {
+      _attachEngineNotifier(_activeEngine);
+    }
+    if (widget.monetSeedArgb != oldWidget.monetSeedArgb) {
+      _monetSeedArgb = widget.monetSeedArgb ??
+          MobilePlatformBridge.getMonetSeedColorSync();
     }
   }
 
-  Future<void> _initApp() async {
+  void _initOwnedEngineSync() {
     try {
-      final results = await Future.wait<Object?>(<Future<Object?>>[
-        MobilePlatformBridge.getStorageFilePath(),
-        MobilePlatformBridge.getMonetSeedColor(),
-      ]);
-      final storagePath = results[0] as String?;
-      final monetArgb = results[1] as int?;
+      final storagePath = MobilePlatformBridge.getStorageFilePathSync();
       final engine = FlutterLedgerEngine(storageFilePath: storagePath);
       final currentYm = getLocalTodayDateStr().substring(0, 7);
       engine.ensureAutoRolloverForMonth(currentYm);
-      if (!mounted) return;
-      setState(() {
-        _ownedEngine = engine;
-        _monetSeedArgb = widget.monetSeedArgb ?? monetArgb;
-      });
+      _ownedEngine = engine;
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _initError = e.toString();
-      });
+      _initError = e.toString();
     }
   }
 
-  Future<void> _refreshMonetColor() async {
+  void _attachEngineNotifier(FlutterLedgerEngine? engine) {
+    if (_engineNotifier?.engine == engine) return;
+    _engineNotifier?.dispose();
+    _engineNotifier = engine == null ? null : EngineChangeNotifier(engine);
+  }
+
+  void _refreshMonetColor() {
     if (widget.monetSeedArgb != null) return;
-    final monetArgb = await MobilePlatformBridge.getMonetSeedColor();
+    final monetArgb = MobilePlatformBridge.getMonetSeedColorSync();
     if (mounted && monetArgb != _monetSeedArgb) {
       setState(() => _monetSeedArgb = monetArgb);
     }
@@ -95,7 +103,12 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
 
   @override
   void dispose() {
-    _activeEngine?.saveToDisk();
+    _engineNotifier?.dispose();
+    if (_ownedEngine != null) {
+      _ownedEngine!.dispose();
+    } else {
+      widget.engine?.saveToDisk();
+    }
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -143,11 +156,9 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildMaterialApp(FlutterLedgerEngine? engine) {
     final seedColor = _resolveSeedColor();
     final themeMode = _resolveThemeMode();
-    final engine = _activeEngine;
 
     return MaterialApp(
       title: 'Geek Ledger',
@@ -168,17 +179,26 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
                 ),
               ),
             )
-          : engine == null
-              ? const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
-                )
-              : LedgerHomeScreen(
-                  engine: engine,
-                  monetSeedArgb: widget.monetSeedArgb ?? _monetSeedArgb,
-                  onAppearanceChanged: () => setState(() {}),
-                  onPickBackupFile: widget.onPickBackupFile,
-                  onSaveBackupFile: widget.onSaveBackupFile,
-                ),
+          : LedgerHomeScreen(
+              engine: engine!,
+              monetSeedArgb: widget.monetSeedArgb ?? _monetSeedArgb,
+              onAppearanceChanged: () => setState(() {}),
+              onPickBackupFile: widget.onPickBackupFile,
+              onSaveBackupFile: widget.onSaveBackupFile,
+            ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final engine = _activeEngine;
+    final notifier = _engineNotifier;
+    if (notifier == null || engine == null) {
+      return _buildMaterialApp(engine);
+    }
+    return ListenableBuilder(
+      listenable: notifier,
+      builder: (context, _) => _buildMaterialApp(engine),
     );
   }
 }

@@ -1,8 +1,34 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'rust_bridge.dart';
+
+void _writeAtomicFileSync(String path, String encoded, String tmpPath) {
+  final file = File(path);
+  final dir = file.parent;
+  if (!dir.existsSync()) {
+    dir.createSync(recursive: true);
+  }
+  final tmpFile = File(tmpPath);
+  tmpFile.writeAsStringSync(encoded, flush: true);
+  if (file.existsSync()) {
+    try {
+      tmpFile.renameSync(file.path);
+      return;
+    } catch (_) {
+      // Fallback on filesystems disallowing overwrite on rename
+    }
+  }
+  file.writeAsStringSync(encoded, flush: true);
+  if (tmpFile.existsSync()) {
+    try {
+      tmpFile.deleteSync();
+    } catch (_) {}
+  }
+}
 
 typedef JsonHttpPost = Future<Map<String, dynamic>> Function(
   Uri uri,
@@ -186,6 +212,26 @@ class FlutterLedgerEngine {
   final String? _storageFilePath;
   final HybridLogicalClock hlc;
   bool _suppressPersist = false;
+  final Set<void Function()> _listeners = <void Function()>{};
+  Timer? _persistDebounceTimer;
+  Future<void>? _activePersistFuture;
+  int _persistGeneration = 0;
+  int _persistedGeneration = 0;
+  bool _isDisposed = false;
+
+  void addListener(void Function() listener) {
+    _listeners.add(listener);
+  }
+
+  void removeListener(void Function() listener) {
+    _listeners.remove(listener);
+  }
+
+  void notifyListeners() {
+    for (final listener in _listeners.toList()) {
+      listener();
+    }
+  }
 
   List<Map<String, dynamic>> budgetPools = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> monthlyBudgets = <Map<String, dynamic>>[];
@@ -545,6 +591,7 @@ class FlutterLedgerEngine {
     _monthlyBudgetSeq = 4;
     _recurringSeq = 2;
     saveToDisk();
+    notifyListeners();
   }
 
   /// Resets engine state to a completely empty personal ledger with zero initial default data.
@@ -584,6 +631,7 @@ class FlutterLedgerEngine {
     _monthlyBudgetSeq = 0;
     _recurringSeq = 0;
     saveToDisk();
+    notifyListeners();
   }
 
   String _nextTxId() {
@@ -619,7 +667,7 @@ class FlutterLedgerEngine {
       'payload_json': jsonEncode(payload),
       'created_at': _nowIso(),
     });
-    saveToDisk();
+    scheduleSave();
   }
 
   void _assertConservationLaw(Map<String, dynamic> txAgg) {
@@ -2430,7 +2478,7 @@ class FlutterLedgerEngine {
 
   void dismissRecurringRule(int ruleId) {
     dismissedRecurringRuleIds.add(ruleId);
-    saveToDisk();
+    scheduleSave();
   }
 
   Map<String, dynamic> upsertRecurringRule({
@@ -2668,7 +2716,7 @@ class FlutterLedgerEngine {
     if (useMonetColor != null) {
       settings['use_monet_color'] = useMonetColor ? 'true' : 'false';
     }
-    saveToDisk();
+    scheduleSave();
   }
 
   void updateFxSettings({
@@ -2690,7 +2738,7 @@ class FlutterLedgerEngine {
         settings['fx_monthly_cashback_cap_cny'] = _bridge.formatCny(cleanCap);
       }
     }
-    saveToDisk();
+    scheduleSave();
   }
 
   // --------------------------------------------------------------------------
@@ -2824,46 +2872,106 @@ class FlutterLedgerEngine {
     }
   }
 
-  void saveToDisk() {
+  String _encodeDiskSnapshot() {
+    final snapshot = <String, dynamic>{
+      'schemaVersion': 1,
+      ...exportFullSyncBundle(),
+      'serverUrl': serverUrl,
+      'serverEpochId': serverEpochId,
+      'serverResetDetected': serverResetDetected,
+      'isOfflineMode': isOfflineMode,
+      'lastSyncAt': lastSyncAt,
+      'lastSyncError': lastSyncError,
+      'syncedOplogCount': syncedOplogCount,
+      'conflicts': _cloneListOfMaps(conflicts),
+      'dismissedRecurringRuleIds': dismissedRecurringRuleIds.toList(),
+      'txSeq': _txSeq,
+      'itemSeq': _itemSeq,
+    };
+    return jsonEncode(snapshot);
+  }
+
+  /// Marks state dirty, notifies listeners synchronously, and schedules debounced Isolate persistence.
+  void scheduleSave() {
+    _persistGeneration += 1;
+    notifyListeners();
+    if (_suppressPersist || _storageFilePath == null || _isDisposed) return;
+    _scheduleSaveToDisk();
+  }
+
+  void _scheduleSaveToDisk() {
+    _persistDebounceTimer?.cancel();
+    _persistDebounceTimer = Timer(const Duration(milliseconds: 60), () {
+      _kickOffIsolatePersist();
+    });
+  }
+
+  void _kickOffIsolatePersist() {
+    if (_suppressPersist || _storageFilePath == null || _isDisposed) return;
+    if (_activePersistFuture != null) return;
+    final path = _storageFilePath;
+    final gen = _persistGeneration;
+    if (gen <= _persistedGeneration && File(path).existsSync()) {
+      return;
+    }
+    final encoded = _encodeDiskSnapshot();
+    final future = Isolate.run(
+      () => _writeAtomicFileSync(path, encoded, '$path.$gen.bg.tmp'),
+    );
+    _activePersistFuture = future;
+    future.then((_) {
+      if (gen > _persistedGeneration) {
+        _persistedGeneration = gen;
+      }
+    }).catchError((Object _) {
+      // Avoid crashing UI on transient storage IO failures
+    }).whenComplete(() {
+      if (identical(_activePersistFuture, future)) {
+        _activePersistFuture = null;
+      }
+      if (!_isDisposed &&
+          !_suppressPersist &&
+          _persistGeneration > _persistedGeneration) {
+        _scheduleSaveToDisk();
+      }
+    });
+  }
+
+  /// Flushes any debounced writes and waits for any in-flight Isolate write to finish.
+  Future<void> flushPendingSaves() async {
+    _persistDebounceTimer?.cancel();
+    _persistDebounceTimer = null;
     if (_suppressPersist || _storageFilePath == null) return;
+    if (_activePersistFuture != null) {
+      try {
+        await _activePersistFuture;
+      } catch (_) {}
+    }
+    if (_persistGeneration > _persistedGeneration ||
+        !File(_storageFilePath).existsSync()) {
+      saveToDisk();
+    }
+  }
+
+  void dispose() {
+    _isDisposed = true;
+    saveToDisk();
+    _listeners.clear();
+  }
+
+  void saveToDisk() {
+    _persistDebounceTimer?.cancel();
+    _persistDebounceTimer = null;
+    if (_suppressPersist || _storageFilePath == null) return;
+    final gen = ++_persistGeneration;
     try {
-      final file = File(_storageFilePath);
-      final dir = file.parent;
-      if (!dir.existsSync()) {
-        dir.createSync(recursive: true);
-      }
-      final snapshot = <String, dynamic>{
-        'schemaVersion': 1,
-        ...exportFullSyncBundle(),
-        'serverUrl': serverUrl,
-        'serverEpochId': serverEpochId,
-        'serverResetDetected': serverResetDetected,
-        'isOfflineMode': isOfflineMode,
-        'lastSyncAt': lastSyncAt,
-        'lastSyncError': lastSyncError,
-        'syncedOplogCount': syncedOplogCount,
-        'conflicts': _cloneListOfMaps(conflicts),
-        'dismissedRecurringRuleIds': dismissedRecurringRuleIds.toList(),
-        'txSeq': _txSeq,
-        'itemSeq': _itemSeq,
-      };
-      final encoded = jsonEncode(snapshot);
-      final tmpFile = File('${file.path}.tmp');
-      tmpFile.writeAsStringSync(encoded, flush: true);
-      if (file.existsSync()) {
-        try {
-          tmpFile.renameSync(file.path);
-          return;
-        } catch (_) {
-          // Fallback on filesystems disallowing overwrite on rename
-        }
-      }
-      file.writeAsStringSync(encoded, flush: true);
-      if (tmpFile.existsSync()) {
-        try {
-          tmpFile.deleteSync();
-        } catch (_) {}
-      }
+      final encoded = _encodeDiskSnapshot();
+      _writeAtomicFileSync(
+        _storageFilePath,
+        encoded,
+        '$_storageFilePath.sync.tmp',
+      );
+      _persistedGeneration = gen;
     } catch (_) {
       // Avoid crashing UI actions on transient storage IO failures
     }
@@ -3012,6 +3120,7 @@ class FlutterLedgerEngine {
     } finally {
       isSyncing = false;
       saveToDisk();
+      notifyListeners();
     }
   }
 
@@ -3060,6 +3169,7 @@ class FlutterLedgerEngine {
     } finally {
       isSyncing = false;
       saveToDisk();
+      notifyListeners();
     }
   }
 
@@ -3094,6 +3204,7 @@ class FlutterLedgerEngine {
     } finally {
       isSyncing = false;
       saveToDisk();
+      notifyListeners();
     }
   }
 
@@ -3115,6 +3226,7 @@ class FlutterLedgerEngine {
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
       saveToDisk();
+      notifyListeners();
     }
     return syncWithServer(baseUrl: targetBase);
   }
@@ -3419,6 +3531,9 @@ class FlutterLedgerEngine {
     }
     _recomputeSeqWatermarks();
     saveToDisk();
+    if (!_suppressPersist) {
+      notifyListeners();
+    }
     return <String, int>{
       'transactionsCount': transactions
           .where((t) => (t['header'] as Map<String, dynamic>)['is_deleted'] != true)
@@ -3465,6 +3580,7 @@ class FlutterLedgerEngine {
       _suppressPersist = prevSuppress;
     }
     saveToDisk();
+    notifyListeners();
     return summary;
   }
 }

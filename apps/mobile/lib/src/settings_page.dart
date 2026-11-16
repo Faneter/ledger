@@ -1,5 +1,4 @@
-// ignore: deprecated_member_use
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import 'ledger_engine.dart';
@@ -71,36 +70,40 @@ class SyncStatusPill extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(right: 4),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Tooltip(
-          message: '前往云端同步设置',
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 108),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(icon, size: 14, color: fg),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: fg,
+      child: Semantics(
+        button: true,
+        label: '云端同步状态: $label',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onTap,
+          child: Tooltip(
+            message: '前往云端同步设置',
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 108),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(icon, size: 14, color: fg),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: fg,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -163,9 +166,13 @@ class _SettingsPageState extends State<SettingsPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final ctx = _syncSectionKey.currentContext;
         if (ctx != null && mounted) {
+          final reduceMotion =
+              MediaQuery.maybeOf(context)?.reduceMotion ?? false;
           Scrollable.ensureVisible(
             ctx,
-            duration: const Duration(milliseconds: 280),
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 280),
             curve: Curves.easeOutCubic,
             alignment: 0.05,
           );
@@ -610,7 +617,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     onChanged: (v) {
                       engine.serverUrl = v.trim();
-                      engine.saveToDisk();
+                      engine.scheduleSave();
                     },
                   ),
                   const SizedBox(height: 10),
@@ -710,7 +717,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       setState(() {
                         engine.isOfflineMode = v;
                       });
-                      engine.saveToDisk();
+                      engine.scheduleSave();
                       widget.onEngineChanged();
                     },
                   ),

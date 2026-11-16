@@ -9,10 +9,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  jni: ^1.1.2
+  material_ui: ^1.11.0
 
 dev_dependencies:
+  ffigen: ^23.0.0
   flutter_test:
     sdk: flutter
+  jnigen: ^1.0.1
 
 flutter:
   uses-material-design: true

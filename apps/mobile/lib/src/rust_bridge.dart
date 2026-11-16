@@ -3,22 +3,7 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
-typedef _LedgerAllocNative = Pointer<Uint8> Function(Uint32 len);
-typedef _LedgerAllocDart = Pointer<Uint8> Function(int len);
-
-typedef _LedgerDeallocNative = Void Function(Pointer<Uint8> ptr, Uint32 len);
-typedef _LedgerDeallocDart = void Function(Pointer<Uint8> ptr, int len);
-
-typedef _LedgerInvokeNative = Pointer<Uint8> Function(
-  Pointer<Uint8> reqPtr,
-  Uint32 reqLen,
-  Pointer<Uint32> outLenPtr,
-);
-typedef _LedgerInvokeDart = Pointer<Uint8> Function(
-  Pointer<Uint8> reqPtr,
-  int reqLen,
-  Pointer<Uint32> outLenPtr,
-);
+import 'rust_bindings.g.dart';
 
 /// Error thrown when the Rust Core Engine returns `ok: false` or FFI fails.
 class RustCoreException implements Exception {
@@ -32,21 +17,14 @@ class RustCoreException implements Exception {
       op != null ? 'RustCoreException($op): $message' : 'RustCoreException: $message';
 }
 
-/// Zero-dependency dart:ffi bridge to the compiled `packages/core-rs` native library.
+/// FFI bridge to the compiled `packages/core-rs` native library (`ffigen` bindings).
 class RustCoreBridge {
   RustCoreBridge._(DynamicLibrary library)
-      : _alloc = library
-            .lookupFunction<_LedgerAllocNative, _LedgerAllocDart>('ledger_alloc'),
-        _dealloc = library
-            .lookupFunction<_LedgerDeallocNative, _LedgerDeallocDart>('ledger_dealloc'),
-        _invoke = library
-            .lookupFunction<_LedgerInvokeNative, _LedgerInvokeDart>('ledger_invoke');
+      : _bindings = LedgerCoreRsBindings(library);
 
   static RustCoreBridge? _shared;
 
-  final _LedgerAllocDart _alloc;
-  final _LedgerDeallocDart _dealloc;
-  final _LedgerInvokeDart _invoke;
+  final LedgerCoreRsBindings _bindings;
 
   /// Returns a cached singleton instance loaded from the default native library path.
   static RustCoreBridge instance({String? libraryPath}) {
@@ -122,15 +100,15 @@ class RustCoreBridge {
     final reqBytes = utf8.encode(jsonEncode(payload));
     final allocLen = reqBytes.isEmpty ? 1 : reqBytes.length;
 
-    final reqPtr = _alloc(allocLen);
+    final reqPtr = _bindings.ledger_alloc(allocLen);
     if (reqPtr == nullptr) {
       throw RustCoreException('ledger_alloc failed for request buffer', op);
     }
 
     // `ledger_alloc` guarantees 8-byte alignment, safe to cast to `Pointer<Uint32>`.
-    final outLenPtr = _alloc(4).cast<Uint32>();
+    final outLenPtr = _bindings.ledger_alloc(4).cast<Uint32>();
     if (outLenPtr == nullptr) {
-      _dealloc(reqPtr, allocLen);
+      _bindings.ledger_dealloc(reqPtr, allocLen);
       throw RustCoreException('ledger_alloc failed for outLen pointer', op);
     }
 
@@ -140,7 +118,7 @@ class RustCoreBridge {
       }
       outLenPtr.value = 0;
 
-      final respPtr = _invoke(reqPtr, reqBytes.length, outLenPtr);
+      final respPtr = _bindings.ledger_invoke(reqPtr, reqBytes.length, outLenPtr);
       final respLen = outLenPtr.value;
       if (respPtr == nullptr || respLen == 0) {
         throw RustCoreException('ledger_invoke returned empty response', op);
@@ -155,11 +133,11 @@ class RustCoreBridge {
         }
         return decoded['data'];
       } finally {
-        _dealloc(respPtr, respLen);
+        _bindings.ledger_dealloc(respPtr, respLen);
       }
     } finally {
-      _dealloc(reqPtr, allocLen);
-      _dealloc(outLenPtr.cast<Uint8>(), 4);
+      _bindings.ledger_dealloc(reqPtr, allocLen);
+      _bindings.ledger_dealloc(outLenPtr.cast<Uint8>(), 4);
     }
   }
 

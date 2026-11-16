@@ -1,5 +1,5 @@
-// ignore: deprecated_member_use
-import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'ledger_engine.dart';
 
@@ -347,5 +347,37 @@ class _SettleFxDialogState extends State<SettleFxDialog> {
         ),
       ],
     );
+  }
+}
+
+/// Bridges pure-Dart [FlutterLedgerEngine] observer callbacks into a Flutter [ChangeNotifier]
+/// while safely deferring notifications that happen during a build phase.
+class EngineChangeNotifier extends ChangeNotifier {
+  EngineChangeNotifier(this.engine) {
+    engine.addListener(_onEngineChanged);
+  }
+
+  final FlutterLedgerEngine engine;
+  bool _disposed = false;
+
+  void _onEngineChanged() {
+    if (_disposed) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed) {
+          notifyListeners();
+        }
+      });
+    } else {
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    engine.removeListener(_onEngineChanged);
+    super.dispose();
   }
 }

@@ -1,5 +1,4 @@
-// ignore: deprecated_member_use
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'ledger_engine.dart';
 import 'ui_helpers.dart';
@@ -186,82 +185,93 @@ class OverviewTab extends StatelessWidget {
           ],
 
           // 3. Top Core Card: Daily Allowance Gauge (饮食日均仪)
-          Card(
-            color: cs.primaryContainer,
-            elevation: 0,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          dailySummary['poolName'] as String,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(color: cs.onPrimaryContainer),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '本月薅羊毛已省 ¥${dailySummary['totalSavedWool']}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green.shade900,
+          Semantics(
+            container: true,
+            label:
+                '${dailySummary['poolName']}，今日可用 ${dailySummary['dailyAvailableAmount']} 元每天',
+            child: Card(
+              color: cs.primaryContainer,
+              elevation: 0,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            dailySummary['poolName'] as String,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(color: cs.onPrimaryContainer),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '今日可用: ¥${dailySummary['dailyAvailableAmount']} / 天',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: cs.onPrimaryContainer,
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '本月薅羊毛已省 ¥${dailySummary['totalSavedWool']}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade900,
+                            ),
+                          ),
                         ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '公式: ${dailySummary['formula']} · 累计省钱 ¥${dailySummary['totalSavedWool']}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onPrimaryContainer.withValues(alpha: 0.85),
-                        ),
-                  ),
-                  const SizedBox(height: 10),
-                  LinearProgressIndicator(
-                    value: totalRatio,
-                    minHeight: 7,
-                    borderRadius: BorderRadius.circular(4),
-                    color: poolHealthColor(
-                      context,
-                      remaining: totalBudget - totalSpent,
-                      totalAvailable: totalBudget,
+                      ],
                     ),
-                    backgroundColor: cs.surface.withValues(alpha: 0.45),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '$selectedMonth 总预算 ¥${dashboard['totalMonthlyBudget']} · 已支净额 ¥${dashboard['totalMonthlySpent']}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: cs.onPrimaryContainer,
+                    const SizedBox(height: 8),
+                    Text(
+                      '今日可用: ¥${dailySummary['dailyAvailableAmount']} / 天',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: cs.onPrimaryContainer,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '公式: ${dailySummary['formula']} · 累计省钱 ¥${dailySummary['totalSavedWool']}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: cs.onPrimaryContainer.withValues(alpha: 0.85),
+                          ),
+                    ),
+                    const SizedBox(height: 10),
+                    Semantics(
+                      label: '本月总预算已用比例',
+                      value: '${(totalRatio * 100).clamp(0, 999).round()}%',
+                      child: ExcludeSemantics(
+                        child: LinearProgressIndicator(
+                          value: totalRatio,
+                          minHeight: 7,
+                          borderRadius: BorderRadius.circular(4),
+                          color: poolHealthColor(
+                            context,
+                            remaining: totalBudget - totalSpent,
+                            totalAvailable: totalBudget,
+                          ),
+                          backgroundColor: cs.surface.withValues(alpha: 0.45),
                         ),
-                  ),
-                ],
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '$selectedMonth 总预算 ¥${dashboard['totalMonthlyBudget']} · 已支净额 ¥${dashboard['totalMonthlySpent']}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: cs.onPrimaryContainer,
+                          ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -464,12 +474,18 @@ class OverviewTab extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: progress,
-                minHeight: 6,
-                borderRadius: BorderRadius.circular(4),
-                color: statusColor,
-                backgroundColor: cs.surfaceContainerHighest,
+              Semantics(
+                label: '${pool['name']} 预算已用比例',
+                value: '${(progress * 100).clamp(0, 999).round()}%',
+                child: ExcludeSemantics(
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 6,
+                    borderRadius: BorderRadius.circular(4),
+                    color: statusColor,
+                    backgroundColor: cs.surfaceContainerHighest,
+                  ),
+                ),
               ),
               const SizedBox(height: 8),
               Text(

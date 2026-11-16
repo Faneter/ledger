@@ -1,4 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
+import 'package:jni/jni.dart';
+
+import 'android_native.g.dart';
 
 class PickedBackupFile {
   const PickedBackupFile({
@@ -16,32 +21,34 @@ typedef JsonFileSaver = Future<String?> Function(
   String jsonContent,
 );
 
-/// Platform channel bridge to native Android storage path and Storage Access Framework
-/// (`ACTION_OPEN_DOCUMENT` / `ACTION_CREATE_DOCUMENT`) with zero third-party plugins.
+/// Native Android bridge using synchronous `jnigen` bindings for startup path & Monet seed,
+/// and `MethodChannel` Storage Access Framework (`ACTION_OPEN_DOCUMENT` / `ACTION_CREATE_DOCUMENT`)
+/// for Activity-result file pickers.
 class MobilePlatformBridge {
   MobilePlatformBridge._();
 
   static const MethodChannel _channel = MethodChannel('geek_ledger/platform');
 
-  static Future<String?> getStorageFilePath() async {
+  static String? getStorageFilePathSync() {
+    if (!Platform.isAndroid) return null;
     try {
-      final path = await _channel.invokeMethod<String>('getStoragePath');
+      final path = NativePlatformHelper.storagePath?.toDartString(
+        releaseOriginal: true,
+      );
       if (path != null && path.trim().isNotEmpty) {
         return path.trim();
       }
-    } on MissingPluginException {
-      return null;
     } catch (_) {
       return null;
     }
     return null;
   }
 
-  static Future<int?> getMonetSeedColor() async {
+  static int? getMonetSeedColorSync() {
+    if (!Platform.isAndroid) return null;
     try {
-      return await _channel.invokeMethod<int>('getMonetSeedColor');
-    } on MissingPluginException {
-      return null;
+      final argb = NativePlatformHelper.monetSeedColor;
+      return argb == 0 ? null : argb;
     } catch (_) {
       return null;
     }

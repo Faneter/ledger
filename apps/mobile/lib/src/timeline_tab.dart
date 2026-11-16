@@ -1,5 +1,4 @@
-// ignore: deprecated_member_use
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'ledger_engine.dart';
 import 'ui_helpers.dart';
@@ -736,14 +735,20 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
             ),
             if (targetStr != null) ...<Widget>[
               const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: ratio,
-                minHeight: 6,
-                borderRadius: BorderRadius.circular(4),
-                color: poolHealthColor(
-                  context,
-                  remaining: remaining,
-                  totalAvailable: target,
+              Semantics(
+                label: '${tag['name']} 专项预算使用比例',
+                value: '${(ratio * 100).clamp(0, 999).round()}%',
+                child: ExcludeSemantics(
+                  child: LinearProgressIndicator(
+                    value: ratio,
+                    minHeight: 6,
+                    borderRadius: BorderRadius.circular(4),
+                    color: poolHealthColor(
+                      context,
+                      remaining: remaining,
+                      totalAvailable: target,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 6),

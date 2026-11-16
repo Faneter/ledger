@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-// ignore: deprecated_member_use
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:geek_ledger_mobile/main.dart';
@@ -476,7 +475,7 @@ void main() {
 
   test(
       'FlutterLedgerEngine persists local state to disk across restarts without overwriting IDs',
-      () {
+      () async {
     final tmpDir = Directory.systemTemp.createTempSync('geek_ledger_persist_');
     addTearDown(() => tmpDir.deleteSync(recursive: true));
     final statePath = '${tmpDir.path}/geek_ledger_state.json';
@@ -529,7 +528,8 @@ void main() {
     );
     expect((tx2['header'] as Map<String, dynamic>)['id'], 'tx_mobile_2');
 
-    // Verify tx_mobile_2 also persisted on Session 3
+    // Wait for debounced Isolate.run persistence to complete automatically, then verify Session 3 reload
+    await engine2.flushPendingSaves();
     final engine3 = FlutterLedgerEngine(storageFilePath: statePath);
     expect(engine3.transactions.length, 2);
   });
@@ -814,5 +814,67 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('2026-12'), findsOneWidget);
     expect(find.textContaining('可用 ¥850.00'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Pure-Dart reactive listeners update UI automatically, debounced Isolate persistence writes without blocking, and SettingsPage respects MediaQuery reduceMotion',
+      (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
+    final tempDir = await Directory.systemTemp.createTemp('geek_ledger_async_');
+    addTearDown(() async {
+      if (tempDir.existsSync()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+    final statePath = '${tempDir.path}${Platform.pathSeparator}async_state.json';
+
+    final engine = FlutterLedgerEngine(storageFilePath: statePath);
+    var notifyCount = 0;
+    void listener() => notifyCount += 1;
+    engine.addListener(listener);
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(360, 780),
+          disableAnimations: true,
+        ),
+        child: GeekLedgerApp(engine: engine),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Mutate engine directly without calling onEngineChanged(): ListenableBuilder updates OverviewTab
+    engine.upsertBudgetPool(
+      id: 'POOL_DAILY',
+      name: '异步餐饮池',
+      poolType: 'DAILY',
+      isMonthlyBudget: true,
+    );
+    engine.setMonthlyBudget(
+      yearMonth: getLocalTodayDateStr().substring(0, 7),
+      poolId: 'POOL_DAILY',
+      baseAllocation: '600.00',
+    );
+    expect(notifyCount, greaterThanOrEqualTo(2));
+
+    await tester.pumpAndSettle();
+    expect(find.text('异步餐饮池'), findsOneWidget);
+
+    // Debounced Isolate.run persistence flushes asynchronously to disk within real-time wait
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+    });
+    expect(File(statePath).existsSync(), isTrue);
+    final reloaded = FlutterLedgerEngine(storageFilePath: statePath);
+    expect(reloaded.budgetPools.length, 1);
+    expect(reloaded.budgetPools.first['name'], '异步餐饮池');
+
+    // Open Settings via sync pill under reduceMotion/disableAnimations
+    await tester.tap(find.text('未同步'));
+    await tester.pumpAndSettle();
+    expect(find.text('云端 HLC 同步与冲突处理'), findsOneWidget);
+
+    engine.removeListener(listener);
   });
 }
