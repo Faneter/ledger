@@ -37,6 +37,16 @@ class MobilePlatformBridge {
     return null;
   }
 
+  static Future<int?> getMonetSeedColor() async {
+    try {
+      return await _channel.invokeMethod<int>('getMonetSeedColor');
+    } on MissingPluginException {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<PickedBackupFile?> pickJsonFile() async {
     final res = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'pickJsonFile',

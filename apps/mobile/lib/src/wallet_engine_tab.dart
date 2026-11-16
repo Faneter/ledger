@@ -8,17 +8,11 @@ class WalletAndEngineTab extends StatefulWidget {
   const WalletAndEngineTab({
     super.key,
     required this.engine,
-    required this.selectedMonth,
-    required this.onMonthChanged,
-    required this.onOpenSyncDialog,
     required this.onPullSync,
     required this.onEngineChanged,
   });
 
   final FlutterLedgerEngine engine;
-  final String selectedMonth;
-  final ValueChanged<String> onMonthChanged;
-  final VoidCallback onOpenSyncDialog;
   final Future<void> Function() onPullSync;
   final VoidCallback onEngineChanged;
 
@@ -28,46 +22,6 @@ class WalletAndEngineTab extends StatefulWidget {
 
 class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
   String _voucherFilter = 'ALL'; // ALL | AVAILABLE | USED
-  late final TextEditingController _holdPctCtrl;
-  late final TextEditingController _cashbackPctCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _holdPctCtrl = TextEditingController();
-    _cashbackPctCtrl = TextEditingController();
-    _syncFxControllers();
-  }
-
-  void _syncFxControllers() {
-    _holdPctCtrl.text = decimalRateToPercentText(
-      widget.engine.settings['fx_default_hold_ratio'] ?? '1.020',
-      decimals: 1,
-    );
-    _cashbackPctCtrl.text = decimalRateToPercentText(
-      widget.engine.settings['fx_default_cashback_rate'] ?? '0.0100',
-    );
-  }
-
-  @override
-  void dispose() {
-    _holdPctCtrl.dispose();
-    _cashbackPctCtrl.dispose();
-    super.dispose();
-  }
-
-  static String _nextYearMonth(String ym) {
-    final parts = ym.split('-');
-    if (parts.length != 2) return ym;
-    var y = int.tryParse(parts[0]) ?? 2026;
-    var m = int.tryParse(parts[1]) ?? 11;
-    m += 1;
-    if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-    return '${y.toString().padLeft(4, '0')}-${m.toString().padLeft(2, '0')}';
-  }
 
   Future<void> _showBuyVoucherDialog() async {
     final result = await showDialog<Map<String, String>>(
@@ -119,7 +73,6 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
     final filteredVouchers = _voucherFilter == 'ALL'
         ? engine.vouchers
         : engine.vouchers.where((v) => v['status'] == _voucherFilter).toList();
-    final nextMonth = _nextYearMonth(widget.selectedMonth);
 
     return RefreshIndicator(
       onRefresh: widget.onPullSync,
@@ -290,125 +243,6 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
                 ),
               ),
             ),
-
-          const SizedBox(height: 16),
-
-          // 3. Global FX Rules & Month-End Rollover
-          Text(
-            '外币参数与跨月滚存',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: TextField(
-                          controller: _holdPctCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: '默认冻结比例 (%)',
-                            suffixText: '%',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _cashbackPctCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: '默认返现比例 (%)',
-                            suffixText: '%',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.tonal(
-                        onPressed: () {
-                          final holdPct =
-                              double.tryParse(_holdPctCtrl.text.trim()) ??
-                                  102.0;
-                          final cbPct =
-                              double.tryParse(_cashbackPctCtrl.text.trim()) ??
-                                  1.0;
-                          engine.updateFxSettings(
-                            defaultHoldRatio:
-                                (holdPct / 100).toStringAsFixed(3),
-                            defaultCashbackRate:
-                                (cbPct / 100).toStringAsFixed(4),
-                          );
-                          widget.onEngineChanged();
-                          showLedgerSnackBar(context, '外币默认规则已更新');
-                        },
-                        child: const Text('保存'),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 20),
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          '跨月结余滚存：${widget.selectedMonth} → $nextMonth',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      FilledButton.icon(
-                        onPressed: () {
-                          engine.executeMonthRollover(
-                            widget.selectedMonth,
-                            nextMonth,
-                          );
-                          widget.onMonthChanged(nextMonth);
-                          widget.onEngineChanged();
-                          showLedgerSnackBar(
-                            context,
-                            '已将 ${widget.selectedMonth} 结余滚存至 $nextMonth',
-                          );
-                        },
-                        icon: const Icon(Icons.fast_forward_rounded, size: 16),
-                        label: const Text('一键滚存'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 4. Rust Core Engine & Sync Entry Card
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.memory),
-              title: const Text('Rust FFI Core Engine 状态正常'),
-              subtitle: Text(
-                'HLC 节点: ${engine.hlc.nodeId} · 本地 OpLog 条数: ${engine.syncOplog.length}',
-              ),
-              trailing: TextButton(
-                onPressed: widget.onOpenSyncDialog,
-                child: const Text('同步/冲突'),
-              ),
-            ),
-          ),
         ],
       ),
     );

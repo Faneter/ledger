@@ -50,10 +50,12 @@ void main() {
     expect(find.text('暂无月度预算池'), findsOneWidget);
     expect(find.text('月度预算池水位 (0)'), findsOneWidget);
 
-    // 3-Tab NavigationBar + FAB
+    // 3-Tab NavigationBar + FAB (no '引擎' wording in 3rd tab)
     expect(find.text('今日看板'), findsOneWidget);
     expect(find.text('流水与专项'), findsOneWidget);
-    expect(find.text('卡包与引擎'), findsOneWidget);
+    expect(find.text('卡包与周期'), findsOneWidget);
+    expect(find.text('卡包与引擎'), findsNothing);
+    expect(find.byTooltip('设置'), findsOneWidget);
     expect(find.text('记一笔'), findsOneWidget);
 
     // Quick record works even when budgetPools is completely empty
@@ -332,14 +334,17 @@ void main() {
     await tester.pumpWidget(GeekLedgerApp(engine: offlineEngine));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('卡包与引擎'));
+    await tester.tap(find.text('卡包与周期'));
     await tester.pumpAndSettle();
 
-    // Empty state cards render cleanly & Fixed Assets section is completely gone
+    // Empty state cards render cleanly & Fixed Assets / FX / Manual Rollover / Engine status are all gone
     expect(find.textContaining('暂无符合条件的卡券'), findsOneWidget);
     expect(find.textContaining('暂无周期性扣款规则'), findsOneWidget);
     expect(find.textContaining('固定资产'), findsNothing);
     expect(find.text('添置资产'), findsNothing);
+    expect(find.textContaining('外币参数'), findsNothing);
+    expect(find.text('一键滚存'), findsNothing);
+    expect(find.textContaining('Rust FFI Core Engine'), findsNothing);
 
     // Add a recurring rule even when budgetPools is empty (no DropdownButton crash)
     await tester.tap(find.text('新增规则'));
@@ -368,19 +373,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(offlineEngine.transactions.length, 1);
 
-    // Open Sync Dialog -> attempt sync -> fails honestly without resetting pending count
+    // Tap SyncStatusPill -> opens SettingsPage scrolled to Cloud Sync section (NO dialog popup)
     await tester.tap(find.textContaining('待传'));
     await tester.pumpAndSettle();
-    expect(find.text('云端同步与差异处理'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('云同步与服务器'), findsOneWidget);
     expect(find.text('模拟冲突演示'), findsNothing);
 
-    await tester.tap(find.text('立即与服务端同步'));
+    final syncNowBtn = find.text('立即与服务端同步');
+    await tester.ensureVisible(syncNowBtn);
+    await tester.tap(syncNowBtn);
     await tester.pumpAndSettle();
     expect(offlineEngine.pendingSyncCount, greaterThan(0));
     expect(offlineEngine.lastSyncAt, isNull);
     expect(find.textContaining('连接服务端失败:'), findsOneWidget);
 
-    await tester.tap(find.text('完成'));
+    await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.text('未连云端'), findsOneWidget);
   });
@@ -686,7 +694,7 @@ void main() {
     expect(savedFileContent, contains('Web同步晚餐'));
     expect(find.textContaining('已导出 JSON 备份文件：'), findsOneWidget);
 
-    await tester.tap(find.text('完成'));
+    await tester.pageBack();
     await tester.pumpAndSettle();
 
     // Normalized data renders cleanly across all tabs without Dart type cast crashes
@@ -701,5 +709,110 @@ void main() {
     await tester.tap(find.text('专项立项'));
     await tester.pumpAndSettle();
     expect(find.text('#Web考证'), findsOneWidget);
+  });
+
+  testWidgets(
+      'SettingsPage supports system/light/dark theme, Monet dynamic color, FX settings, and automatic month-end balance rollover',
+      (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
+    final engine = FlutterLedgerEngine();
+    engine.upsertBudgetPool(
+      id: 'POOL_DAILY',
+      name: '高频饮食池',
+      poolType: 'DAILY',
+      rolloverStrategy: 'ACCUMULATE',
+      isMonthlyBudget: true,
+    );
+    engine.setMonthlyBudget(
+      yearMonth: '2026-11',
+      poolId: 'POOL_DAILY',
+      baseAllocation: '500.00',
+    );
+    engine.recordManualTransaction(
+      amount: '120.00',
+      budgetPoolId: 'POOL_DAILY',
+      merchantOrNote: '食堂聚餐',
+      txDate: '2026-11-10',
+    );
+
+    const monetArgb = 0xFF8B5CF6;
+    await tester.pumpWidget(
+      GeekLedgerApp(
+        engine: engine,
+        monetSeedArgb: monetArgb,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Default themeMode is ThemeMode.system & Monet color is active
+    var appWidget = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(appWidget.themeMode, ThemeMode.system);
+    final monetPrimary = appWidget.theme!.colorScheme.primary;
+
+    // Open Settings via top-right Settings icon
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('外观与主题'), findsOneWidget);
+    expect(find.text('外币默认参数'), findsOneWidget);
+    expect(find.text('已从系统壁纸提取动态主题色'), findsOneWidget);
+
+    // Switch theme mode to 深色
+    await tester.tap(find.text('深色'));
+    await tester.pumpAndSettle();
+    appWidget = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(appWidget.themeMode, ThemeMode.dark);
+    expect(engine.themeModePreference, 'dark');
+
+    // Toggle off Monet color -> switches back to fallback teal seed
+    await tester.tap(find.text('莫奈取色 (Material You)'));
+    await tester.pumpAndSettle();
+    appWidget = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(engine.useMonetColor, isFalse);
+    expect(appWidget.theme!.colorScheme.primary, isNot(monetPrimary));
+
+    // Update FX settings from SettingsPage
+    final holdField = find.widgetWithText(TextField, '默认冻结比例 (%)');
+    await tester.ensureVisible(holdField);
+    await tester.enterText(holdField, '105');
+    final fxSaveBtn = find.text('保存');
+    await tester.ensureVisible(fxSaveBtn);
+    await tester.tap(fxSaveBtn);
+    await tester.pumpAndSettle();
+    expect(engine.settings['fx_default_hold_ratio'], '1.050');
+
+    // Return to Overview and switch month 2026-11 -> 2026-12: rollover happens automatically!
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('2026-11'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('12月'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2026-12'), findsOneWidget);
+    // 500.00 base + 380.00 rolled-over remaining = 880.00 available
+    expect(find.textContaining('可用 ¥880.00'), findsOneWidget);
+
+    // Retroactive expense of ¥30.00 in 2026-11 updates 2026-12 rolled-over balance to 850.00 automatically
+    engine.recordManualTransaction(
+      amount: '30.00',
+      budgetPoolId: 'POOL_DAILY',
+      merchantOrNote: '补记宵夜',
+      txDate: '2026-11-15',
+    );
+    await tester.pumpWidget(
+      GeekLedgerApp(
+        key: const ValueKey<String>('reopened'),
+        engine: engine,
+        monetSeedArgb: monetArgb,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2026-11'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('12月'));
+    await tester.pumpAndSettle();
+    expect(find.text('2026-12'), findsOneWidget);
+    expect(find.textContaining('可用 ¥850.00'), findsOneWidget);
   });
 }

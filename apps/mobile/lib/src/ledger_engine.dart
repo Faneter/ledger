@@ -548,7 +548,9 @@ class FlutterLedgerEngine {
   }
 
   /// Resets engine state to a completely empty personal ledger with zero initial default data.
-  void resetToCleanState() {
+  void resetToCleanState({bool preserveAppearance = false}) {
+    final prevThemeMode = settings['theme_mode'];
+    final prevUseMonet = settings['use_monet_color'];
     budgetPools = <Map<String, dynamic>>[];
     monthlyBudgets = <Map<String, dynamic>>[];
     categories = <Map<String, dynamic>>[];
@@ -569,6 +571,12 @@ class FlutterLedgerEngine {
     settings = <String, String>{
       'fx_default_cashback_rate': '0.0100',
       'fx_default_hold_ratio': '1.020',
+      'theme_mode': preserveAppearance && prevThemeMode != null
+          ? prevThemeMode
+          : 'system',
+      'use_monet_color': preserveAppearance && prevUseMonet != null
+          ? prevUseMonet
+          : 'true',
     };
     _txSeq = 0;
     _itemSeq = 0;
@@ -1011,6 +1019,9 @@ class FlutterLedgerEngine {
     }
 
     _appendOpLog('TRANSACTION', txId, 'UPSERT', agg, currentHlc);
+    if (effectiveDate.length >= 7) {
+      recomputeSubsequentRolloversFrom(effectiveDate.substring(0, 7));
+    }
     return _cloneMap(agg);
   }
 
@@ -1202,6 +1213,9 @@ class FlutterLedgerEngine {
     }
 
     _appendOpLog('TRANSACTION', txId, 'UPSERT', agg, currentHlc);
+    if (effectiveDate.length >= 7) {
+      recomputeSubsequentRolloversFrom(effectiveDate.substring(0, 7));
+    }
     return _cloneMap(agg);
   }
 
@@ -1505,6 +1519,10 @@ class FlutterLedgerEngine {
 
     _assertConservationLaw(tx);
     _appendOpLog('TRANSACTION', txId, 'UPSERT', tx, currentHlc);
+    final txDateStr = h['tx_date'] as String?;
+    if (txDateStr != null && txDateStr.length >= 7) {
+      recomputeSubsequentRolloversFrom(txDateStr.substring(0, 7));
+    }
     return _cloneMap(tx);
   }
 
@@ -1711,6 +1729,10 @@ class FlutterLedgerEngine {
     h['updated_hlc'] = currentHlc;
     _assertConservationLaw(tx);
     _appendOpLog('TRANSACTION', txId, 'UPSERT', tx, currentHlc);
+    final txDateStr = h['tx_date'] as String?;
+    if (txDateStr != null && txDateStr.length >= 7) {
+      recomputeSubsequentRolloversFrom(txDateStr.substring(0, 7));
+    }
     return _cloneMap(tx);
   }
 
@@ -1768,6 +1790,10 @@ class FlutterLedgerEngine {
     h['is_deleted'] = true;
     h['updated_hlc'] = delHlc;
     _appendOpLog('TRANSACTION', txId, 'UPSERT', tx, delHlc);
+    final txDateStr = h['tx_date'] as String?;
+    if (txDateStr != null && txDateStr.length >= 7) {
+      recomputeSubsequentRolloversFrom(txDateStr.substring(0, 7));
+    }
     return _cloneMap(tx);
   }
 
@@ -1803,6 +1829,10 @@ class FlutterLedgerEngine {
     }
 
     _appendOpLog('TRANSACTION', txId, 'UPSERT', tx, restoreHlc);
+    final txDateStr = h['tx_date'] as String?;
+    if (txDateStr != null && txDateStr.length >= 7) {
+      recomputeSubsequentRolloversFrom(txDateStr.substring(0, 7));
+    }
     return _cloneMap(tx);
   }
 
@@ -1878,6 +1908,80 @@ class FlutterLedgerEngine {
       monthlyBudgets.add(row);
     }
     _appendOpLog('MONTHLY_BUDGET', '$yearMonth:$poolId', 'UPSERT', row);
+    recomputeSubsequentRolloversFrom(yearMonth);
+  }
+
+  static String _nextYearMonthStr(String ym) {
+    final parts = ym.split('-');
+    if (parts.length != 2) return ym;
+    var y = int.tryParse(parts[0]) ?? 2026;
+    var m = int.tryParse(parts[1]) ?? 1;
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+    return '${y.toString().padLeft(4, '0')}-${m.toString().padLeft(2, '0')}';
+  }
+
+  static int _monthsBetween(String fromYm, String toYm) {
+    final fp = fromYm.split('-');
+    final tp = toYm.split('-');
+    if (fp.length != 2 || tp.length != 2) return 0;
+    final fy = int.tryParse(fp[0]);
+    final fm = int.tryParse(fp[1]);
+    final ty = int.tryParse(tp[0]);
+    final tm = int.tryParse(tp[1]);
+    if (fy == null || fm == null || ty == null || tm == null) return 0;
+    return (ty - fy) * 12 + (tm - fm);
+  }
+
+  /// Automatically performs sequential month-end balance rollover up to [targetYearMonth]
+  /// whenever earlier monthly budgets exist and intermediate months lack rolled-over entries.
+  bool ensureAutoRolloverForMonth(String targetYearMonth) {
+    if (budgetPools.isEmpty || monthlyBudgets.isEmpty) return false;
+    final priorMonths = monthlyBudgets
+        .map((b) => b['year_month'] as String?)
+        .whereType<String>()
+        .where((ym) => ym.compareTo(targetYearMonth) < 0)
+        .toSet()
+        .toList()
+      ..sort();
+    if (priorMonths.isEmpty) return false;
+
+    final latestPrior = priorMonths.last;
+    final gap = _monthsBetween(latestPrior, targetYearMonth);
+    if (gap <= 0 || gap > 24) return false;
+
+    var cur = latestPrior;
+    var changed = false;
+    while (cur.compareTo(targetYearMonth) < 0) {
+      final next = _nextYearMonthStr(cur);
+      final hasAnyInNext =
+          monthlyBudgets.any((b) => b['year_month'] == next);
+      if (!hasAnyInNext) {
+        executeMonthRollover(cur, next);
+        changed = true;
+      }
+      cur = next;
+    }
+    return changed;
+  }
+
+  /// Refreshes `rollover_from_prev` across contiguous existing later months whenever an
+  /// earlier month's budget allocation or transactions are modified.
+  void recomputeSubsequentRolloversFrom(String sourceYearMonth) {
+    if (budgetPools.isEmpty || monthlyBudgets.isEmpty) return;
+    var cur = sourceYearMonth;
+    for (var step = 0; step < 24; step++) {
+      final next = _nextYearMonthStr(cur);
+      final hasNext = monthlyBudgets.any((b) => b['year_month'] == next);
+      if (!hasNext) break;
+      final hasCur = monthlyBudgets.any((b) => b['year_month'] == cur);
+      if (!hasCur) break;
+      executeMonthRollover(cur, next);
+      cur = next;
+    }
   }
 
   List<Map<String, dynamic>> executeMonthRollover(
@@ -1902,6 +2006,9 @@ class FlutterLedgerEngine {
       Map<String, dynamic> targetRow;
       if (existingIdx != -1) {
         targetRow = monthlyBudgets[existingIdx];
+        if (targetRow['rollover_from_prev'] == rollover) {
+          continue;
+        }
         targetRow['rollover_from_prev'] = rollover;
       } else {
         _monthlyBudgetSeq += 1;
@@ -2545,6 +2652,23 @@ class FlutterLedgerEngine {
       'total_remaining':
           _FixedMath.fromCents(totalTargetCents - totalSpentCents),
     };
+  }
+
+  String get themeModePreference => settings['theme_mode'] ?? 'system';
+
+  bool get useMonetColor => settings['use_monet_color'] != 'false';
+
+  void updateAppearanceSettings({
+    String? themeMode,
+    bool? useMonetColor,
+  }) {
+    if (themeMode == 'system' || themeMode == 'light' || themeMode == 'dark') {
+      settings['theme_mode'] = themeMode!;
+    }
+    if (useMonetColor != null) {
+      settings['use_monet_color'] = useMonetColor ? 'true' : 'false';
+    }
+    saveToDisk();
   }
 
   void updateFxSettings({

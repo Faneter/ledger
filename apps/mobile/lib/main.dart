@@ -5,7 +5,7 @@ import 'src/ledger_engine.dart';
 import 'src/overview_tab.dart';
 import 'src/platform_backup.dart';
 import 'src/quick_record_sheet.dart';
-import 'src/sync_dialog.dart';
+import 'src/settings_page.dart';
 import 'src/timeline_tab.dart';
 import 'src/ui_helpers.dart';
 import 'src/wallet_engine_tab.dart';
@@ -18,11 +18,13 @@ class GeekLedgerApp extends StatefulWidget {
   const GeekLedgerApp({
     super.key,
     this.engine,
+    this.monetSeedArgb,
     this.onPickBackupFile,
     this.onSaveBackupFile,
   });
 
   final FlutterLedgerEngine? engine;
+  final int? monetSeedArgb;
   final JsonFilePicker? onPickBackupFile;
   final JsonFileSaver? onSaveBackupFile;
 
@@ -30,12 +32,100 @@ class GeekLedgerApp extends StatefulWidget {
   State<GeekLedgerApp> createState() => _GeekLedgerAppState();
 }
 
-class _GeekLedgerAppState extends State<GeekLedgerApp> {
-  ThemeMode _themeMode = ThemeMode.light;
+class _GeekLedgerAppState extends State<GeekLedgerApp>
+    with WidgetsBindingObserver {
+  FlutterLedgerEngine? _ownedEngine;
+  String? _initError;
+  int? _monetSeedArgb;
 
-  ThemeData _buildTheme(Brightness brightness) {
+  FlutterLedgerEngine? get _activeEngine => widget.engine ?? _ownedEngine;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _monetSeedArgb = widget.monetSeedArgb;
+    if (widget.engine == null) {
+      _initApp();
+    }
+  }
+
+  Future<void> _initApp() async {
+    try {
+      final results = await Future.wait<Object?>(<Future<Object?>>[
+        MobilePlatformBridge.getStorageFilePath(),
+        MobilePlatformBridge.getMonetSeedColor(),
+      ]);
+      final storagePath = results[0] as String?;
+      final monetArgb = results[1] as int?;
+      final engine = FlutterLedgerEngine(storageFilePath: storagePath);
+      final currentYm = getLocalTodayDateStr().substring(0, 7);
+      engine.ensureAutoRolloverForMonth(currentYm);
+      if (!mounted) return;
+      setState(() {
+        _ownedEngine = engine;
+        _monetSeedArgb = widget.monetSeedArgb ?? monetArgb;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _initError = e.toString();
+      });
+    }
+  }
+
+  Future<void> _refreshMonetColor() async {
+    if (widget.monetSeedArgb != null) return;
+    final monetArgb = await MobilePlatformBridge.getMonetSeedColor();
+    if (mounted && monetArgb != _monetSeedArgb) {
+      setState(() => _monetSeedArgb = monetArgb);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshMonetColor();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _activeEngine?.saveToDisk();
+    }
+  }
+
+  @override
+  void dispose() {
+    _activeEngine?.saveToDisk();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  ThemeMode _resolveThemeMode() {
+    final pref = _activeEngine?.themeModePreference ?? 'system';
+    switch (pref) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      case 'system':
+      default:
+        return ThemeMode.system;
+    }
+  }
+
+  Color _resolveSeedColor() {
+    final engine = _activeEngine;
+    final useMonet = engine?.useMonetColor ?? true;
+    final effectiveMonet = widget.monetSeedArgb ?? _monetSeedArgb;
+    if (useMonet && effectiveMonet != null) {
+      return Color(effectiveMonet);
+    }
+    return const Color(0xFF0F766E);
+  }
+
+  ThemeData _buildTheme(Brightness brightness, Color seedColor) {
     final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF0F766E),
+      seedColor: seedColor,
       brightness: brightness,
     );
     return ThemeData(
@@ -55,25 +145,40 @@ class _GeekLedgerAppState extends State<GeekLedgerApp> {
 
   @override
   Widget build(BuildContext context) {
+    final seedColor = _resolveSeedColor();
+    final themeMode = _resolveThemeMode();
+    final engine = _activeEngine;
+
     return MaterialApp(
-      title: 'Geek Ledger · Rust FFI',
+      title: 'Geek Ledger',
       debugShowCheckedModeBanner: false,
-      themeMode: _themeMode,
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
-      home: LedgerHomeScreen(
-        engine: widget.engine,
-        themeMode: _themeMode,
-        onPickBackupFile: widget.onPickBackupFile,
-        onSaveBackupFile: widget.onSaveBackupFile,
-        onToggleTheme: () {
-          setState(() {
-            _themeMode = _themeMode == ThemeMode.dark
-                ? ThemeMode.light
-                : ThemeMode.dark;
-          });
-        },
-      ),
+      themeMode: themeMode,
+      theme: _buildTheme(Brightness.light, seedColor),
+      darkTheme: _buildTheme(Brightness.dark, seedColor),
+      home: _initError != null
+          ? Scaffold(
+              appBar: AppBar(title: const Text('初始化失败')),
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: SelectableText(
+                    'Rust Core FFI 初始化失败：\n$_initError',
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ),
+              ),
+            )
+          : engine == null
+              ? const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                )
+              : LedgerHomeScreen(
+                  engine: engine,
+                  monetSeedArgb: widget.monetSeedArgb ?? _monetSeedArgb,
+                  onAppearanceChanged: () => setState(() {}),
+                  onPickBackupFile: widget.onPickBackupFile,
+                  onSaveBackupFile: widget.onSaveBackupFile,
+                ),
     );
   }
 }
@@ -81,16 +186,16 @@ class _GeekLedgerAppState extends State<GeekLedgerApp> {
 class LedgerHomeScreen extends StatefulWidget {
   const LedgerHomeScreen({
     super.key,
-    this.engine,
-    this.themeMode = ThemeMode.light,
-    this.onToggleTheme,
+    required this.engine,
+    required this.onAppearanceChanged,
+    this.monetSeedArgb,
     this.onPickBackupFile,
     this.onSaveBackupFile,
   });
 
-  final FlutterLedgerEngine? engine;
-  final ThemeMode themeMode;
-  final VoidCallback? onToggleTheme;
+  final FlutterLedgerEngine engine;
+  final VoidCallback onAppearanceChanged;
+  final int? monetSeedArgb;
   final JsonFilePicker? onPickBackupFile;
   final JsonFileSaver? onSaveBackupFile;
 
@@ -98,56 +203,15 @@ class LedgerHomeScreen extends StatefulWidget {
   State<LedgerHomeScreen> createState() => _LedgerHomeScreenState();
 }
 
-class _LedgerHomeScreenState extends State<LedgerHomeScreen>
-    with WidgetsBindingObserver {
-  FlutterLedgerEngine? _engine;
-  String? _initError;
+class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   int _tabIndex = 0;
-  String _selectedMonth = getLocalTodayDateStr().substring(0, 7);
+  late String _selectedMonth;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    if (widget.engine != null) {
-      _engine = widget.engine;
-      _selectedMonth = _resolveInitialMonth(widget.engine!);
-    } else {
-      _initPersistedEngine();
-    }
-  }
-
-  Future<void> _initPersistedEngine() async {
-    try {
-      final storagePath = await MobilePlatformBridge.getStorageFilePath();
-      final engine = FlutterLedgerEngine(storageFilePath: storagePath);
-      if (!mounted) return;
-      setState(() {
-        _engine = engine;
-        _selectedMonth = _resolveInitialMonth(engine);
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _initError = e.toString();
-      });
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      _engine?.saveToDisk();
-    }
-  }
-
-  @override
-  void dispose() {
-    _engine?.saveToDisk();
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
+    _selectedMonth = _resolveInitialMonth(widget.engine);
+    widget.engine.ensureAutoRolloverForMonth(_selectedMonth);
   }
 
   static String _resolveInitialMonth(FlutterLedgerEngine engine) {
@@ -169,8 +233,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
   Future<void> _openQuickRecordSheet({
     String initialMode = 'dsl',
   }) async {
-    final engine = _engine;
-    if (engine == null) return;
+    final engine = widget.engine;
     final tx = await showQuickRecordModal(
       context,
       engine,
@@ -188,8 +251,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
   }
 
   Future<void> _showSettleFxDialog(Map<String, dynamic> tx) async {
-    final engine = _engine;
-    if (engine == null) return;
+    final engine = widget.engine;
     final h = tx['header'] as Map<String, dynamic>;
     final result = await showDialog<Map<String, String>>(
       context: context,
@@ -229,9 +291,9 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
   }
 
   Future<void> _pullSync() async {
-    final engine = _engine;
-    if (engine == null) return;
+    final engine = widget.engine;
     final res = await engine.syncWithServer();
+    engine.ensureAutoRolloverForMonth(_selectedMonth);
     _refresh();
     if (!mounted) return;
     if (res['success'] == true) {
@@ -248,16 +310,19 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
     }
   }
 
-  Future<void> _openSyncDialog() async {
-    final engine = _engine;
-    if (engine == null) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => SyncAndConflictDialog(
-        engine: engine,
-        onEngineChanged: _refresh,
-        onPickBackupFile: widget.onPickBackupFile,
-        onSaveBackupFile: widget.onSaveBackupFile,
+  Future<void> _openSettings({bool focusSync = false}) async {
+    final engine = widget.engine;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (ctx) => SettingsPage(
+          engine: engine,
+          monetSeedArgb: widget.monetSeedArgb,
+          focusSyncSection: focusSync,
+          onEngineChanged: _refresh,
+          onAppearanceChanged: widget.onAppearanceChanged,
+          onPickBackupFile: widget.onPickBackupFile,
+          onSaveBackupFile: widget.onSaveBackupFile,
+        ),
       ),
     );
     if (mounted) {
@@ -266,13 +331,13 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
       )
           ? _selectedMonth
           : _resolveInitialMonth(engine);
+      engine.ensureAutoRolloverForMonth(_selectedMonth);
       _refresh();
     }
   }
 
   Future<void> _openMonthPickerDialog() async {
-    final engine = _engine;
-    if (engine == null) return;
+    final engine = widget.engine;
     final months = <String>{
       _selectedMonth,
       getLocalTodayDateStr().substring(0, 7),
@@ -292,6 +357,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
       ),
     );
     if (chosen != null && mounted) {
+      engine.ensureAutoRolloverForMonth(chosen);
       setState(() {
         _selectedMonth = chosen;
       });
@@ -319,9 +385,6 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
       default:
         return WalletAndEngineTab(
           engine: engine,
-          selectedMonth: _selectedMonth,
-          onMonthChanged: (ym) => setState(() => _selectedMonth = ym),
-          onOpenSyncDialog: _openSyncDialog,
           onPullSync: _pullSync,
           onEngineChanged: _refresh,
         );
@@ -330,28 +393,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (_initError != null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('初始化失败')),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: SelectableText(
-              'Rust Core FFI 初始化失败：\n$_initError',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        ),
-      );
-    }
-
-    final engine = _engine;
-    if (engine == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final engine = widget.engine;
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -394,20 +436,16 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
         actions: <Widget>[
           SyncStatusPill(
             engine: engine,
-            onTap: _openSyncDialog,
+            onTap: () => _openSettings(focusSync: true),
           ),
-          if (widget.onToggleTheme != null)
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              padding: const EdgeInsets.all(4),
-              tooltip: '切换深浅色主题',
-              icon: Icon(
-                isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                size: 20,
-              ),
-              onPressed: widget.onToggleTheme,
-            ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            padding: const EdgeInsets.all(4),
+            tooltip: '设置',
+            icon: const Icon(Icons.settings_outlined, size: 20),
+            onPressed: () => _openSettings(),
+          ),
           const SizedBox(width: 6),
         ],
       ),
@@ -434,7 +472,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen>
           NavigationDestination(
             icon: Icon(Icons.account_balance_wallet_outlined),
             selectedIcon: Icon(Icons.account_balance_wallet),
-            label: '卡包与引擎',
+            label: '卡包与周期',
           ),
         ],
       ),
