@@ -21,8 +21,6 @@ import {
   TransactionItem,
   TransactionAggregate,
   AllocationMode,
-  FixedAsset,
-  FixedAssetWithCost,
   RecurringRule,
   SyncOpLogEntry,
   SyncConflict,
@@ -111,6 +109,22 @@ export class LedgerRepository {
         .prepare("SELECT name FROM sqlite_master WHERE type = 'view' AND name = 'v_account_dashboard'")
         .get()
     );
+    const hasFixedAssetsTable = Boolean(
+      this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fixed_assets'")
+        .get()
+    );
+    const hasFixedAssetOps = Boolean(
+      this.db
+        .prepare("SELECT 1 FROM sync_oplog WHERE entity_type = 'FIXED_ASSET' LIMIT 1")
+        .get()
+    );
+    const budgetPoolMaster = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'budget_pools'")
+      .get() as { sql: string } | undefined;
+    const hasLegacyCapitalAssetPoolConstraint = Boolean(
+      budgetPoolMaster?.sql?.includes('CAPITAL_ASSET')
+    );
     const hasDeprecatedPools = Boolean(
       this.db
         .prepare("SELECT 1 FROM budget_pools WHERE id IN ('POOL_FUND', 'POOL_ASSET') LIMIT 1")
@@ -129,6 +143,9 @@ export class LedgerRepository {
       !hasLegacyVoucherConstraint &&
       !hasAccountsTable &&
       !hasAccountDashboardView &&
+      !hasFixedAssetsTable &&
+      !hasFixedAssetOps &&
+      !hasLegacyCapitalAssetPoolConstraint &&
       !hasDeprecatedPools &&
       !hasLinkedPoolColInPt &&
       hasPtStartDate &&
@@ -319,8 +336,51 @@ export class LedgerRepository {
           }
         }
 
+        this.db.exec('DROP TABLE IF EXISTS fixed_assets;');
+        this.db.exec("DELETE FROM sync_oplog WHERE entity_type = 'FIXED_ASSET';");
         this.db.exec('DROP TABLE IF EXISTS accounts;');
         this.db.exec("DELETE FROM sync_oplog WHERE entity_type = 'ACCOUNT';");
+
+        if (hasLegacyCapitalAssetPoolConstraint) {
+          this.db.exec('DROP VIEW IF EXISTS v_monthly_budget_status;');
+          this.db.exec(`
+            CREATE TABLE budget_pools_new (
+                id                  VARCHAR(32) PRIMARY KEY,
+                name                VARCHAR(64) NOT NULL,
+                pool_type           VARCHAR(24) NOT NULL CHECK (pool_type IN (
+                                        'FIXED',
+                                        'DAILY',
+                                        'FLEX',
+                                        'EMERGENCY',
+                                        'SINKING_FUND'
+                                    )),
+                is_monthly_budget   BOOLEAN NOT NULL DEFAULT 1,
+                rollover_strategy   VARCHAR(24) NOT NULL DEFAULT 'ACCUMULATE' CHECK (rollover_strategy IN (
+                                        'ACCUMULATE',
+                                        'RESET',
+                                        'SWEEP_TO_FUND'
+                                    )),
+                description         TEXT,
+                sort_order          SMALLINT NOT NULL DEFAULT 100
+            );
+
+            INSERT INTO budget_pools_new (
+                id, name, pool_type, is_monthly_budget, rollover_strategy, description, sort_order
+            )
+            SELECT
+                id,
+                name,
+                CASE WHEN pool_type = 'CAPITAL_ASSET' THEN 'FLEX' ELSE pool_type END,
+                is_monthly_budget,
+                rollover_strategy,
+                description,
+                sort_order
+            FROM budget_pools;
+
+            DROP TABLE budget_pools;
+            ALTER TABLE budget_pools_new RENAME TO budget_pools;
+          `);
+        }
 
         // 清理未被引用的废置预算池 (POOL_FUND / POOL_ASSET)
         this.db.exec(`
@@ -1119,68 +1179,6 @@ export class LedgerRepository {
   }
 
   /**
-   * PRD 2.2 大件固定资产日均持有成本追踪计算
-   */
-  public getFixedAssetsWithCost(currentDateStr?: string): FixedAssetWithCost[] {
-    const assets = this.db
-      .prepare('SELECT * FROM fixed_assets ORDER BY id ASC')
-      .all() as any[];
-
-    const todayStr = currentDateStr ?? getLocalTodayDateStr();
-    const todayMs = new Date(todayStr).getTime();
-
-    return assets.map((asset) => {
-      const purchaseMs = new Date(asset.purchase_date).getTime();
-      const endMs =
-        asset.status === 'SOLD' && asset.resale_date
-          ? Math.min(todayMs, new Date(asset.resale_date).getTime())
-          : todayMs;
-      const diffMs = endMs - purchaseMs;
-      const daysHeld = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
-
-      const netCost = toDecimal(asset.purchase_net_cost).minus(
-        toDecimal(asset.resale_recovery ?? 0)
-      );
-      const currentDailyCost = formatCny(netCost.dividedBy(daysHeld));
-
-      let progressPercent = 0;
-      if (
-        asset.target_daily_cost != null &&
-        Number(asset.target_daily_cost) > 0
-      ) {
-        const targetCostDec = toDecimal(asset.target_daily_cost);
-        const targetDays = netCost.dividedBy(targetCostDec).toNumber();
-        if (targetDays > 0) {
-          progressPercent = Math.min(
-            100,
-            Math.max(0, Math.round((daysHeld / targetDays) * 100))
-          );
-        }
-      }
-
-      return {
-        id: Number(asset.id),
-        asset_name: String(asset.asset_name),
-        purchase_item_id: asset.purchase_item_id
-          ? Number(asset.purchase_item_id)
-          : null,
-        purchase_date: String(asset.purchase_date),
-        purchase_net_cost: formatCny(asset.purchase_net_cost),
-        target_daily_cost: asset.target_daily_cost
-          ? formatCny(asset.target_daily_cost)
-          : null,
-        status: asset.status,
-        resale_date: asset.resale_date ? String(asset.resale_date) : null,
-        resale_recovery: formatCny(asset.resale_recovery ?? 0),
-        note: asset.note ? String(asset.note) : null,
-        daysHeld,
-        currentDailyCost,
-        progressPercent,
-      };
-    });
-  }
-
-  /**
    * 应用远端同步变更日志并进行因果合并与冲突解决
    */
   public applyRemoteOpLogs(incomingOps: SyncOpLogEntry[]): {
@@ -1236,7 +1234,7 @@ export class LedgerRepository {
 
     // 3. 将胜出实体的最新状态重放至业务表
     // 按实体依赖顺序排序：
-    // BUDGET_POOL (1) -> CATEGORY (2) -> PROJECT_TAG (3) -> VOUCHER (5) -> MONTHLY_BUDGET/BUDGET (6) -> RECURRING_RULE (7) -> FIXED_ASSET (8) -> TRANSACTION (9)
+    // BUDGET_POOL (1) -> CATEGORY (2) -> PROJECT_TAG (3) -> VOUCHER (5) -> MONTHLY_BUDGET/BUDGET (6) -> RECURRING_RULE (7) -> TRANSACTION (9)
     const entityOrder: Record<string, number> = {
       BUDGET_POOL: 1,
       CATEGORY: 2,
@@ -1245,7 +1243,6 @@ export class LedgerRepository {
       MONTHLY_BUDGET: 6,
       BUDGET: 6,
       RECURRING_RULE: 7,
-      FIXED_ASSET: 8,
       TRANSACTION: 9,
     };
     const sortedWinningOps = Array.from(winningEntities.values()).sort(
@@ -1400,28 +1397,9 @@ export class LedgerRepository {
               payload.is_active ? 1 : 0
             );
           }
-        } else if (winningOp.entity_type === 'FIXED_ASSET') {
-          if (winningOp.op_type === 'DELETE') {
-            this.db.prepare('DELETE FROM fixed_assets WHERE id = ?').run(winningOp.entity_id);
-          } else {
-            this.db.prepare(`
-              INSERT OR REPLACE INTO fixed_assets (
-                id, asset_name, purchase_item_id, purchase_date, purchase_net_cost,
-                target_daily_cost, status, resale_date, resale_recovery, note
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              payload.id || Number(winningOp.entity_id),
-              payload.asset_name,
-              payload.purchase_item_id ?? null,
-              payload.purchase_date,
-              formatCny(payload.purchase_net_cost),
-              payload.target_daily_cost != null ? formatCny(payload.target_daily_cost) : '2.00',
-              payload.status ?? 'IN_USE',
-              payload.resale_date ?? null,
-              formatCny(payload.resale_recovery ?? 0),
-              payload.note ?? null
-            );
-          }
+        } else if ((winningOp.entity_type as string) === 'FIXED_ASSET') {
+          // 固定资产功能已移除，兼容忽略历史同步日志
+          continue;
         } else if (winningOp.entity_type === 'TRANSACTION') {
           const header = payload.header ?? payload;
           const items = payload.items ?? [];
@@ -1585,9 +1563,6 @@ export class LedgerRepository {
     const recurringRules = this.db
       .prepare('SELECT * FROM recurring_rules ORDER BY id ASC')
       .all() as any[];
-    const fixedAssets = this.db
-      .prepare('SELECT * FROM fixed_assets ORDER BY id ASC')
-      .all() as any[];
 
     return {
       nodeId: this.nodeId,
@@ -1596,7 +1571,6 @@ export class LedgerRepository {
       categories,
       projectTags,
       recurringRules,
-      fixedAssets,
       oplogs,
       vouchers,
       monthlyBudgets,
@@ -1617,7 +1591,6 @@ export class LedgerRepository {
         DELETE FROM sync_conflicts;
         DELETE FROM vouchers;
         DELETE FROM monthly_budgets;
-        DELETE FROM fixed_assets;
         DELETE FROM recurring_rules;
         DELETE FROM projects_and_tags;
         DELETE FROM categories;
@@ -1636,10 +1609,14 @@ export class LedgerRepository {
           if (p.id === 'POOL_FUND' || p.id === 'POOL_ASSET') {
             continue;
           }
+          const safePoolType =
+            (p.pool_type as string) === 'CAPITAL_ASSET'
+              ? 'FLEX'
+              : p.pool_type;
           stmt.run(
             p.id,
             p.name,
-            p.pool_type,
+            safePoolType,
             p.is_monthly_budget ? 1 : 0,
             p.rollover_strategy ?? 'ACCUMULATE',
             p.description ?? null,

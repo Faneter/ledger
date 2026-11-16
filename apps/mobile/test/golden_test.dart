@@ -707,11 +707,6 @@ void main() {
       (txA['header'] as Map<String, dynamic>)['id'],
       'hlc_sync.replicated_tx_id',
     );
-
-    // Fixed assets holding cost
-    final assets = eA.getFixedAssetsWithCost('2026-11-15');
-    checkEq(assets.length, 2, 'fixed_assets.count');
-    checkEq(assets[0]['days_held'], 75, 'fixed_assets[0].days_held');
   }
 
   stdout.writeln(

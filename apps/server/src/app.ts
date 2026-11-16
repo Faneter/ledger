@@ -156,7 +156,6 @@ export function createLedgerServer(
           transactions: repo.getRecentTransactions(100),
           pendingFxTransactions: repo.getPendingFxTransactions(),
           vouchers: repo.getVouchers(),
-          fixedAssets: repo.getFixedAssetsWithCost(cd),
           metadata: repo.getMetadata(),
           conflicts: repo.getConflicts(),
           oplogCount: oplogs.length,

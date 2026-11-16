@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'src/ledger_engine.dart';
 import 'src/overview_tab.dart';
+import 'src/platform_backup.dart';
 import 'src/quick_record_sheet.dart';
 import 'src/sync_dialog.dart';
 import 'src/timeline_tab.dart';
@@ -14,9 +15,16 @@ void main() {
 }
 
 class GeekLedgerApp extends StatefulWidget {
-  const GeekLedgerApp({super.key, this.engine});
+  const GeekLedgerApp({
+    super.key,
+    this.engine,
+    this.onPickBackupFile,
+    this.onSaveBackupFile,
+  });
 
   final FlutterLedgerEngine? engine;
+  final JsonFilePicker? onPickBackupFile;
+  final JsonFileSaver? onSaveBackupFile;
 
   @override
   State<GeekLedgerApp> createState() => _GeekLedgerAppState();
@@ -56,6 +64,8 @@ class _GeekLedgerAppState extends State<GeekLedgerApp> {
       home: LedgerHomeScreen(
         engine: widget.engine,
         themeMode: _themeMode,
+        onPickBackupFile: widget.onPickBackupFile,
+        onSaveBackupFile: widget.onSaveBackupFile,
         onToggleTheme: () {
           setState(() {
             _themeMode = _themeMode == ThemeMode.dark
@@ -74,17 +84,22 @@ class LedgerHomeScreen extends StatefulWidget {
     this.engine,
     this.themeMode = ThemeMode.light,
     this.onToggleTheme,
+    this.onPickBackupFile,
+    this.onSaveBackupFile,
   });
 
   final FlutterLedgerEngine? engine;
   final ThemeMode themeMode;
   final VoidCallback? onToggleTheme;
+  final JsonFilePicker? onPickBackupFile;
+  final JsonFileSaver? onSaveBackupFile;
 
   @override
   State<LedgerHomeScreen> createState() => _LedgerHomeScreenState();
 }
 
-class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
+class _LedgerHomeScreenState extends State<LedgerHomeScreen>
+    with WidgetsBindingObserver {
   FlutterLedgerEngine? _engine;
   String? _initError;
   int _tabIndex = 0;
@@ -93,13 +108,46 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   @override
   void initState() {
     super.initState();
-    try {
-      final engine = widget.engine ?? FlutterLedgerEngine();
-      _engine = engine;
-      _selectedMonth = _resolveInitialMonth(engine);
-    } catch (e) {
-      _initError = e.toString();
+    WidgetsBinding.instance.addObserver(this);
+    if (widget.engine != null) {
+      _engine = widget.engine;
+      _selectedMonth = _resolveInitialMonth(widget.engine!);
+    } else {
+      _initPersistedEngine();
     }
+  }
+
+  Future<void> _initPersistedEngine() async {
+    try {
+      final storagePath = await MobilePlatformBridge.getStorageFilePath();
+      final engine = FlutterLedgerEngine(storageFilePath: storagePath);
+      if (!mounted) return;
+      setState(() {
+        _engine = engine;
+        _selectedMonth = _resolveInitialMonth(engine);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _initError = e.toString();
+      });
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _engine?.saveToDisk();
+    }
+  }
+
+  @override
+  void dispose() {
+    _engine?.saveToDisk();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   static String _resolveInitialMonth(FlutterLedgerEngine engine) {
@@ -208,6 +256,8 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
       builder: (ctx) => SyncAndConflictDialog(
         engine: engine,
         onEngineChanged: _refresh,
+        onPickBackupFile: widget.onPickBackupFile,
+        onSaveBackupFile: widget.onSaveBackupFile,
       ),
     );
     if (mounted) {
@@ -295,7 +345,12 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
       );
     }
 
-    final engine = _engine!;
+    final engine = _engine;
+    if (engine == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cs = Theme.of(context).colorScheme;
 

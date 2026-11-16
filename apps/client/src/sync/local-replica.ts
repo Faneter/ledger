@@ -17,8 +17,6 @@ import {
   TransactionItem,
   TransactionAggregate,
   AllocationMode,
-  FixedAsset,
-  FixedAssetWithCost,
   RecurringRule,
   SyncOpLogEntry,
   SyncEntityType,
@@ -53,7 +51,6 @@ export interface FullSyncBundle {
   categories?: Category[];
   projectTags?: ProjectTag[];
   recurringRules?: RecurringRule[];
-  fixedAssets?: FixedAsset[];
   transactions?: TransactionAggregate[];
 }
 
@@ -67,7 +64,6 @@ export interface LocalReplicaState {
   monthlyBudgets: MonthlyBudget[];
   projectTags: ProjectTag[];
   vouchers: Voucher[];
-  fixedAssets: FixedAsset[];
   recurringRules: RecurringRule[];
   transactions: TransactionAggregate[];
   oplogs: SyncOpLogEntry[];
@@ -287,33 +283,6 @@ export const SEED_VOUCHERS: Voucher[] = [
   },
 ];
 
-export const SEED_FIXED_ASSETS: FixedAsset[] = [
-  {
-    id: 1,
-    asset_name: '二手 iPhone 13 mini',
-    purchase_item_id: null,
-    purchase_date: '2026-09-01',
-    purchase_net_cost: '1150.00',
-    target_daily_cost: '2.00',
-    status: 'IN_USE',
-    resale_date: null,
-    resale_recovery: '0.00',
-    note: '购于 2026-09-01，目标日均 2 元',
-  },
-  {
-    id: 2,
-    asset_name: '希捷3T监控级硬盘+硬盘盒',
-    purchase_item_id: null,
-    purchase_date: '2026-10-01',
-    purchase_net_cost: '409.80',
-    target_daily_cost: '1.00',
-    status: 'IN_USE',
-    resale_date: null,
-    resale_recovery: '0.00',
-    note: '购于 2026-10-01，目标日均 1 元',
-  },
-];
-
 export const SEED_RECURRING_RULES: RecurringRule[] = [
   {
     id: 1,
@@ -477,6 +446,10 @@ export class LocalLedgerEngine {
       delete (target as any).accounts;
       cleaned = true;
     }
+    if ('fixedAssets' in (target as any)) {
+      delete (target as any).fixedAssets;
+      cleaned = true;
+    }
     if (Array.isArray(target.vouchers)) {
       for (const v of target.vouchers) {
         if ((v as any).voucher_type === 'REPAY_COUPON') {
@@ -584,7 +557,6 @@ export class LocalLedgerEngine {
       monthlyBudgets: JSON.parse(JSON.stringify(CLEAN_SEED_MONTHLY_BUDGETS)),
       projectTags: [],
       vouchers: [],
-      fixedAssets: [],
       recurringRules: [],
       transactions: [],
       oplogs: [],
@@ -610,7 +582,6 @@ export class LocalLedgerEngine {
       monthlyBudgets: JSON.parse(JSON.stringify(SEED_MONTHLY_BUDGETS)),
       projectTags: JSON.parse(JSON.stringify(DEFAULT_PROJECT_TAGS)),
       vouchers: JSON.parse(JSON.stringify(SEED_VOUCHERS)),
-      fixedAssets: JSON.parse(JSON.stringify(SEED_FIXED_ASSETS)),
       recurringRules: JSON.parse(JSON.stringify(SEED_RECURRING_RULES)),
       transactions: [],
       oplogs: [],
@@ -1970,37 +1941,6 @@ export class LocalLedgerEngine {
   }
 
   // --------------------------------------------------------------------------
-  // 二手回血冲抵固定资产
-  // --------------------------------------------------------------------------
-  public recordAssetResale(
-    assetId: number,
-    resaleRecovery: string
-  ): FixedAsset {
-    const asset = this.state.fixedAssets.find((a) => a.id === assetId);
-    if (!asset) throw new Error(`Asset ID "${assetId}" not found`);
-
-    asset.resale_recovery = formatCny(resaleRecovery);
-    asset.status = 'SOLD';
-    asset.resale_date = getLocalTodayDateStr();
-
-    const hlc = this.hlc.now();
-    const op: SyncOpLogEntry = {
-      hlc,
-      node_id: this.state.nodeId,
-      entity_type: 'FIXED_ASSET',
-      entity_id: String(assetId),
-      op_type: 'UPSERT',
-      payload_json: JSON.stringify(asset),
-      created_at: new Date().toISOString(),
-    };
-    this.state.oplogs.push(op);
-    this.state.pendingSyncOps.push(op);
-
-    this.saveToStorage();
-    return asset;
-  }
-
-  // --------------------------------------------------------------------------
   // 看板与统计查询方法
   // --------------------------------------------------------------------------
   public getPendingFxTransactions(): TransactionAggregate[] {
@@ -2212,47 +2152,6 @@ export class LocalLedgerEngine {
     };
   }
 
-  public getFixedAssetsWithCost(currentDate = getLocalTodayDateStr()): FixedAssetWithCost[] {
-    const currDateObj = new Date(currentDate);
-
-    return this.state.fixedAssets.map((asset) => {
-      const pDateObj = new Date(asset.purchase_date);
-      let endDateObj = currDateObj;
-      if (asset.status === 'SOLD' && asset.resale_date) {
-        const resaleObj = new Date(asset.resale_date);
-        endDateObj =
-          resaleObj.getTime() < currDateObj.getTime() ? resaleObj : currDateObj;
-      }
-
-      const diffMs = endDateObj.getTime() - pDateObj.getTime();
-      const daysHeld = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
-
-      const netCost = toDecimal(asset.purchase_net_cost).minus(
-        toDecimal(asset.resale_recovery ?? 0)
-      );
-      const currentDaily = formatCny(netCost.dividedBy(daysHeld));
-
-      let progressPercent = 0;
-      if (asset.target_daily_cost) {
-        const targetCostDec = toDecimal(asset.target_daily_cost);
-        if (targetCostDec.greaterThan(0)) {
-          const targetDays = netCost.dividedBy(targetCostDec).toNumber();
-          progressPercent = Math.min(
-            100,
-            Math.max(0, Math.round((daysHeld / targetDays) * 100))
-          );
-        }
-      }
-
-      return {
-        ...asset,
-        daysHeld,
-        currentDailyCost: currentDaily,
-        progressPercent,
-      };
-    });
-  }
-
   // --------------------------------------------------------------------------
   // 分布式同步、模拟并发冲突与防炸机演练
   // --------------------------------------------------------------------------
@@ -2395,7 +2294,8 @@ export class LocalLedgerEngine {
         } else if (entityType === 'RECURRING_RULE') {
           this.state.recurringRules = this.state.recurringRules.filter((r) => String(r.id) !== entityId);
         } else if (entityType === 'FIXED_ASSET') {
-          this.state.fixedAssets = this.state.fixedAssets.filter((f) => String(f.id) !== entityId);
+          // 固定资产功能已移除，兼容忽略历史 DELETE 日志
+          continue;
         }
         continue;
       }
@@ -2466,13 +2366,8 @@ export class LocalLedgerEngine {
             this.state.recurringRules.push(rule);
           }
         } else if (entityType === 'FIXED_ASSET') {
-          const asset = payload as FixedAsset;
-          const idx = this.state.fixedAssets.findIndex((a) => a.id === asset.id);
-          if (idx !== -1) {
-            this.state.fixedAssets[idx] = { ...this.state.fixedAssets[idx], ...asset };
-          } else {
-            this.state.fixedAssets.push(asset);
-          }
+          // 固定资产功能已移除，兼容忽略历史同步日志
+          continue;
         }
       } catch (e) {
         console.warn('[LocalLedgerEngine] Replay payload parse error:', e);
@@ -2680,12 +2575,11 @@ export class LocalLedgerEngine {
     this.state.categories = cloneOrFallback(bundle.categories, DEFAULT_CATEGORIES);
     this.state.projectTags = cloneOrFallback(bundle.projectTags, []);
     this.state.recurringRules = cloneOrFallback(bundle.recurringRules, []);
-    this.state.fixedAssets = cloneOrFallback(bundle.fixedAssets, []);
     this.state.vouchers = cloneOrFallback(bundle.vouchers, []);
     this.state.monthlyBudgets = cloneOrFallback(bundle.monthlyBudgets, CLEAN_SEED_MONTHLY_BUDGETS);
     this.state.transactions = cloneOrFallback(bundle.transactions, []);
     this.state.oplogs = cloneOrFallback(bundle.oplogs, []).filter(
-      (op: any) => op?.entity_type !== 'ACCOUNT'
+      (op: any) => op?.entity_type !== 'ACCOUNT' && op?.entity_type !== 'FIXED_ASSET'
     );
 
     this.cleanupDeprecatedPoolsFromState(this.state);
@@ -2719,7 +2613,6 @@ export class LocalLedgerEngine {
       categories: this.state.categories,
       projectTags: this.state.projectTags,
       recurringRules: this.state.recurringRules,
-      fixedAssets: this.state.fixedAssets,
       oplogs: this.state.oplogs,
       vouchers: this.state.vouchers,
       monthlyBudgets: this.state.monthlyBudgets,

@@ -158,24 +158,34 @@ class FlutterLedgerEngine {
     String nodeId = 'mobile-flutter',
     String serverUrl = 'http://127.0.0.1:3001',
     JsonHttpPost? httpPost,
+    String? storageFilePath,
     bool seedDemoData = false,
   })  : _bridge = bridge ?? RustCoreBridge.instance(),
         _httpPost = httpPost ?? _defaultJsonHttpPost,
+        _storageFilePath = storageFilePath,
         hlc = HybridLogicalClock(
           nodeId: nodeId,
           bridge: bridge ?? RustCoreBridge.instance(),
         ) {
     this.serverUrl = serverUrl;
-    if (seedDemoData) {
-      resetToDefaultSeed();
-    } else {
-      resetToCleanState();
+    _suppressPersist = true;
+    try {
+      if (seedDemoData) {
+        resetToDefaultSeed();
+      } else {
+        resetToCleanState();
+      }
+      _loadFromDisk();
+    } finally {
+      _suppressPersist = false;
     }
   }
 
   final RustCoreBridge _bridge;
   final JsonHttpPost _httpPost;
+  final String? _storageFilePath;
   final HybridLogicalClock hlc;
+  bool _suppressPersist = false;
 
   List<Map<String, dynamic>> budgetPools = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> monthlyBudgets = <Map<String, dynamic>>[];
@@ -184,7 +194,6 @@ class FlutterLedgerEngine {
   List<Map<String, dynamic>> transactions = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> vouchers = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> recurringRules = <Map<String, dynamic>>[];
-  List<Map<String, dynamic>> fixedAssets = <Map<String, dynamic>>[];
   Map<String, String> settings = <String, String>{};
   List<Map<String, dynamic>> syncOplog = <Map<String, dynamic>>[];
 
@@ -201,10 +210,9 @@ class FlutterLedgerEngine {
 
   int _txSeq = 0;
   int _itemSeq = 0;
-  int _voucherSeq = 2;
-  int _assetSeq = 2;
-  int _monthlyBudgetSeq = 4;
-  int _recurringSeq = 2;
+  int _voucherSeq = 0;
+  int _monthlyBudgetSeq = 0;
+  int _recurringSeq = 0;
 
   int get pendingSyncCount => math.max(0, syncOplog.length - syncedOplogCount);
 
@@ -478,34 +486,6 @@ class FlutterLedgerEngine {
     },
   ];
 
-  static const List<Map<String, dynamic>> _seedFixedAssets =
-      <Map<String, dynamic>>[
-    <String, dynamic>{
-      'id': 1,
-      'asset_name': '二手 iPhone 13 mini',
-      'purchase_item_id': null,
-      'purchase_date': '2026-09-01',
-      'purchase_net_cost': '1150.00',
-      'target_daily_cost': '2.00',
-      'status': 'IN_USE',
-      'resale_date': null,
-      'resale_recovery': '0.00',
-      'note': '购于 2026-09-01，目标日均 2 元',
-    },
-    <String, dynamic>{
-      'id': 2,
-      'asset_name': '希捷3T监控级硬盘+硬盘盒',
-      'purchase_item_id': null,
-      'purchase_date': '2026-10-01',
-      'purchase_net_cost': '409.80',
-      'target_daily_cost': '1.00',
-      'status': 'IN_USE',
-      'resale_date': null,
-      'resale_recovery': '0.00',
-      'note': '购于 2026-10-01，目标日均 1 元',
-    },
-  ];
-
   static const List<Map<String, dynamic>> _seedRecurringRules =
       <Map<String, dynamic>>[
     <String, dynamic>{
@@ -543,7 +523,6 @@ class FlutterLedgerEngine {
     categories = _cloneListOfMaps(_seedCategories);
     projectTags = _cloneListOfMaps(_seedProjectTags);
     vouchers = _cloneListOfMaps(_seedVouchers);
-    fixedAssets = _cloneListOfMaps(_seedFixedAssets);
     recurringRules = _cloneListOfMaps(_seedRecurringRules);
     transactions = <Map<String, dynamic>>[];
     syncOplog = <Map<String, dynamic>>[];
@@ -563,9 +542,9 @@ class FlutterLedgerEngine {
     _txSeq = 0;
     _itemSeq = 0;
     _voucherSeq = 2;
-    _assetSeq = 2;
     _monthlyBudgetSeq = 4;
     _recurringSeq = 2;
+    saveToDisk();
   }
 
   /// Resets engine state to a completely empty personal ledger with zero initial default data.
@@ -575,7 +554,6 @@ class FlutterLedgerEngine {
     categories = <Map<String, dynamic>>[];
     projectTags = <Map<String, dynamic>>[];
     vouchers = <Map<String, dynamic>>[];
-    fixedAssets = <Map<String, dynamic>>[];
     recurringRules = <Map<String, dynamic>>[];
     transactions = <Map<String, dynamic>>[];
     syncOplog = <Map<String, dynamic>>[];
@@ -595,9 +573,9 @@ class FlutterLedgerEngine {
     _txSeq = 0;
     _itemSeq = 0;
     _voucherSeq = 0;
-    _assetSeq = 0;
     _monthlyBudgetSeq = 0;
     _recurringSeq = 0;
+    saveToDisk();
   }
 
   String _nextTxId() {
@@ -633,6 +611,7 @@ class FlutterLedgerEngine {
       'payload_json': jsonEncode(payload),
       'created_at': _nowIso(),
     });
+    saveToDisk();
   }
 
   void _assertConservationLaw(Map<String, dynamic> txAgg) {
@@ -2177,90 +2156,6 @@ class FlutterLedgerEngine {
   }
 
   // --------------------------------------------------------------------------
-  // Fixed Assets & Daily Holding Cost
-  // --------------------------------------------------------------------------
-
-  Map<String, dynamic> upsertFixedAsset({
-    int? id,
-    required String assetName,
-    required String purchaseDate,
-    required String purchaseNetCost,
-    String targetDailyCost = '1.00',
-    String status = 'IN_USE',
-    String? resaleDate,
-    String resaleRecovery = '0.00',
-    String? note,
-  }) {
-    if (id != null) {
-      final idx = fixedAssets.indexWhere((a) => a['id'] == id);
-      if (idx == -1) throw ArgumentError('FixedAsset "$id" not found');
-      final a = fixedAssets[idx];
-      a['asset_name'] = assetName;
-      a['purchase_date'] = purchaseDate;
-      a['purchase_net_cost'] = _bridge.formatCny(purchaseNetCost);
-      a['target_daily_cost'] = _bridge.formatCny(targetDailyCost);
-      a['status'] = status;
-      a['resale_date'] = resaleDate;
-      a['resale_recovery'] = _bridge.formatCny(resaleRecovery);
-      a['note'] = note;
-      _appendOpLog('FIXED_ASSET', '$id', 'UPSERT', a);
-      return _cloneMap(a);
-    }
-    _assetSeq += 1;
-    final asset = <String, dynamic>{
-      'id': _assetSeq,
-      'asset_name': assetName,
-      'purchase_item_id': null,
-      'purchase_date': purchaseDate,
-      'purchase_net_cost': _bridge.formatCny(purchaseNetCost),
-      'target_daily_cost': _bridge.formatCny(targetDailyCost),
-      'status': status,
-      'resale_date': resaleDate,
-      'resale_recovery': _bridge.formatCny(resaleRecovery),
-      'note': note,
-    };
-    fixedAssets.add(asset);
-    _appendOpLog('FIXED_ASSET', '${asset['id']}', 'UPSERT', asset);
-    return _cloneMap(asset);
-  }
-
-  Map<String, dynamic> recordAssetResale(int assetId, String resaleRecovery) {
-    final idx = fixedAssets.indexWhere((a) => a['id'] == assetId);
-    if (idx == -1) throw ArgumentError('FixedAsset "$assetId" not found');
-    final a = fixedAssets[idx];
-    a['status'] = 'SOLD';
-    a['resale_date'] = getLocalTodayDateStr();
-    a['resale_recovery'] = _bridge.formatCny(resaleRecovery);
-    _appendOpLog('FIXED_ASSET', '$assetId', 'UPSERT', a);
-    return _cloneMap(a);
-  }
-
-  List<Map<String, dynamic>> getFixedAssetsWithCost([String? currentDateStr]) {
-    final todayStr = currentDateStr ?? getLocalTodayDateStr();
-    final todayUtc = DateTime.parse('${todayStr}T00:00:00Z');
-    return fixedAssets.map((a) {
-      final buyUtc = DateTime.parse('${a['purchase_date']}T00:00:00Z');
-      var endUtc = todayUtc;
-      if (a['status'] == 'SOLD' && a['resale_date'] != null) {
-        final resaleUtc = DateTime.parse('${a['resale_date']}T00:00:00Z');
-        if (resaleUtc.isBefore(endUtc)) {
-          endUtc = resaleUtc;
-        }
-      }
-      final daysHeld = math.max(1, endUtc.difference(buyUtc).inDays);
-      final netCostCents = _FixedMath.toCents(_bridge, a['purchase_net_cost'] as Object) -
-          _FixedMath.toCents(_bridge, (a['resale_recovery'] as Object?) ?? '0.00');
-      final dailyCostCents =
-          _FixedMath.divRoundHalfUp(netCostCents, BigInt.from(daysHeld));
-      final copy = _cloneMap(a);
-      copy['days_held'] = daysHeld;
-      copy['net_cost'] = _FixedMath.fromCents(netCostCents);
-      copy['current_daily_cost'] = _FixedMath.fromCents(dailyCostCents);
-      return copy;
-    }).toList();
-  }
-
-  // --------------------------------------------------------------------------
   // Sync OpLog LWW Merge
   // --------------------------------------------------------------------------
 
@@ -2428,6 +2323,7 @@ class FlutterLedgerEngine {
 
   void dismissRecurringRule(int ruleId) {
     dismissedRecurringRuleIds.add(ruleId);
+    saveToDisk();
   }
 
   Map<String, dynamic> upsertRecurringRule({
@@ -2670,6 +2566,7 @@ class FlutterLedgerEngine {
         settings['fx_monthly_cashback_cap_cny'] = _bridge.formatCny(cleanCap);
       }
     }
+    saveToDisk();
   }
 
   // --------------------------------------------------------------------------
@@ -2697,34 +2594,198 @@ class FlutterLedgerEngine {
     return fallback;
   }
 
+  static int _asInt(dynamic v, [int fallback = 0]) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) {
+      final trimmed = v.trim();
+      final i = int.tryParse(trimmed);
+      if (i != null) return i;
+      final d = double.tryParse(trimmed);
+      if (d != null) return d.toInt();
+    }
+    return fallback;
+  }
+
+  static int? _asNullableInt(dynamic v) {
+    if (v == null) return null;
+    if (v is String && v.trim().isEmpty) return null;
+    return _asInt(v, 0);
+  }
+
+  static String _asStr(dynamic v, [String fallback = '']) {
+    if (v == null) return fallback;
+    return v.toString();
+  }
+
+  static String? _asNullableStr(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString();
+    return s.isEmpty ? null : s;
+  }
+
+  String _asMoney(dynamic v, [String fallback = '0.00']) {
+    if (v == null) return fallback;
+    if (v is String && v.trim().isEmpty) return fallback;
+    try {
+      return _bridge.formatCny(v as Object);
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  String? _asNullableMoney(dynamic v) {
+    if (v == null) return null;
+    if (v is String && v.trim().isEmpty) return null;
+    try {
+      return _bridge.formatCny(v as Object);
+    } catch (_) {
+      return null;
+    }
+  }
+
   void _recomputeSeqWatermarks() {
     var maxVoucherId = 0;
     for (final v in vouchers) {
-      final id = (v['id'] as num?)?.toInt() ?? 0;
+      final id = _asInt(v['id']);
       if (id > maxVoucherId) maxVoucherId = id;
     }
     _voucherSeq = maxVoucherId;
 
-    var maxAssetId = 0;
-    for (final a in fixedAssets) {
-      final id = (a['id'] as num?)?.toInt() ?? 0;
-      if (id > maxAssetId) maxAssetId = id;
-    }
-    _assetSeq = maxAssetId;
-
     var maxMbId = 0;
     for (final b in monthlyBudgets) {
-      final id = (b['id'] as num?)?.toInt() ?? 0;
+      final id = _asInt(b['id']);
       if (id > maxMbId) maxMbId = id;
     }
     _monthlyBudgetSeq = maxMbId;
 
     var maxRuleId = 0;
     for (final r in recurringRules) {
-      final id = (r['id'] as num?)?.toInt() ?? 0;
+      final id = _asInt(r['id']);
       if (id > maxRuleId) maxRuleId = id;
     }
     _recurringSeq = maxRuleId;
+
+    var maxTxSeq = 0;
+    var maxItemId = 0;
+    final txMobilePattern = RegExp(r'^tx_mobile_(\d+)$');
+    for (final tx in transactions) {
+      final h = tx['header'] as Map<String, dynamic>?;
+      final txId = h?['id']?.toString() ?? '';
+      final m = txMobilePattern.firstMatch(txId);
+      if (m != null) {
+        final seq = int.tryParse(m.group(1)!) ?? 0;
+        if (seq > maxTxSeq) maxTxSeq = seq;
+      }
+      final items = tx['items'];
+      if (items is List) {
+        for (final rawItem in items) {
+          if (rawItem is Map) {
+            final itemId = _asInt(rawItem['id']);
+            if (itemId > maxItemId) maxItemId = itemId;
+          }
+        }
+      }
+    }
+    if (maxTxSeq > _txSeq) _txSeq = maxTxSeq;
+    if (maxItemId > _itemSeq) _itemSeq = maxItemId;
+
+    for (final op in syncOplog) {
+      final hlcStr = (op['hlc'] ?? op['hlc_ts']) as String?;
+      if (hlcStr != null && hlcStr.isNotEmpty) {
+        try {
+          hlc.receive(hlcStr);
+        } catch (_) {}
+      }
+    }
+  }
+
+  void saveToDisk() {
+    if (_suppressPersist || _storageFilePath == null) return;
+    try {
+      final file = File(_storageFilePath);
+      final dir = file.parent;
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      final snapshot = <String, dynamic>{
+        'schemaVersion': 1,
+        ...exportFullSyncBundle(),
+        'serverUrl': serverUrl,
+        'serverEpochId': serverEpochId,
+        'serverResetDetected': serverResetDetected,
+        'isOfflineMode': isOfflineMode,
+        'lastSyncAt': lastSyncAt,
+        'lastSyncError': lastSyncError,
+        'syncedOplogCount': syncedOplogCount,
+        'conflicts': _cloneListOfMaps(conflicts),
+        'dismissedRecurringRuleIds': dismissedRecurringRuleIds.toList(),
+        'txSeq': _txSeq,
+        'itemSeq': _itemSeq,
+      };
+      final encoded = jsonEncode(snapshot);
+      final tmpFile = File('${file.path}.tmp');
+      tmpFile.writeAsStringSync(encoded, flush: true);
+      if (file.existsSync()) {
+        try {
+          tmpFile.renameSync(file.path);
+          return;
+        } catch (_) {
+          // Fallback on filesystems disallowing overwrite on rename
+        }
+      }
+      file.writeAsStringSync(encoded, flush: true);
+      if (tmpFile.existsSync()) {
+        try {
+          tmpFile.deleteSync();
+        } catch (_) {}
+      }
+    } catch (_) {
+      // Avoid crashing UI actions on transient storage IO failures
+    }
+  }
+
+  void _loadFromDisk() {
+    if (_storageFilePath == null) return;
+    try {
+      final file = File(_storageFilePath);
+      if (!file.existsSync()) return;
+      final raw = file.readAsStringSync().trim();
+      if (raw.isEmpty) return;
+      final decoded = jsonDecode(raw.replaceFirst('\uFEFF', ''));
+      if (decoded is! Map) return;
+      final map = Map<String, dynamic>.from(decoded);
+      importFullSyncBundle(map);
+      if (map['serverUrl'] is String &&
+          (map['serverUrl'] as String).trim().isNotEmpty) {
+        serverUrl = (map['serverUrl'] as String).trim();
+      }
+      serverEpochId = _asNullableStr(map['serverEpochId']);
+      serverResetDetected = _asBool(map['serverResetDetected']);
+      isOfflineMode = _asBool(map['isOfflineMode']);
+      lastSyncAt = _asNullableStr(map['lastSyncAt']);
+      lastSyncError = _asNullableStr(map['lastSyncError']);
+      syncedOplogCount = _asInt(map['syncedOplogCount']).clamp(
+        0,
+        syncOplog.length,
+      );
+      if (map['conflicts'] is List) {
+        conflicts = (map['conflicts'] as List<dynamic>)
+            .whereType<Map<dynamic, dynamic>>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      if (map['dismissedRecurringRuleIds'] is List) {
+        dismissedRecurringRuleIds = (map['dismissedRecurringRuleIds'] as List<dynamic>)
+            .map((e) => _asInt(e))
+            .where((id) => id > 0)
+            .toSet();
+      }
+      _txSeq = math.max(_txSeq, _asInt(map['txSeq']));
+      _itemSeq = math.max(_itemSeq, _asInt(map['itemSeq']));
+    } catch (_) {
+      // Ignore corrupt disk cache gracefully instead of blocking app launch
+    }
   }
 
   Future<Map<String, dynamic>> syncWithServer({String? baseUrl}) async {
@@ -2790,9 +2851,15 @@ class FlutterLedgerEngine {
       }
 
       if (data['fullBundle'] is Map) {
-        importFullSyncBundle(
-          Map<String, dynamic>.from(data['fullBundle'] as Map<dynamic, dynamic>),
-        );
+        final prevSuppress = _suppressPersist;
+        _suppressPersist = true;
+        try {
+          importFullSyncBundle(
+            Map<String, dynamic>.from(data['fullBundle'] as Map<dynamic, dynamic>),
+          );
+        } finally {
+          _suppressPersist = prevSuppress;
+        }
       }
       if (data['conflicts'] is List) {
         conflicts = (data['conflicts'] as List<dynamic>)
@@ -2820,6 +2887,7 @@ class FlutterLedgerEngine {
       };
     } finally {
       isSyncing = false;
+      saveToDisk();
     }
   }
 
@@ -2840,9 +2908,15 @@ class FlutterLedgerEngine {
       }
       serverResetDetected = false;
       if (data['fullBundle'] is Map) {
-        importFullSyncBundle(
-          Map<String, dynamic>.from(data['fullBundle'] as Map<dynamic, dynamic>),
-        );
+        final prevSuppress = _suppressPersist;
+        _suppressPersist = true;
+        try {
+          importFullSyncBundle(
+            Map<String, dynamic>.from(data['fullBundle'] as Map<dynamic, dynamic>),
+          );
+        } finally {
+          _suppressPersist = prevSuppress;
+        }
       }
       if (data['conflicts'] is List) {
         conflicts = (data['conflicts'] as List<dynamic>)
@@ -2861,6 +2935,7 @@ class FlutterLedgerEngine {
       rethrow;
     } finally {
       isSyncing = false;
+      saveToDisk();
     }
   }
 
@@ -2894,6 +2969,7 @@ class FlutterLedgerEngine {
       rethrow;
     } finally {
       isSyncing = false;
+      saveToDisk();
     }
   }
 
@@ -2914,6 +2990,7 @@ class FlutterLedgerEngine {
           .whereType<Map<dynamic, dynamic>>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      saveToDisk();
     }
     return syncWithServer(baseUrl: targetBase);
   }
@@ -2927,7 +3004,6 @@ class FlutterLedgerEngine {
       'categories': _cloneListOfMaps(categories),
       'projectTags': _cloneListOfMaps(projectTags),
       'vouchers': _cloneListOfMaps(vouchers),
-      'fixedAssets': _cloneListOfMaps(fixedAssets),
       'recurringRules': _cloneListOfMaps(recurringRules),
       'transactions': _cloneListOfMaps(transactions),
       'settings': Map<String, String>.from(settings),
@@ -2938,16 +3014,31 @@ class FlutterLedgerEngine {
   String exportBackupJson() =>
       const JsonEncoder.withIndent('  ').convert(exportFullSyncBundle());
 
-  Map<String, int> importFullSyncBundle(Map<String, dynamic> map) {
+  Map<String, int> importFullSyncBundle(Map<String, dynamic> rawMap) {
+    final map = rawMap['bundle'] is Map
+        ? Map<String, dynamic>.from(rawMap['bundle'] as Map<dynamic, dynamic>)
+        : rawMap;
+
     if (map['budgetPools'] is List) {
       budgetPools = (map['budgetPools'] as List<dynamic>)
           .whereType<Map<dynamic, dynamic>>()
           .map((e) {
             final row = Map<String, dynamic>.from(e);
+            final rawType = _asStr(row['pool_type'], 'FLEX');
+            row['id'] = _asStr(row['id']);
+            row['name'] = _asStr(row['name'], row['id'] as String);
+            row['pool_type'] =
+                rawType == 'CAPITAL_ASSET' ? 'FLEX' : rawType;
             row['is_monthly_budget'] = _asBool(
               row['is_monthly_budget'],
               fallback: true,
             );
+            row['rollover_strategy'] = _asStr(
+              row['rollover_strategy'],
+              'ACCUMULATE',
+            );
+            row['description'] = _asNullableStr(row['description']);
+            row['sort_order'] = _asInt(row['sort_order'], 100);
             return row;
           })
           .where(
@@ -2958,7 +3049,18 @@ class FlutterLedgerEngine {
     if (map['monthlyBudgets'] is List) {
       monthlyBudgets = (map['monthlyBudgets'] as List<dynamic>)
           .whereType<Map<dynamic, dynamic>>()
-          .map((e) => Map<String, dynamic>.from(e))
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            row['id'] = _asInt(row['id']);
+            row['year_month'] = _asStr(row['year_month']);
+            row['pool_id'] = _asStr(row['pool_id']);
+            row['base_allocation'] = _asMoney(row['base_allocation']);
+            row['rollover_from_prev'] = _asMoney(row['rollover_from_prev']);
+            row['reserved_fixed'] = _asMoney(row['reserved_fixed']);
+            row['swept_to_fund'] = _asMoney(row['swept_to_fund']);
+            row['note'] = _asNullableStr(row['note']);
+            return row;
+          })
           .where(
             (b) =>
                 b['pool_id'] != 'POOL_FUND' && b['pool_id'] != 'POOL_ASSET',
@@ -2970,10 +3072,17 @@ class FlutterLedgerEngine {
           .whereType<Map<dynamic, dynamic>>()
           .map((e) {
             final row = Map<String, dynamic>.from(e);
-            if (row['default_pool_id'] == 'POOL_FUND' ||
-                row['default_pool_id'] == 'POOL_ASSET') {
-              row['default_pool_id'] = 'POOL_FLEX';
-            }
+            row['id'] = _asStr(row['id']);
+            row['parent_id'] = _asNullableStr(row['parent_id']);
+            row['name'] = _asStr(row['name'], row['id'] as String);
+            final rawPool = _asStr(row['default_pool_id'], 'POOL_FLEX');
+            row['default_pool_id'] =
+                (rawPool == 'POOL_FUND' || rawPool == 'POOL_ASSET')
+                    ? 'POOL_FLEX'
+                    : rawPool;
+            row['icon_name'] = _asNullableStr(row['icon_name']);
+            row['keywords'] = _asNullableStr(row['keywords']);
+            row['sort_order'] = _asInt(row['sort_order'], 100);
             return row;
           })
           .toList();
@@ -2984,6 +3093,12 @@ class FlutterLedgerEngine {
           .map((e) {
             final row = Map<String, dynamic>.from(e);
             row.remove('linked_pool_id');
+            row['id'] = _asStr(row['id']);
+            row['name'] = _asStr(row['name'], row['id'] as String);
+            row['tag_type'] = _asStr(row['tag_type'], 'PROJECT');
+            row['target_budget'] = _asNullableMoney(row['target_budget']);
+            row['start_date'] = _asNullableStr(row['start_date']);
+            row['end_date'] = _asNullableStr(row['end_date']);
             row['is_active'] = _asBool(row['is_active'], fallback: true);
             return row;
           })
@@ -2992,13 +3107,22 @@ class FlutterLedgerEngine {
     if (map['vouchers'] is List) {
       vouchers = (map['vouchers'] as List<dynamic>)
           .whereType<Map<dynamic, dynamic>>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
-    if (map['fixedAssets'] is List) {
-      fixedAssets = (map['fixedAssets'] as List<dynamic>)
-          .whereType<Map<dynamic, dynamic>>()
-          .map((e) => Map<String, dynamic>.from(e))
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            row['id'] = _asInt(row['id']);
+            row['title'] = _asStr(row['title'], '优惠券');
+            final rawType = _asStr(row['voucher_type'], 'FREE_COUPON');
+            row['voucher_type'] =
+                rawType == 'REPAY_COUPON' ? 'FREE_COUPON' : rawType;
+            row['face_value'] = _asMoney(row['face_value']);
+            row['acquire_cost'] = _asMoney(row['acquire_cost']);
+            row['min_spend'] = _asMoney(row['min_spend']);
+            row['status'] = _asStr(row['status'], 'AVAILABLE');
+            row['purchase_tx_id'] = _asNullableStr(row['purchase_tx_id']);
+            row['used_tx_id'] = _asNullableStr(row['used_tx_id']);
+            row['expire_date'] = _asNullableStr(row['expire_date']);
+            return row;
+          })
           .toList();
     }
     if (map['recurringRules'] is List) {
@@ -3006,6 +3130,19 @@ class FlutterLedgerEngine {
           .whereType<Map<dynamic, dynamic>>()
           .map((e) {
             final row = Map<String, dynamic>.from(e);
+            row['id'] = _asInt(row['id']);
+            row['title'] = _asStr(row['title'], '固定规则');
+            row['rule_type'] = _asStr(row['rule_type'], 'FIXED_EXPENSE');
+            row['cron_cycle'] = _asStr(row['cron_cycle'], 'MONTHLY');
+            row['trigger_day'] = _asInt(row['trigger_day'], 1).clamp(1, 31);
+            row['currency'] = _asStr(row['currency'], 'CNY');
+            row['amount'] = _asMoney(row['amount']);
+            row['category_id'] = _asNullableStr(row['category_id']);
+            final rawPool = _asNullableStr(row['budget_pool_id']);
+            row['budget_pool_id'] =
+                (rawPool == 'POOL_FUND' || rawPool == 'POOL_ASSET')
+                    ? 'POOL_FLEX'
+                    : rawPool;
             row['auto_reserve_budget'] = _asBool(
               row['auto_reserve_budget'],
               fallback: true,
@@ -3021,52 +3158,189 @@ class FlutterLedgerEngine {
           .whereType<Map<dynamic, dynamic>>()
           .map((e) {
             final row = Map<String, dynamic>.from(e);
-            if (row['header'] is Map) {
-              final h = Map<String, dynamic>.from(row['header'] as Map<dynamic, dynamic>);
-              h['is_deleted'] = _asBool(h['is_deleted']);
-              row['header'] = h;
+            final rawHeader = row['header'] is Map
+                ? Map<String, dynamic>.from(
+                    row['header'] as Map<dynamic, dynamic>,
+                  )
+                : Map<String, dynamic>.from(row);
+            rawHeader.remove('account_id');
+            rawHeader.remove('target_account_id');
+            final txId = _asStr(rawHeader['id']);
+            final rawDate = _asStr(
+              rawHeader['tx_date'],
+              getLocalTodayDateStr(),
+            );
+            final txDate =
+                rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
+            rawHeader['id'] = txId;
+            rawHeader['tx_date'] = txDate;
+            rawHeader['tx_type'] = _asStr(rawHeader['tx_type'], 'EXPENSE');
+            rawHeader['total_gross'] = _asMoney(rawHeader['total_gross']);
+            rawHeader['platform_discount'] =
+                _asMoney(rawHeader['platform_discount']);
+            rawHeader['payment_discount'] =
+                _asMoney(rawHeader['payment_discount']);
+            rawHeader['total_net'] = _asMoney(rawHeader['total_net']);
+            rawHeader['allocation_mode'] =
+                _asStr(rawHeader['allocation_mode'], 'SINGLE');
+            rawHeader['original_currency'] =
+                _asStr(rawHeader['original_currency'], 'CNY');
+            rawHeader['original_amount'] =
+                _asNullableMoney(rawHeader['original_amount']);
+            rawHeader['exchange_rate'] =
+                _asNullableStr(rawHeader['exchange_rate']) ?? '1.000000';
+            rawHeader['settlement_status'] =
+                _asStr(rawHeader['settlement_status'], 'SETTLED');
+            rawHeader['hold_amount_cny'] =
+                _asMoney(rawHeader['hold_amount_cny']);
+            rawHeader['fx_cashback_rate'] =
+                _asNullableStr(rawHeader['fx_cashback_rate']);
+            rawHeader['applied_voucher_id'] =
+                _asNullableInt(rawHeader['applied_voucher_id']);
+            rawHeader['raw_input_text'] =
+                _asNullableStr(rawHeader['raw_input_text']);
+            rawHeader['merchant_or_note'] = _asStr(
+              rawHeader['merchant_or_note'] ?? rawHeader['raw_input_text'],
+              '未命名账单',
+            );
+            rawHeader['created_at'] = _asNullableStr(rawHeader['created_at']);
+            rawHeader['settled_at'] = _asNullableStr(rawHeader['settled_at']);
+            rawHeader['updated_hlc'] = _asNullableStr(rawHeader['updated_hlc']);
+            rawHeader['is_deleted'] = _asBool(rawHeader['is_deleted']);
+
+            final rawItems = row['items'] is List
+                ? row['items'] as List<dynamic>
+                : <dynamic>[];
+            final normalizedItems = <Map<String, dynamic>>[];
+            for (var i = 0; i < rawItems.length; i++) {
+              final item = rawItems[i];
+              if (item is! Map) continue;
+              final m = Map<String, dynamic>.from(item);
+              m['id'] = _asInt(m['id'], i + 1);
+              m['tx_id'] = _asStr(m['tx_id'], txId);
+              m['item_index'] = _asInt(m['item_index'], i);
+              m['item_name'] = _asStr(m['item_name'], '消费明细');
+              m['category_id'] = _asNullableStr(m['category_id']);
+              final rawPool = _asNullableStr(m['budget_pool_id']);
+              m['budget_pool_id'] =
+                  (rawPool == 'POOL_FUND' || rawPool == 'POOL_ASSET')
+                      ? 'POOL_FLEX'
+                      : rawPool;
+              m['project_tag_id'] = _asNullableStr(m['project_tag_id']);
+              m['item_gross'] = _asMoney(m['item_gross']);
+              m['allocated_discount'] = _asMoney(m['allocated_discount']);
+              m['item_net'] = _asMoney(m['item_net']);
+              m['is_primary_item'] = _asBool(m['is_primary_item']);
+              m['raw_formula_expr'] = _asNullableStr(m['raw_formula_expr']);
+              normalizedItems.add(m);
             }
-            if (row['items'] is List) {
-              row['items'] = (row['items'] as List<dynamic>)
-                  .whereType<Map<dynamic, dynamic>>()
-                  .map((it) {
-                    final m = Map<String, dynamic>.from(it);
-                    m['is_primary_item'] = _asBool(m['is_primary_item']);
-                    return m;
-                  })
-                  .toList();
-            }
-            return row;
+
+            return <String, dynamic>{
+              'header': rawHeader,
+              'items': normalizedItems,
+            };
           })
           .toList();
     }
     if (map['settings'] is Map) {
       settings = (map['settings'] as Map<dynamic, dynamic>).map(
-        (k, v) => MapEntry(k.toString(), v.toString()),
+        (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
       );
+    }
+    if (map['fxConfig'] is Map) {
+      final fx = map['fxConfig'] as Map<dynamic, dynamic>;
+      if (fx['defaultHoldRatio'] != null) {
+        settings['fx_default_hold_ratio'] = fx['defaultHoldRatio'].toString();
+      }
+      if (fx['defaultCashbackRate'] != null) {
+        settings['fx_default_cashback_rate'] =
+            fx['defaultCashbackRate'].toString();
+      }
     }
     if (map['oplogs'] is List) {
       syncOplog = (map['oplogs'] as List<dynamic>)
           .whereType<Map<dynamic, dynamic>>()
-          .map((e) => Map<String, dynamic>.from(e))
+          .map((e) {
+            final row = Map<String, dynamic>.from(e);
+            final payloadVal = row['payload_json'];
+            if (payloadVal is Map || payloadVal is List) {
+              row['payload_json'] = jsonEncode(payloadVal);
+            } else {
+              row['payload_json'] = _asStr(payloadVal, '{}');
+            }
+            row['hlc'] = _asStr(row['hlc'] ?? row['hlc_ts']);
+            row['node_id'] = _asStr(row['node_id'], hlc.nodeId);
+            row['entity_type'] = _asStr(row['entity_type']);
+            row['entity_id'] = _asStr(row['entity_id']);
+            row['op_type'] = _asStr(row['op_type'], 'UPSERT');
+            row['created_at'] = _asStr(row['created_at'], _nowIso());
+            return row;
+          })
+          .where(
+            (op) =>
+                op['entity_type'] != 'ACCOUNT' &&
+                op['entity_type'] != 'FIXED_ASSET',
+          )
           .toList();
     }
+    if (map['transactions'] is! List && syncOplog.isNotEmpty) {
+      transactions = <Map<String, dynamic>>[];
+      for (final op in syncOplog) {
+        if (op['entity_type'] == 'TRANSACTION') {
+          try {
+            _applyAcceptedOp(op);
+          } catch (_) {}
+        }
+      }
+    }
     _recomputeSeqWatermarks();
+    saveToDisk();
     return <String, int>{
-      'transactionsCount': transactions.length,
+      'transactionsCount': transactions
+          .where((t) => (t['header'] as Map<String, dynamic>)['is_deleted'] != true)
+          .length,
       'poolsCount': budgetPools.length,
       'vouchersCount': vouchers.length,
     };
   }
 
   Map<String, int> importBackupJson(String rawJson) {
-    final decoded = jsonDecode(rawJson);
+    final cleaned = rawJson.replaceFirst(RegExp(r'^\uFEFF+'), '').trim();
+    if (cleaned.isEmpty) {
+      throw const FormatException('所选文件为空，请重新选择 GeekLedger 备份文件');
+    }
+    final decoded = jsonDecode(cleaned);
     if (decoded is! Map) {
       throw const FormatException('JSON 备份必须是对象格式');
     }
-    final summary = importFullSyncBundle(Map<String, dynamic>.from(decoded));
-    syncedOplogCount = 0;
-    lastSyncAt = null;
+    final map = Map<String, dynamic>.from(decoded);
+    final payload = map['bundle'] is Map
+        ? Map<String, dynamic>.from(map['bundle'] as Map<dynamic, dynamic>)
+        : map;
+    final hasCoreArray = payload['transactions'] is List ||
+        payload['budgetPools'] is List ||
+        payload['vouchers'] is List ||
+        payload['monthlyBudgets'] is List ||
+        payload['projectTags'] is List ||
+        payload['recurringRules'] is List ||
+        payload['oplogs'] is List;
+    if (!hasCoreArray) {
+      throw const FormatException('所选 JSON 文件不是有效的 GeekLedger 账本备份');
+    }
+
+    final prevSuppress = _suppressPersist;
+    _suppressPersist = true;
+    late final Map<String, int> summary;
+    try {
+      resetToCleanState();
+      summary = importFullSyncBundle(payload);
+      syncedOplogCount = 0;
+      lastSyncAt = null;
+      lastSyncError = null;
+    } finally {
+      _suppressPersist = prevSuppress;
+    }
+    saveToDisk();
     return summary;
   }
 }

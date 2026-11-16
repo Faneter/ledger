@@ -53,7 +53,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(state.transactions).toEqual([]);
       expect(state.pendingFxTransactions).toEqual([]);
       expect(state.vouchers.length).toBe(2);
-      expect(state.fixedAssets.length).toBe(2);
       expect(state.metadata.categories.length).toBe(14);
       expect(state.metadata.projectTags.length).toBe(3);
       expect(state.metadata.recurringRules.length).toBe(2);

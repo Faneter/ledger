@@ -254,24 +254,9 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
   });
 
   // --------------------------------------------------------------------------
-  // 额外测试：固定资产日均成本追踪与守恒定律断言防御
+  // 额外测试：守恒定律断言防御
   // --------------------------------------------------------------------------
-  describe('5. Fixed Asset Cost Per Day & Conservation Defense', () => {
-    it('should compute cost per day for iPhone 13 mini and monitor hard drive', () => {
-      const repo = new LedgerRepository(':memory:', 'node-assets-test');
-
-      // 2026-11-12 计算持有日均成本：
-      // iPhone 13 mini 购于 2026-09-01，经过 72 天，净价 1150.00，当前日均 = 1150 / 72 = 15.97 元/天
-      const assets = repo.getFixedAssetsWithCost('2026-11-12');
-      const iphone = assets.find((a) => a.asset_name.includes('iPhone 13 mini'))!;
-      const hdd = assets.find((a) => a.asset_name.includes('硬盘'))!;
-
-      expect(iphone.daysHeld).toBe(72);
-      expect(iphone.currentDailyCost).toBe('15.97');
-      expect(hdd.daysHeld).toBe(42);
-      expect(hdd.currentDailyCost).toBe('9.76');
-    });
-
+  describe('5. Conservation Defense & Legacy Migration', () => {
     it('should strictly throw error when recordTransaction violates item conservation law', () => {
       const repo = new LedgerRepository(':memory:', 'node-defense-test');
 
@@ -570,7 +555,7 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
         const repo = new LedgerRepository(tmpDbPath, 'migration-test-node');
         try {
           const tables = repo.db
-            .prepare("SELECT name, type FROM sqlite_master WHERE name IN ('accounts', 'v_account_dashboard')")
+            .prepare("SELECT name, type FROM sqlite_master WHERE name IN ('accounts', 'v_account_dashboard', 'fixed_assets')")
             .all();
           expect(tables).toHaveLength(0);
 

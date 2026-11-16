@@ -30,8 +30,7 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(dailyBudget?.base_allocation).toBe('650.00');
     });
 
-    it('应包含 2 件初始固定资产与 2 张立减金', () => {
-      expect(engine.state.fixedAssets.length).toBe(2);
+    it('应包含 2 张初始立减金', () => {
       expect(engine.state.vouchers.length).toBe(2);
       expect(engine.state.vouchers[0].title).toBe('微信支付10元立减金');
       expect(engine.state.vouchers[0].status).toBe('AVAILABLE');
@@ -143,27 +142,7 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
     });
   });
 
-  describe('5. 固定资产持有日均成本与回血', () => {
-    it('登记二手回血后能大幅摊薄固定资产持有日均成本', () => {
-      const assetsBefore = engine.getFixedAssetsWithCost('2026-11-12');
-      const iphoneBefore = assetsBefore.find((a) => a.id === 1);
-      expect(iphoneBefore).toBeDefined();
-
-      // 登记转售回血 800 元
-      engine.recordAssetResale(1, '800.00');
-
-      const assetsAfter = engine.getFixedAssetsWithCost('2026-11-12');
-      const iphoneAfter = assetsAfter.find((a) => a.id === 1);
-      expect(iphoneAfter?.status).toBe('SOLD');
-      expect(iphoneAfter?.resale_recovery).toBe('800.00');
-      // 净成本由 1150 骤降为 350，日均成本显著降低
-      expect(Number(iphoneAfter?.currentDailyCost)).toBeLessThan(
-        Number(iphoneBefore?.currentDailyCost)
-      );
-    });
-  });
-
-  describe('6. 分布式并发冲突模拟与仲裁 & 全量恢复包导出', () => {
+  describe('5. 分布式并发冲突模拟与仲裁 & 全量恢复包导出', () => {
     it('能够模拟并发冲突并成功仲裁解决', () => {
       engine.recordFromDsl('咸蛋黄拌面 16.8 #饮食');
       const conflict = engine.simulateConcurrentConflict();
@@ -187,12 +166,11 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
   });
 
   describe('6. 二期 Stage 8：纯净账本与全生命周期 CRUD 管理测试', () => {
-    it('resetToCleanState() 应产生 0 卡券、0 固定资产与 0 交易流水，仅保留 4 个预算池', () => {
+    it('resetToCleanState() 应产生 0 卡券与 0 交易流水，仅保留 4 个预算池', () => {
       engine.resetToCleanState();
 
-      // 验证卡券、固定资产、专项项目与交易流水全部为空数组
+      // 验证卡券、专项项目与交易流水全部为空数组
       expect(engine.state.vouchers).toEqual([]);
-      expect(engine.state.fixedAssets).toEqual([]);
       expect(engine.state.projectTags).toEqual([]);
       expect(engine.state.transactions).toEqual([]);
       expect(engine.state.recurringRules).toEqual([]);
@@ -655,7 +633,7 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
         {
           id: 'POOL_ASSET',
           name: '数码大件固定资产库',
-          pool_type: 'CAPITAL_ASSET',
+          pool_type: 'CAPITAL_ASSET' as any,
           is_monthly_budget: false,
           rollover_strategy: 'ACCUMULATE',
           description: '旧版资产池',

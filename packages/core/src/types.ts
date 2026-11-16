@@ -24,15 +24,13 @@ export interface FxPreferenceConfig {
  * - FLEX: 月度弹性发展池
  * - EMERGENCY: 纯粹医疗与突发意外维修池
  * - SINKING_FUND: 年度专项基金池（预算外跨期立项）
- * - CAPITAL_ASSET: 固定资产大件购置池
  */
 export type PoolType =
   | 'FIXED'
   | 'DAILY'
   | 'FLEX'
   | 'EMERGENCY'
-  | 'SINKING_FUND'
-  | 'CAPITAL_ASSET';
+  | 'SINKING_FUND';
 
 /**
  * 月末结余滚存策略
@@ -288,38 +286,8 @@ export interface TransactionAggregate {
 }
 
 // ============================================================================
-// 6. 固定资产与周期性规则相关类型定义
+// 6. 周期性规则相关类型定义
 // ============================================================================
-
-/**
- * 固定资产使用状态
- */
-export type FixedAssetStatus = 'IN_USE' | 'SOLD' | 'RETIRED';
-
-/**
- * 固定资产实体接口 (fixed_assets)
- */
-export interface FixedAsset {
-  id: number;
-  asset_name: string;
-  purchase_item_id: number | null;
-  purchase_date: string;
-  purchase_net_cost: string;
-  target_daily_cost: string | null;
-  status: FixedAssetStatus;
-  resale_date: string | null;
-  resale_recovery: string;
-  note: string | null;
-}
-
-/**
- * 带有动态日均持有成本与回本进度的资产模型
- */
-export interface FixedAssetWithCost extends FixedAsset {
-  daysHeld: number;
-  currentDailyCost: string;
-  progressPercent: number;
-}
 
 /**
  * 周期性规则触发类型
@@ -362,7 +330,6 @@ export type SyncEntityType =
   | 'CATEGORY'
   | 'VOUCHER'
   | 'MONTHLY_BUDGET'
-  | 'FIXED_ASSET'
   | 'PROJECT_TAG'
   | 'RECURRING_RULE';
 
@@ -429,7 +396,6 @@ export interface FullSyncBundle {
   categories?: Category[];
   projectTags?: ProjectTag[];
   recurringRules?: RecurringRule[];
-  fixedAssets?: FixedAsset[];
   transactions?: TransactionAggregate[];
 }
 

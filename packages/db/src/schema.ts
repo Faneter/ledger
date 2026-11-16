@@ -15,8 +15,7 @@ CREATE TABLE IF NOT EXISTS budget_pools (
                             'DAILY',        -- 高频生活池
                             'FLEX',         -- 月度弹性发展池
                             'EMERGENCY',    -- 纯粹医疗与突发意外维修池
-                            'SINKING_FUND', -- 年度专项基金池
-                            'CAPITAL_ASSET' -- 大件固定资产购置池
+                            'SINKING_FUND'  -- 年度专项基金池
                         )),
     is_monthly_budget   BOOLEAN NOT NULL DEFAULT 1,
     rollover_strategy   VARCHAR(24) NOT NULL DEFAULT 'ACCUMULATE' CHECK (rollover_strategy IN (
@@ -156,25 +155,7 @@ CREATE TABLE IF NOT EXISTS transaction_items (
 );
 
 -- ----------------------------------------------------------------------------
--- 8. 大件固定资产与寿命摊销追踪表 (fixed_assets)
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS fixed_assets (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    asset_name          VARCHAR(128) NOT NULL,
-    purchase_item_id    INT REFERENCES transaction_items(id),
-    purchase_date       DATE NOT NULL,
-    purchase_net_cost   NUMERIC(10, 2) NOT NULL,
-    target_daily_cost   NUMERIC(8, 2) DEFAULT 2.00,
-    status              VARCHAR(16) NOT NULL DEFAULT 'IN_USE' CHECK (status IN (
-                            'IN_USE', 'SOLD', 'RETIRED'
-                        )),
-    resale_date         DATE DEFAULT NULL,
-    resale_recovery     NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    note                TEXT
-);
-
--- ----------------------------------------------------------------------------
--- 9. 周期性固定账单与订阅自动化规则表 (recurring_rules)
+-- 8. 周期性固定账单与订阅自动化规则表 (recurring_rules)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS recurring_rules (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -320,14 +301,7 @@ INSERT OR IGNORE INTO recurring_rules (id, title, rule_type, cron_cycle, trigger
 (2, 'Porkbun域名续费',                    'FX_SUBSCRIPTION', 'YEARLY',  1, 'USD', 10.37, 'CAT_DIGITAL_SUB', 'POOL_FLEX', 1, 1);
 
 -- ----------------------------------------------------------------------------
--- 6. 默认 2 件固定资产
--- ----------------------------------------------------------------------------
-INSERT OR IGNORE INTO fixed_assets (id, asset_name, purchase_item_id, purchase_date, purchase_net_cost, target_daily_cost, status, resale_recovery, note) VALUES
-(1, '二手 iPhone 13 mini', NULL, '2026-09-01', 1150.00, 2.00, 'IN_USE', 0.00, '购于 2026-09-01，目标日均 2 元'),
-(2, '希捷3T监控级硬盘+硬盘盒', NULL, '2026-10-01', 409.80, 1.00, 'IN_USE', 0.00, '购于 2026-10-01，目标日均 1 元');
-
--- ----------------------------------------------------------------------------
--- 7. 默认 2 张可用卡券
+-- 6. 默认 2 张可用卡券
 -- ----------------------------------------------------------------------------
 INSERT OR IGNORE INTO vouchers (id, title, voucher_type, face_value, acquire_cost, min_spend, status) VALUES
 (1, '微信支付10元立减金',     'PREPAID_COUPON', 10.00, 5.99, 10.01, 'AVAILABLE'),

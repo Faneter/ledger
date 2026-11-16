@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'ledger_engine.dart';
+import 'platform_backup.dart';
 import 'ui_helpers.dart';
 
 class SyncStatusPill extends StatelessWidget {
@@ -113,10 +114,14 @@ class SyncAndConflictDialog extends StatefulWidget {
     super.key,
     required this.engine,
     required this.onEngineChanged,
+    this.onPickBackupFile,
+    this.onSaveBackupFile,
   });
 
   final FlutterLedgerEngine engine;
   final VoidCallback onEngineChanged;
+  final JsonFilePicker? onPickBackupFile;
+  final JsonFileSaver? onSaveBackupFile;
 
   @override
   State<SyncAndConflictDialog> createState() => _SyncAndConflictDialogState();
@@ -251,34 +256,64 @@ class _SyncAndConflictDialogState extends State<SyncAndConflictDialog> {
     }
   }
 
-  Future<void> _exportToClipboard() async {
+  Future<void> _exportBackupFile() async {
     final json = widget.engine.exportBackupJson();
-    await Clipboard.setData(ClipboardData(text: json));
-    if (!mounted) return;
-    setState(() {
-      _feedback = '已将完整账本 JSON 备份复制到剪贴板 (${json.length} 字符)';
-      _feedbackIsError = false;
-    });
-  }
-
-  Future<void> _openImportDialog() async {
-    final imported = await showDialog<String>(
-      context: context,
-      builder: (_) => const _ImportBackupDialog(),
-    );
-
-    if (imported == null || imported.isEmpty || !mounted) return;
+    final today = getLocalTodayDateStr();
+    final suggestedName = 'geek_ledger_backup_$today.json';
     try {
-      final summary = widget.engine.importBackupJson(imported);
-      widget.onEngineChanged();
+      final saver = widget.onSaveBackupFile ?? MobilePlatformBridge.saveJsonFile;
+      final savedName = await saver(suggestedName, json);
+      if (!mounted) return;
+      if (savedName == null) {
+        setState(() {
+          _feedback = '已取消导出 JSON 文件';
+          _feedbackIsError = false;
+        });
+        return;
+      }
       setState(() {
-        _feedback =
-            '导入成功：${summary['transactionsCount']} 笔流水、${summary['poolsCount']} 个预算池、${summary['vouchersCount']} 张卡券';
+        _feedback = '已导出 JSON 备份文件：$savedName';
+        _feedbackIsError = false;
+      });
+    } on MissingPluginException {
+      await Clipboard.setData(ClipboardData(text: json));
+      if (!mounted) return;
+      setState(() {
+        _feedback = '当前平台不支持系统文件保存器，已复制到剪贴板 (${json.length} 字符)';
         _feedbackIsError = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _feedback = '导入失败: $e';
+        _feedback = '导出 JSON 失败: $e';
+        _feedbackIsError = true;
+      });
+    }
+  }
+
+  Future<void> _pickAndImportBackupFile() async {
+    try {
+      final picker = widget.onPickBackupFile ?? MobilePlatformBridge.pickJsonFile;
+      final picked = await picker();
+      if (picked == null || !mounted) return;
+
+      final summary = widget.engine.importBackupJson(picked.content);
+      widget.onEngineChanged();
+      setState(() {
+        _feedback =
+            '已导入「${picked.name}」：${summary['transactionsCount']} 笔流水、${summary['poolsCount']} 个预算池、${summary['vouchersCount']} 张卡券';
+        _feedbackIsError = false;
+      });
+    } on MissingPluginException {
+      if (!mounted) return;
+      setState(() {
+        _feedback = '当前平台不支持系统文件选择器，请在 Android 设备上使用文件导入';
+        _feedbackIsError = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _feedback = '导入 JSON 文件失败: $e';
         _feedbackIsError = true;
       });
     }
@@ -310,6 +345,7 @@ class _SyncAndConflictDialogState extends State<SyncAndConflictDialog> {
                 ),
                 onChanged: (v) {
                   engine.serverUrl = v.trim();
+                  engine.saveToDisk();
                 },
               ),
               const SizedBox(height: 10),
@@ -413,6 +449,7 @@ class _SyncAndConflictDialogState extends State<SyncAndConflictDialog> {
                   setState(() {
                     engine.isOfflineMode = v;
                   });
+                  engine.saveToDisk();
                   widget.onEngineChanged();
                 },
               ),
@@ -577,14 +614,14 @@ class _SyncAndConflictDialogState extends State<SyncAndConflictDialog> {
                     label: const Text('用本机数据完整覆盖云端'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _exportToClipboard,
-                    icon: const Icon(Icons.copy_all_outlined, size: 16),
-                    label: const Text('导出 JSON'),
+                    onPressed: _busy ? null : _exportBackupFile,
+                    icon: const Icon(Icons.save_alt_outlined, size: 16),
+                    label: const Text('导出 JSON 文件'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _openImportDialog,
-                    icon: const Icon(Icons.upload_file_outlined, size: 16),
-                    label: const Text('导入 JSON'),
+                    onPressed: _busy ? null : _pickAndImportBackupFile,
+                    icon: const Icon(Icons.folder_open_outlined, size: 16),
+                    label: const Text('选择 JSON 导入'),
                   ),
                   OutlinedButton.icon(
                     onPressed: () {
@@ -648,48 +685,6 @@ class _SyncAndConflictDialogState extends State<SyncAndConflictDialog> {
           Text(summary, style: const TextStyle(fontSize: 12)),
         ],
       ),
-    );
-  }
-}
-
-class _ImportBackupDialog extends StatefulWidget {
-  const _ImportBackupDialog();
-
-  @override
-  State<_ImportBackupDialog> createState() => _ImportBackupDialogState();
-}
-
-class _ImportBackupDialogState extends State<_ImportBackupDialog> {
-  final TextEditingController _ctrl = TextEditingController();
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('导入 JSON 备份'),
-      content: TextField(
-        controller: _ctrl,
-        maxLines: 6,
-        decoration: const InputDecoration(
-          hintText: '粘贴之前导出的 GeekLedger JSON 内容...',
-          border: OutlineInputBorder(),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_ctrl.text.trim()),
-          child: const Text('导入覆盖'),
-        ),
-      ],
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 // ignore: deprecated_member_use
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:geek_ledger_mobile/main.dart';
 import 'package:geek_ledger_mobile/src/ledger_engine.dart';
+import 'package:geek_ledger_mobile/src/platform_backup.dart';
 
 Future<void> _setPhoneViewport(WidgetTester tester) async {
   tester.view.physicalSize = const Size(360, 780);
@@ -33,7 +35,6 @@ void main() {
     expect(engine.categories, isEmpty);
     expect(engine.projectTags, isEmpty);
     expect(engine.vouchers, isEmpty);
-    expect(engine.fixedAssets, isEmpty);
     expect(engine.recurringRules, isEmpty);
     expect(engine.transactions, isEmpty);
 
@@ -334,9 +335,11 @@ void main() {
     await tester.tap(find.text('卡包与引擎'));
     await tester.pumpAndSettle();
 
-    // Empty state cards render cleanly
+    // Empty state cards render cleanly & Fixed Assets section is completely gone
     expect(find.textContaining('暂无符合条件的卡券'), findsOneWidget);
     expect(find.textContaining('暂无周期性扣款规则'), findsOneWidget);
+    expect(find.textContaining('固定资产'), findsNothing);
+    expect(find.text('添置资产'), findsNothing);
 
     // Add a recurring rule even when budgetPools is empty (no DropdownButton crash)
     await tester.tap(find.text('新增规则'));
@@ -461,5 +464,242 @@ void main() {
         '/api/sync/reseed',
       ],
     );
+  });
+
+  test(
+      'FlutterLedgerEngine persists local state to disk across restarts without overwriting IDs',
+      () {
+    final tmpDir = Directory.systemTemp.createTempSync('geek_ledger_persist_');
+    addTearDown(() => tmpDir.deleteSync(recursive: true));
+    final statePath = '${tmpDir.path}/geek_ledger_state.json';
+
+    // Session 1: Create budget pool, monthly allocation, project tag, voucher, rule, and tx
+    final engine1 = FlutterLedgerEngine(storageFilePath: statePath);
+    engine1.upsertBudgetPool(
+      id: 'POOL_CUSTOM',
+      name: '日常餐饮池',
+      isMonthlyBudget: true,
+    );
+    engine1.setMonthlyBudget(
+      yearMonth: '2026-11',
+      poolId: 'POOL_CUSTOM',
+      baseAllocation: '500.00',
+    );
+    engine1.upsertProjectTag(name: '秋招差旅', targetBudget: '1200.00');
+    engine1.recordManualTransaction(
+      amount: '24.50',
+      budgetPoolId: 'POOL_CUSTOM',
+      merchantOrNote: '黄焖鸡米饭',
+      txDate: '2026-11-16',
+    );
+    engine1.serverUrl = 'http://192.168.1.50:3001';
+    engine1.isOfflineMode = true;
+    engine1.saveToDisk();
+
+    expect(File(statePath).existsSync(), isTrue);
+
+    // Session 2: Restart engine from the exact same storageFilePath
+    final engine2 = FlutterLedgerEngine(storageFilePath: statePath);
+    expect(engine2.budgetPools.length, 1);
+    expect(engine2.budgetPools.first['name'], '日常餐饮池');
+    expect(engine2.monthlyBudgets.length, 1);
+    expect(engine2.projectTags.length, 1);
+    expect(engine2.transactions.length, 1);
+    expect(
+      (engine2.transactions.first['header'] as Map<String, dynamic>)['merchant_or_note'],
+      '黄焖鸡米饭',
+    );
+    expect(engine2.serverUrl, 'http://192.168.1.50:3001');
+    expect(engine2.isOfflineMode, isTrue);
+
+    // Adding a second tx after reload must get tx_mobile_2 (not collide with tx_mobile_1)
+    final tx2 = engine2.recordManualTransaction(
+      amount: '10.00',
+      budgetPoolId: 'POOL_CUSTOM',
+      merchantOrNote: '冰美式',
+      txDate: '2026-11-16',
+    );
+    expect((tx2['header'] as Map<String, dynamic>)['id'], 'tx_mobile_2');
+
+    // Verify tx_mobile_2 also persisted on Session 3
+    final engine3 = FlutterLedgerEngine(storageFilePath: statePath);
+    expect(engine3.transactions.length, 2);
+  });
+
+  testWidgets(
+      'File-based JSON import parses Web-exported backup JSON (numeric amounts, BOM, ISO dates, legacy fixedAssets/linked_pool_id) and exports JSON file cleanly',
+      (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
+    final engine = FlutterLedgerEngine();
+
+    // Simulate a Web / SQLite exported JSON backup containing BOM, numeric values,
+    // ISO timestamp tx_date, fxConfig, and deprecated legacy fields.
+    final webExportedJson = '\uFEFF${jsonEncode(<String, dynamic>{
+      'nodeId': 'web-browser-1',
+      'exportedAt': '2026-11-16T03:00:00.000Z',
+      'fxConfig': <String, dynamic>{
+        'defaultHoldRatio': '1.030',
+        'defaultCashbackRate': '0.0150',
+      },
+      'budgetPools': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'POOL_DAILY',
+          'name': 'Web 日常餐饮',
+          'pool_type': 'DAILY',
+          'is_monthly_budget': 1,
+          'rollover_strategy': 'ACCUMULATE',
+          'sort_order': 20,
+        },
+        <String, dynamic>{
+          'id': 'POOL_ASSET',
+          'name': '旧资产池',
+          'pool_type': 'CAPITAL_ASSET',
+          'is_monthly_budget': 0,
+        },
+      ],
+      'monthlyBudgets': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 1,
+          'year_month': '2026-11',
+          'pool_id': 'POOL_DAILY',
+          'base_allocation': 650,
+          'rollover_from_prev': 0,
+          'reserved_fixed': 0,
+          'swept_to_fund': 0,
+        },
+      ],
+      'categories': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'CAT_FOOD',
+          'name': '餐饮',
+          'default_pool_id': 'POOL_DAILY',
+          'sort_order': 10,
+        },
+      ],
+      'projectTags': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'TAG_EXAM',
+          'name': 'Web考证',
+          'tag_type': 'PROJECT',
+          'linked_pool_id': 'POOL_DAILY',
+          'target_budget': 800,
+          'is_active': 1,
+        },
+      ],
+      'vouchers': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 1,
+          'title': 'Web导出的满减券',
+          'voucher_type': 'PREPAID_COUPON',
+          'face_value': 10,
+          'acquire_cost': 5.5,
+          'min_spend': 10,
+          'status': 'AVAILABLE',
+        },
+      ],
+      'fixedAssets': <Map<String, dynamic>>[
+        <String, dynamic>{'id': 1, 'asset_name': '旧固定资产'},
+      ],
+      'recurringRules': <dynamic>[],
+      'transactions': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'header': <String, dynamic>{
+            'id': 'tx_web_99',
+            'tx_date': '2026-11-16T00:00:00.000Z',
+            'tx_type': 'EXPENSE',
+            'total_gross': 32.5,
+            'platform_discount': 0,
+            'payment_discount': 2.5,
+            'total_net': 30,
+            'allocation_mode': 'SINGLE',
+            'original_currency': 'CNY',
+            'settlement_status': 'SETTLED',
+            'hold_amount_cny': 0,
+            'merchant_or_note': 'Web同步晚餐',
+            'is_deleted': 0,
+          },
+          'items': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 1,
+              'tx_id': 'tx_web_99',
+              'item_index': 0,
+              'item_name': '煲仔饭',
+              'category_id': 'CAT_FOOD',
+              'budget_pool_id': 'POOL_DAILY',
+              'item_gross': 32.5,
+              'allocated_discount': 2.5,
+              'item_net': 30,
+              'is_primary_item': 1,
+            },
+          ],
+        },
+      ],
+      'oplogs': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'hlc': '00000001763251200000-0001-web-browser-1',
+          'node_id': 'web-browser-1',
+          'entity_type': 'FIXED_ASSET',
+          'entity_id': '1',
+          'op_type': 'UPSERT',
+          'payload_json': <String, dynamic>{'id': 1},
+        },
+      ],
+    })}';
+
+    String? savedFileName;
+    String? savedFileContent;
+
+    await tester.pumpWidget(
+      GeekLedgerApp(
+        engine: engine,
+        onPickBackupFile: () async => PickedBackupFile(
+          name: 'geek_ledger_backup_2026-11-16.json',
+          content: webExportedJson,
+        ),
+        onSaveBackupFile: (name, content) async {
+          savedFileName = name;
+          savedFileContent = content;
+          return name;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Open sync dialog -> tap '选择 JSON 导入' -> verify NO TextField paste dialog appears
+    await tester.tap(find.text('未同步'));
+    await tester.pumpAndSettle();
+
+    final importBtn = find.text('选择 JSON 导入');
+    await tester.ensureVisible(importBtn);
+    await tester.tap(importBtn);
+    await tester.pumpAndSettle();
+
+    expect(find.text('导入 JSON 备份'), findsNothing);
+    expect(find.textContaining('已导入「geek_ledger_backup_2026-11-16.json」'), findsOneWidget);
+
+    // Export JSON file works cleanly
+    final exportBtn = find.text('导出 JSON 文件');
+    await tester.ensureVisible(exportBtn);
+    await tester.tap(exportBtn);
+    await tester.pumpAndSettle();
+    expect(savedFileName, startsWith('geek_ledger_backup_'));
+    expect(savedFileContent, contains('Web同步晚餐'));
+    expect(find.textContaining('已导出 JSON 备份文件：'), findsOneWidget);
+
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+
+    // Normalized data renders cleanly across all tabs without Dart type cast crashes
+    expect(find.text('Web 日常餐饮'), findsWidgets);
+    expect(engine.budgetPools.any((p) => p['id'] == 'POOL_ASSET'), isFalse);
+    expect(engine.projectTags.first.containsKey('linked_pool_id'), isFalse);
+    expect(engine.settings['fx_default_hold_ratio'], '1.030');
+
+    await tester.tap(find.text('流水与专项'));
+    await tester.pumpAndSettle();
+    expect(find.text('Web同步晚餐'), findsOneWidget);
+    await tester.tap(find.text('专项立项'));
+    await tester.pumpAndSettle();
+    expect(find.text('#Web考证'), findsOneWidget);
   });
 }
