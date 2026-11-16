@@ -820,15 +820,16 @@ void main() {
       'Pure-Dart reactive listeners update UI automatically, debounced Isolate persistence writes without blocking, and SettingsPage respects MediaQuery reduceMotion',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
-    final tempDir = await Directory.systemTemp.createTemp('geek_ledger_async_');
-    addTearDown(() async {
+    final tempDir = Directory.systemTemp.createTempSync('geek_ledger_async_');
+    addTearDown(() {
       if (tempDir.existsSync()) {
-        await tempDir.delete(recursive: true);
+        tempDir.deleteSync(recursive: true);
       }
     });
     final statePath = '${tempDir.path}${Platform.pathSeparator}async_state.json';
 
     final engine = FlutterLedgerEngine(storageFilePath: statePath);
+    addTearDown(engine.dispose);
     var notifyCount = 0;
     void listener() => notifyCount += 1;
     engine.addListener(listener);
@@ -858,12 +859,13 @@ void main() {
     );
     expect(notifyCount, greaterThanOrEqualTo(2));
 
-    await tester.pumpAndSettle();
+    // Pumping settles the 60ms debounce timer in FakeAsync, kicking off Isolate.run disk write
+    await tester.pumpAndSettle(const Duration(milliseconds: 150));
     expect(find.text('异步餐饮池'), findsOneWidget);
 
-    // Debounced Isolate.run persistence flushes asynchronously to disk within real-time wait
+    // Wait for the spawned Isolate.run write to complete on real time
     await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await engine.flushPendingSaves();
     });
     expect(File(statePath).existsSync(), isTrue);
     final reloaded = FlutterLedgerEngine(storageFilePath: statePath);
@@ -871,9 +873,10 @@ void main() {
     expect(reloaded.budgetPools.first['name'], '异步餐饮池');
 
     // Open Settings via sync pill under reduceMotion/disableAnimations
-    await tester.tap(find.text('未同步'));
+    expect(find.text('待传 2'), findsOneWidget);
+    await tester.tap(find.text('待传 2'));
     await tester.pumpAndSettle();
-    expect(find.text('云端 HLC 同步与冲突处理'), findsOneWidget);
+    expect(find.text('云同步与服务器'), findsOneWidget);
 
     engine.removeListener(listener);
   });

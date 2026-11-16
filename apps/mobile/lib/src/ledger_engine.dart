@@ -218,6 +218,12 @@ class FlutterLedgerEngine {
   int _persistGeneration = 0;
   int _persistedGeneration = 0;
   bool _isDisposed = false;
+  int _stateVersion = 0;
+  int _cachedMonthlyVersion = -1;
+  final Map<String, List<Map<String, dynamic>>> _monthlyStatusCache =
+      <String, List<Map<String, dynamic>>>{};
+
+  int get stateVersion => _stateVersion;
 
   void addListener(void Function() listener) {
     _listeners.add(listener);
@@ -228,6 +234,8 @@ class FlutterLedgerEngine {
   }
 
   void notifyListeners() {
+    _stateVersion += 1;
+    _monthlyStatusCache.clear();
     for (final listener in _listeners.toList()) {
       listener();
     }
@@ -2119,6 +2127,16 @@ class FlutterLedgerEngine {
   // --------------------------------------------------------------------------
 
   List<Map<String, dynamic>> getMonthlyBudgetStatus(String yearMonth) {
+    if (_cachedMonthlyVersion == _stateVersion) {
+      final cached = _monthlyStatusCache[yearMonth];
+      if (cached != null) {
+        return _cloneListOfMaps(cached);
+      }
+    } else {
+      _monthlyStatusCache.clear();
+      _cachedMonthlyVersion = _stateVersion;
+    }
+
     final sortedPools = List<Map<String, dynamic>>.from(budgetPools)
       ..sort(
         (a, b) => (a['id'] as String).compareTo(b['id'] as String),
@@ -2187,7 +2205,8 @@ class FlutterLedgerEngine {
         'remaining_budget': _FixedMath.fromCents(remainingCents),
       });
     }
-    return rows;
+    _monthlyStatusCache[yearMonth] = rows;
+    return _cloneListOfMaps(rows);
   }
 
   static int _daysInMonth(String yearMonth) {

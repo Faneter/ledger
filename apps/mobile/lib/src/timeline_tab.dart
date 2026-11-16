@@ -28,6 +28,11 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
   String _targetFilter = 'ALL'; // ALL | POOL:<id> | PROJECT:<id>
   final Set<String> _expandedTxIds = <String>{};
   final TextEditingController _searchCtrl = TextEditingController();
+  int _cachedTxVersion = -1;
+  String _cachedKeyword = '';
+  String _cachedTypeFilter = 'ALL';
+  String _cachedTargetFilter = 'ALL';
+  List<Map<String, dynamic>> _cachedFilteredTxs = const <Map<String, dynamic>>[];
 
   @override
   void dispose() {
@@ -36,8 +41,15 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
   }
 
   List<Map<String, dynamic>> _filteredTransactions() {
+    final currentVersion = widget.engine.stateVersion;
+    if (_cachedTxVersion == currentVersion &&
+        _cachedKeyword == _keyword &&
+        _cachedTypeFilter == _typeFilter &&
+        _cachedTargetFilter == _targetFilter) {
+      return _cachedFilteredTxs;
+    }
     final all = widget.engine.getRecentTransactions(200);
-    return all.where((tx) {
+    final result = all.where((tx) {
       final h = tx['header'] as Map<String, dynamic>;
       final items = (tx['items'] as List<dynamic>).cast<Map<String, dynamic>>();
 
@@ -75,6 +87,12 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
 
       return true;
     }).toList();
+    _cachedTxVersion = currentVersion;
+    _cachedKeyword = _keyword;
+    _cachedTypeFilter = _typeFilter;
+    _cachedTargetFilter = _targetFilter;
+    _cachedFilteredTxs = result;
+    return result;
   }
 
   void _softDeleteTransaction(BuildContext context, Map<String, dynamic> tx) {
@@ -241,101 +259,124 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
       }
     }
 
-    return ListView(
+    return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
-      children: <Widget>[
-        // Search & Filter strip
-        TextField(
-          controller: _searchCtrl,
-          onChanged: (v) => setState(() => _keyword = v),
-          decoration: InputDecoration(
-            hintText: '搜索商户名、算式或子商品...',
-            prefixIcon: const Icon(Icons.search, size: 20),
-            isDense: true,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+      slivers: <Widget>[
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                // Search & Filter strip
+                TextField(
+                  controller: _searchCtrl,
+                  onChanged: (v) => setState(() => _keyword = v),
+                  decoration: InputDecoration(
+                    hintText: '搜索商户名、算式或子商品...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    isDense: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    suffixIcon: _keyword.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              setState(() => _keyword = '');
+                            },
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: <Widget>[
+                      for (final opt in const <(String, String)>[
+                        ('ALL', '全部'),
+                        ('EXPENSE', '支出'),
+                        ('INCOME', '收入'),
+                        ('PENDING_HOLD', '待清算'),
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: FilterChip(
+                            visualDensity: VisualDensity.compact,
+                            label: Text(opt.$2),
+                            selected: _typeFilter == opt.$1,
+                            onSelected: (_) =>
+                                setState(() => _typeFilter = opt.$1),
+                          ),
+                        ),
+                      if (_targetFilter != 'ALL')
+                        InputChip(
+                          visualDensity: VisualDensity.compact,
+                          selected: true,
+                          label: Text(
+                            _targetFilter.startsWith('PROJECT:')
+                                ? '#${projectTagNameById(widget.engine, _targetFilter.substring(8))}'
+                                : poolNameById(
+                                    widget.engine, _targetFilter.substring(5)),
+                          ),
+                          onDeleted: () =>
+                              setState(() => _targetFilter = 'ALL'),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      Text(
+                        '${filtered.length} 笔',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '支出 ¥${sumExpense.toStringAsFixed(2)} · 收入 +¥${sumIncome.toStringAsFixed(2)} · 省 ¥${sumDiscount.toStringAsFixed(2)}',
+                          textAlign: TextAlign.end,
+                          style: TextStyle(
+                              fontSize: 12, color: cs.onSurfaceVariant),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            suffixIcon: _keyword.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () {
-                      _searchCtrl.clear();
-                      setState(() => _keyword = '');
-                    },
-                  )
-                : null,
           ),
         ),
-        const SizedBox(height: 8),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: <Widget>[
-              for (final opt in const <(String, String)>[
-                ('ALL', '全部'),
-                ('EXPENSE', '支出'),
-                ('INCOME', '收入'),
-                ('PENDING_HOLD', '待清算'),
-              ])
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: FilterChip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text(opt.$2),
-                    selected: _typeFilter == opt.$1,
-                    onSelected: (_) => setState(() => _typeFilter = opt.$1),
-                  ),
-                ),
-              if (_targetFilter != 'ALL')
-                InputChip(
-                  visualDensity: VisualDensity.compact,
-                  selected: true,
-                  label: Text(
-                    _targetFilter.startsWith('PROJECT:')
-                        ? '#${projectTagNameById(widget.engine, _targetFilter.substring(8))}'
-                        : poolNameById(widget.engine, _targetFilter.substring(5)),
-                  ),
-                  onDeleted: () => setState(() => _targetFilter = 'ALL'),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerHighest.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: <Widget>[
-              Text(
-                '${filtered.length} 笔',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '支出 ¥${sumExpense.toStringAsFixed(2)} · 收入 +¥${sumIncome.toStringAsFixed(2)} · 省 ¥${sumDiscount.toStringAsFixed(2)}',
-                  textAlign: TextAlign.end,
-                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-
         if (filtered.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 48),
-            child: Center(
-              child: Text('暂无匹配的交易流水，点击右下角「+ 记一笔」开始记录'),
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 48, 16, 96),
+              child: Center(
+                child: Text('暂无匹配的交易流水，点击右下角「+ 记一笔」开始记录'),
+              ),
             ),
           )
         else
-          for (final tx in filtered) _buildTransactionCard(context, tx),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+            sliver: SliverList.builder(
+              itemCount: filtered.length,
+              itemBuilder: (context, index) =>
+                  _buildTransactionCard(context, filtered[index]),
+            ),
+          ),
       ],
     );
   }

@@ -37,6 +37,11 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
   EngineChangeNotifier? _engineNotifier;
   String? _initError;
   int? _monetSeedArgb;
+  String _lastThemePref = 'system';
+  bool _lastUseMonet = true;
+  int? _cachedSeedArgb;
+  ThemeData? _cachedLightTheme;
+  ThemeData? _cachedDarkTheme;
 
   FlutterLedgerEngine? get _activeEngine => widget.engine ?? _ownedEngine;
 
@@ -49,6 +54,7 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
     if (widget.engine == null) {
       _initOwnedEngineSync();
     }
+    _syncAppearanceSnapshot();
     _attachEngineNotifier(_activeEngine);
   }
 
@@ -62,6 +68,7 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
       _monetSeedArgb = widget.monetSeedArgb ??
           MobilePlatformBridge.getMonetSeedColorSync();
     }
+    _syncAppearanceSnapshot();
   }
 
   void _initOwnedEngineSync() {
@@ -76,10 +83,30 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
     }
   }
 
+  void _syncAppearanceSnapshot() {
+    final engine = _activeEngine;
+    _lastThemePref = engine?.themeModePreference ?? 'system';
+    _lastUseMonet = engine?.useMonetColor ?? true;
+  }
+
+  void _onEngineChangedForAppearance() {
+    final engine = _activeEngine;
+    if (!mounted || engine == null) return;
+    final nextTheme = engine.themeModePreference;
+    final nextMonet = engine.useMonetColor;
+    if (nextTheme != _lastThemePref || nextMonet != _lastUseMonet) {
+      _lastThemePref = nextTheme;
+      _lastUseMonet = nextMonet;
+      setState(() {});
+    }
+  }
+
   void _attachEngineNotifier(FlutterLedgerEngine? engine) {
     if (_engineNotifier?.engine == engine) return;
+    _engineNotifier?.removeListener(_onEngineChangedForAppearance);
     _engineNotifier?.dispose();
     _engineNotifier = engine == null ? null : EngineChangeNotifier(engine);
+    _engineNotifier?.addListener(_onEngineChangedForAppearance);
   }
 
   void _refreshMonetColor() {
@@ -103,6 +130,7 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
 
   @override
   void dispose() {
+    _engineNotifier?.removeListener(_onEngineChangedForAppearance);
     _engineNotifier?.dispose();
     if (_ownedEngine != null) {
       _ownedEngine!.dispose();
@@ -136,6 +164,18 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
     return const Color(0xFF0F766E);
   }
 
+  void _ensureCachedThemes(Color seedColor) {
+    final argb = seedColor.toARGB32();
+    if (_cachedSeedArgb == argb &&
+        _cachedLightTheme != null &&
+        _cachedDarkTheme != null) {
+      return;
+    }
+    _cachedSeedArgb = argb;
+    _cachedLightTheme = _buildTheme(Brightness.light, seedColor);
+    _cachedDarkTheme = _buildTheme(Brightness.dark, seedColor);
+  }
+
   ThemeData _buildTheme(Brightness brightness, Color seedColor) {
     final scheme = ColorScheme.fromSeed(
       seedColor: seedColor,
@@ -156,16 +196,19 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
     );
   }
 
-  Widget _buildMaterialApp(FlutterLedgerEngine? engine) {
+  @override
+  Widget build(BuildContext context) {
     final seedColor = _resolveSeedColor();
+    _ensureCachedThemes(seedColor);
     final themeMode = _resolveThemeMode();
+    final engine = _activeEngine;
 
     return MaterialApp(
       title: 'Geek Ledger',
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
-      theme: _buildTheme(Brightness.light, seedColor),
-      darkTheme: _buildTheme(Brightness.dark, seedColor),
+      theme: _cachedLightTheme,
+      darkTheme: _cachedDarkTheme,
       home: _initError != null
           ? Scaffold(
               appBar: AppBar(title: const Text('初始化失败')),
@@ -182,23 +225,13 @@ class _GeekLedgerAppState extends State<GeekLedgerApp>
           : LedgerHomeScreen(
               engine: engine!,
               monetSeedArgb: widget.monetSeedArgb ?? _monetSeedArgb,
-              onAppearanceChanged: () => setState(() {}),
+              onAppearanceChanged: () {
+                _syncAppearanceSnapshot();
+                if (mounted) setState(() {});
+              },
               onPickBackupFile: widget.onPickBackupFile,
               onSaveBackupFile: widget.onSaveBackupFile,
             ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final engine = _activeEngine;
-    final notifier = _engineNotifier;
-    if (notifier == null || engine == null) {
-      return _buildMaterialApp(engine);
-    }
-    return ListenableBuilder(
-      listenable: notifier,
-      builder: (context, _) => _buildMaterialApp(engine),
     );
   }
 }
@@ -226,12 +259,29 @@ class LedgerHomeScreen extends StatefulWidget {
 class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   int _tabIndex = 0;
   late String _selectedMonth;
+  late EngineChangeNotifier _engineNotifier;
 
   @override
   void initState() {
     super.initState();
     _selectedMonth = _resolveInitialMonth(widget.engine);
     widget.engine.ensureAutoRolloverForMonth(_selectedMonth);
+    _engineNotifier = EngineChangeNotifier(widget.engine);
+  }
+
+  @override
+  void didUpdateWidget(covariant LedgerHomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.engine != widget.engine) {
+      _engineNotifier.dispose();
+      _engineNotifier = EngineChangeNotifier(widget.engine);
+    }
+  }
+
+  @override
+  void dispose() {
+    _engineNotifier.dispose();
+    super.dispose();
   }
 
   static String _resolveInitialMonth(FlutterLedgerEngine engine) {
@@ -384,31 +434,33 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
     }
   }
 
-  Widget _buildActiveTab(FlutterLedgerEngine engine) {
-    switch (_tabIndex) {
-      case 0:
-        return OverviewTab(
-          engine: engine,
-          selectedMonth: _selectedMonth,
-          onSettleFx: _showSettleFxDialog,
-          onPullSync: _pullSync,
-          onEngineChanged: _refresh,
-        );
-      case 1:
-        return TimelineAndProjectsTab(
-          engine: engine,
-          onSettleFx: _showSettleFxDialog,
-          onPullSync: _pullSync,
-          onEngineChanged: _refresh,
-        );
-      case 2:
-      default:
-        return WalletAndEngineTab(
-          engine: engine,
-          onPullSync: _pullSync,
-          onEngineChanged: _refresh,
-        );
-    }
+  Widget _buildTabBody(FlutterLedgerEngine engine) {
+    return ListenableBuilder(
+      listenable: _engineNotifier,
+      builder: (context, _) => IndexedStack(
+        index: _tabIndex,
+        children: <Widget>[
+          OverviewTab(
+            engine: engine,
+            selectedMonth: _selectedMonth,
+            onSettleFx: _showSettleFxDialog,
+            onPullSync: _pullSync,
+            onEngineChanged: _refresh,
+          ),
+          TimelineAndProjectsTab(
+            engine: engine,
+            onSettleFx: _showSettleFxDialog,
+            onPullSync: _pullSync,
+            onEngineChanged: _refresh,
+          ),
+          WalletAndEngineTab(
+            engine: engine,
+            onPullSync: _pullSync,
+            onEngineChanged: _refresh,
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -454,9 +506,12 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
           ),
         ),
         actions: <Widget>[
-          SyncStatusPill(
-            engine: engine,
-            onTap: () => _openSettings(focusSync: true),
+          ListenableBuilder(
+            listenable: _engineNotifier,
+            builder: (context, _) => SyncStatusPill(
+              engine: engine,
+              onTap: () => _openSettings(focusSync: true),
+            ),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
@@ -469,7 +524,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
           const SizedBox(width: 6),
         ],
       ),
-      body: _buildActiveTab(engine),
+      body: _buildTabBody(engine),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openQuickRecordSheet(),
         icon: const Icon(Icons.add),

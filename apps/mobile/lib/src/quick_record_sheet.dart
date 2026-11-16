@@ -53,6 +53,8 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
   final Map<int, Map<String, String?>> _itemTargetOverrides =
       <int, Map<String, String?>>{};
   String? _errorMsg;
+  String? _cachedPreviewKey;
+  Map<String, dynamic>? _cachedPreviewResult;
 
   // Visual mode state
   String _txType = 'EXPENSE';
@@ -154,18 +156,42 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
     }
   }
 
+  String _buildPreviewCacheKey(String raw) {
+    final sortedKeys = _itemTargetOverrides.keys.toList()..sort();
+    final overrideSig = sortedKeys
+        .map((k) {
+          final m = _itemTargetOverrides[k]!;
+          return '$k:${m['budget_pool_id'] ?? ''}:${m['project_tag_id'] ?? ''}';
+        })
+        .join(',');
+    return '${widget.engine.stateVersion}|$raw|$_selectedVoucherIdDsl|$_primaryItemOverrideIndex|$overrideSig';
+  }
+
   Map<String, dynamic>? _compilePreview() {
     final raw = _dslCtrl.text.trim();
-    if (raw.isEmpty) return null;
+    if (raw.isEmpty) {
+      _cachedPreviewKey = null;
+      _cachedPreviewResult = null;
+      return null;
+    }
+    final cacheKey = _buildPreviewCacheKey(raw);
+    if (_cachedPreviewKey == cacheKey) {
+      return _cachedPreviewResult;
+    }
     try {
-      return widget.engine.previewDsl(
+      final result = widget.engine.previewDsl(
         raw,
         appliedVoucherId: _selectedVoucherIdDsl,
         primaryItemOverrideIndex: _primaryItemOverrideIndex,
         itemTargetOverrides:
             _itemTargetOverrides.isEmpty ? null : _itemTargetOverrides,
       );
+      _cachedPreviewKey = cacheKey;
+      _cachedPreviewResult = result;
+      return result;
     } catch (_) {
+      _cachedPreviewKey = cacheKey;
+      _cachedPreviewResult = null;
       return null;
     }
   }
