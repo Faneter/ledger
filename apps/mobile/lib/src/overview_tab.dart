@@ -475,7 +475,7 @@ class OverviewTab extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Semantics(
-                label: '${pool['name']} 预算已用比例',
+                label: '${pool['pool_name']} 预算已用比例',
                 value: '${(progress * 100).clamp(0, 999).round()}%',
                 child: ExcludeSemantics(
                   child: LinearProgressIndicator(

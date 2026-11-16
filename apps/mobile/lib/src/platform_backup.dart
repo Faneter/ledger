@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:jni/jni.dart';
 
@@ -38,7 +39,8 @@ class MobilePlatformBridge {
       if (path != null && path.trim().isNotEmpty) {
         return path.trim();
       }
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('MobilePlatformBridge.getStorageFilePathSync failed: $e\n$st');
       return null;
     }
     return null;
@@ -49,7 +51,8 @@ class MobilePlatformBridge {
     try {
       final argb = NativePlatformHelper.monetSeedColor;
       return argb == 0 ? null : argb;
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('MobilePlatformBridge.getMonetSeedColorSync failed: $e\n$st');
       return null;
     }
   }
