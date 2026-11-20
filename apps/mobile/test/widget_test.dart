@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:geek_ledger_mobile/main.dart';
 import 'package:geek_ledger_mobile/src/ledger_engine.dart';
+import 'package:geek_ledger_mobile/src/overview/daily_allowance_card.dart';
 import 'package:geek_ledger_mobile/src/overview/pool_water_card.dart';
 import 'package:geek_ledger_mobile/src/platform_backup.dart';
 
@@ -46,7 +47,9 @@ void main() {
     // OverviewTab omits inline quick-record card (FAB is sufficient) & shows empty budget state
     expect(find.textContaining('极速记账 DSL'), findsNothing);
     expect(find.text('拆单/键盘'), findsNothing);
-    expect(find.text('日均预算概览'), findsOneWidget);
+    expect(find.text('今日生活日均'), findsOneWidget);
+    expect(find.text('全月总剩余'), findsOneWidget);
+    expect(find.textContaining('POOL_DAILY'), findsNothing);
     expect(find.text('暂无月度预算池'), findsOneWidget);
     expect(find.text('月度预算池水位 (0)'), findsOneWidget);
 
@@ -130,7 +133,8 @@ void main() {
     expect(h['total_gross'], '55.00');
     expect(h['total_net'], '50.99');
     expect(h['applied_voucher_id'], 1);
-    expect(find.textContaining('本月薅羊毛已省 ¥4.01'), findsOneWidget);
+    expect(find.text('本月已省 ¥4.01'), findsOneWidget);
+    expect(find.text('已省 ¥4.01'), findsOneWidget);
   });
 
   testWidgets(
@@ -1029,5 +1033,158 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'DailyAllowanceCard renders Scheme B dual metrics, full-month segmented bar with time marker, formula tooltip, 3-column footer, and bottom clearance',
+      (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
+    final engine = FlutterLedgerEngine();
+    final today = getLocalTodayDateStr();
+    final currentYm = today.substring(0, 7);
+
+    engine.upsertBudgetPool(
+      id: 'POOL_DAILY',
+      name: '日常',
+      poolType: 'DAILY',
+      rolloverStrategy: 'ACCUMULATE',
+      isMonthlyBudget: true,
+    );
+    engine.setMonthlyBudget(
+      yearMonth: currentYm,
+      poolId: 'POOL_DAILY',
+      baseAllocation: '800.00',
+    );
+    engine.upsertBudgetPool(
+      id: 'POOL_FLEX',
+      name: '弹性',
+      poolType: 'FLEX',
+      rolloverStrategy: 'ACCUMULATE',
+      isMonthlyBudget: true,
+    );
+    engine.setMonthlyBudget(
+      yearMonth: currentYm,
+      poolId: 'POOL_FLEX',
+      baseAllocation: '700.00',
+    );
+
+    // Total budget 1500.00, net spent 952.93, saved 70.03, total remaining 547.07,
+    // POOL_DAILY remaining 389.38.
+    engine.recordFromDsl(
+      '日常采购 450.62 = 410.62',
+      txDate: today,
+      itemTargetOverrides: <int, Map<String, String?>>{
+        0: <String, String?>{'budget_pool_id': 'POOL_DAILY'},
+      },
+    );
+    engine.recordFromDsl(
+      '外设器材 572.34 = 542.31',
+      txDate: today,
+      itemTargetOverrides: <int, Map<String, String?>>{
+        0: <String, String?>{'budget_pool_id': 'POOL_FLEX'},
+      },
+    );
+
+    final dailySummary = engine.getDailyBudgetSummary(currentYm);
+    final remDays = (dailySummary['remainingDays'] as num).toInt();
+    final dailyAvail = dailySummary['dailyAvailableAmount'] as String;
+
+    await tester.pumpWidget(GeekLedgerApp(engine: engine));
+    await tester.pumpAndSettle();
+
+    // No internal enum exposure or redundant inline formula row
+    expect(find.byType(DailyAllowanceCard), findsOneWidget);
+    expect(find.textContaining('POOL_DAILY'), findsNothing);
+    expect(find.textContaining('公式:'), findsNothing);
+
+    // Status bar + dual core metrics
+    expect(find.text('全月总览 · 剩 $remDays 天'), findsOneWidget);
+    expect(find.text('本月已省 ¥70.03'), findsOneWidget);
+    expect(find.text('今日生活日均'), findsOneWidget);
+    expect(find.text('¥$dailyAvail / 天'), findsOneWidget);
+    expect(find.text('全月总剩余'), findsOneWidget);
+    expect(find.text('¥547.07'), findsOneWidget);
+
+    // Tap left metric to inspect formula tooltip
+    await tester.tap(find.text('今日生活日均'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('日常 日均计算公式：(389.38 元'), findsOneWidget);
+
+    // Global dual-segment progress bar uses full-month ratios + time marker
+    final heroBar = tester.widget<SegmentedBudgetProgressBar>(
+      find.descendant(
+        of: find.byType(DailyAllowanceCard),
+        matching: find.byType(SegmentedBudgetProgressBar),
+      ),
+    );
+    expect(heroBar.label, '全月总预算已用比例');
+    expect(heroBar.spentRatio, closeTo(952.93 / 1500.00, 1e-4));
+    expect(heroBar.discountRatio, closeTo(70.03 / 1500.00, 1e-4));
+    expect(heroBar.timeProgress, isNotNull);
+    expect(
+      heroBar.timeProgress,
+      closeTo(computeMonthTimeProgress(currentYm)!, 1e-6),
+    );
+
+    // 3-column single-line footer & tabular figures
+    final totalBudgetText = tester.widget<Text>(find.text('总预算 ¥1500.00'));
+    final spentText = tester.widget<Text>(find.text('已支 ¥952.93'));
+    final savedText = tester.widget<Text>(find.text('已省 ¥70.03'));
+    final dailyNumText = tester.widget<Text>(find.text('¥$dailyAvail / 天'));
+    final totalRemText = tester.widget<Text>(find.text('¥547.07'));
+
+    for (final w in <Text>[
+      totalBudgetText,
+      spentText,
+      savedText,
+      dailyNumText,
+      totalRemText,
+    ]) {
+      expect(w.maxLines, 1);
+      expect(
+        w.style?.fontFeatures,
+        contains(const FontFeature.tabularFigures()),
+      );
+    }
+
+    // Bottom clearance >= 96 prevents +FAB overlap
+    final listView = tester.widget<ListView>(find.byType(ListView));
+    expect((listView.padding as EdgeInsets).bottom, greaterThanOrEqualTo(96));
+    expect(tester.takeException(), isNull);
+
+    // Zero-discount state skips discount segment on hero bar
+    final zeroDiscEngine = FlutterLedgerEngine();
+    zeroDiscEngine.upsertBudgetPool(
+      id: 'POOL_DAILY',
+      name: '日常',
+      poolType: 'DAILY',
+      isMonthlyBudget: true,
+    );
+    zeroDiscEngine.setMonthlyBudget(
+      yearMonth: currentYm,
+      poolId: 'POOL_DAILY',
+      baseAllocation: '500.00',
+    );
+    zeroDiscEngine.recordManualTransaction(
+      amount: '100.00',
+      budgetPoolId: 'POOL_DAILY',
+      merchantOrNote: '午餐',
+      txDate: today,
+    );
+    await tester.pumpWidget(
+      GeekLedgerApp(
+        key: const ValueKey<String>('zero_disc'),
+        engine: zeroDiscEngine,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final zeroHeroBar = tester.widget<SegmentedBudgetProgressBar>(
+      find.descendant(
+        of: find.byType(DailyAllowanceCard),
+        matching: find.byType(SegmentedBudgetProgressBar),
+      ),
+    );
+    expect(zeroHeroBar.spentRatio, closeTo(0.2, 1e-4));
+    expect(zeroHeroBar.discountRatio, 0.0);
   });
 }

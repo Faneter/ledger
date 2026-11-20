@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'ledger_engine.dart';
+import 'overview/daily_allowance_card.dart';
 import 'overview/pool_editor_dialog.dart';
 import 'overview/pool_water_card.dart';
 import 'ui_helpers.dart';
@@ -88,20 +89,37 @@ class OverviewTab extends StatelessWidget {
     final pendingFxTxs = engine.getPendingFxTransactions();
     final pendingRules = engine.getPendingRecurringRules(selectedMonth);
 
-    final totalBudget =
-        double.tryParse(dashboard['totalMonthlyBudget'] as String) ?? 0;
-    final totalSpent =
-        double.tryParse(dashboard['totalMonthlySpent'] as String) ?? 0;
-    final totalRatio =
-        totalBudget > 0 ? (totalSpent / totalBudget).clamp(0.0, 1.0) : 0.0;
+    final totalMonthBudgetText =
+        (dashboard['totalMonthlyBudget'] as String?) ?? '0.00';
+    final totalMonthNetSpentText =
+        (dashboard['totalMonthlySpent'] as String?) ?? '0.00';
+    final totalMonthSavedText =
+        (dashboard['totalMonthlySaved'] as String?) ?? '0.00';
+
+    final totalBudget = double.tryParse(totalMonthBudgetText) ?? 0.0;
+    final totalSpent = double.tryParse(totalMonthNetSpentText) ?? 0.0;
+    final totalSaved = double.tryParse(totalMonthSavedText) ?? 0.0;
+    final totalRemaining =
+        ((totalBudget * 100).round() - (totalSpent * 100).round()) / 100.0;
+
     final remDays = (dailySummary['remainingDays'] as num?)?.toInt() ?? 15;
     final monthTimeProgress = computeMonthTimeProgress(selectedMonth);
+
+    String? dailyPoolName;
+    for (final p in pools) {
+      if (p['pool_id'] == 'POOL_DAILY') {
+        dailyPoolName = p['pool_name'] as String?;
+        break;
+      }
+    }
+    dailyPoolName ??=
+        pools.isNotEmpty ? pools.first['pool_name'] as String? : null;
 
     return RefreshIndicator(
       onRefresh: onPullSync,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 104),
         children: <Widget>[
           // 1. Dynamic Pending Banner: Foreign Currency Pre-Auth Holds
           if (pendingFxTxs.isNotEmpty) ...<Widget>[
@@ -194,86 +212,21 @@ class OverviewTab extends StatelessWidget {
               ),
           ],
 
-          // 3. Top Core Card: Daily Allowance Gauge (饮食日均仪)
-          Semantics(
-            container: true,
-            label:
-                '${dailySummary['poolName']}，今日可用 ${dailySummary['dailyAvailableAmount']} 元每天',
-            child: Card(
-              color: cs.primaryContainer,
-              elevation: 0,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            dailySummary['poolName'] as String,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleSmall
-                                ?.copyWith(color: cs.onPrimaryContainer),
-                          ),
-                        ),
-                        LedgerBadge(
-                          label: '本月薅羊毛已省 ¥${dailySummary['totalSavedWool']}',
-                          backgroundColor: Colors.green.withValues(alpha: 0.16),
-                          foregroundColor: Colors.green.shade900,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '今日可用: ¥${dailySummary['dailyAvailableAmount']} / 天',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: cs.onPrimaryContainer,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '公式: ${dailySummary['formula']} · 累计省钱 ¥${dailySummary['totalSavedWool']}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: cs.onPrimaryContainer.withValues(alpha: 0.85),
-                          ),
-                    ),
-                    const SizedBox(height: 10),
-                    AccessibleProgressBar(
-                      label: '本月总预算已用比例',
-                      value: totalRatio,
-                      minHeight: 7,
-                      color: poolHealthColor(
-                        context,
-                        remaining: totalBudget - totalSpent,
-                        totalAvailable: totalBudget,
-                      ),
-                      backgroundColor: cs.surface.withValues(alpha: 0.45),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '$selectedMonth 总预算 ¥${dashboard['totalMonthlyBudget']} · 已支净额 ¥${dashboard['totalMonthlySpent']}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: cs.onPrimaryContainer,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          // 3. Top Hero Card: Scheme B Dual-Metric & Full-Month Segmented Progress
+          DailyAllowanceCard(
+            dailyAvailableAmount:
+                (dailySummary['dailyAvailableAmount'] as String?) ?? '0.00',
+            remainingDays: remDays,
+            formula: (dailySummary['formula'] as String?) ?? '',
+            dailyPoolName: dailyPoolName,
+            totalMonthBudget: totalBudget,
+            totalMonthNetSpent: totalSpent,
+            totalMonthRemaining: totalRemaining,
+            totalMonthSaved: totalSaved,
+            totalMonthBudgetText: totalMonthBudgetText,
+            totalMonthNetSpentText: totalMonthNetSpentText,
+            totalMonthSavedText: totalMonthSavedText,
+            timeProgress: monthTimeProgress,
           ),
           const SizedBox(height: 16),
 

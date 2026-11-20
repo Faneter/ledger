@@ -11,6 +11,7 @@ class LedgerBadge extends StatelessWidget {
     this.fontWeight = FontWeight.w600,
     this.padding = const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
     this.borderRadius = 999,
+    this.fontFeatures,
   });
 
   final String label;
@@ -20,6 +21,7 @@ class LedgerBadge extends StatelessWidget {
   final FontWeight fontWeight;
   final EdgeInsetsGeometry padding;
   final double borderRadius;
+  final List<FontFeature>? fontFeatures;
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +37,7 @@ class LedgerBadge extends StatelessWidget {
           fontSize: fontSize,
           fontWeight: fontWeight,
           color: foregroundColor,
+          fontFeatures: fontFeatures,
         ),
       ),
     );
