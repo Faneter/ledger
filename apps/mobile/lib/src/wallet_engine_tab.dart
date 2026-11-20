@@ -2,6 +2,11 @@ import 'package:material_ui/material_ui.dart';
 
 import 'ledger_engine.dart';
 import 'ui_helpers.dart';
+import 'wallet/add_rule_dialog.dart';
+import 'wallet/buy_voucher_dialog.dart';
+import 'widgets/common_ui.dart';
+
+export 'wallet/buy_voucher_dialog.dart' show BuyVoucherDialog;
 
 class WalletAndEngineTab extends StatefulWidget {
   const WalletAndEngineTab({
@@ -44,9 +49,9 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
   }
 
   Future<void> _showAddRuleDialog() async {
-    final res = await showDialog<_AddRuleResult>(
+    final res = await showDialog<AddRuleResult>(
       context: context,
-      builder: (_) => _AddRuleDialog(budgetPools: widget.engine.budgetPools),
+      builder: (_) => AddRuleDialog(budgetPools: widget.engine.budgetPools),
     );
     if (res == null || !mounted) return;
     try {
@@ -80,25 +85,14 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
         children: <Widget>[
           // 1. Virtual Voucher Wallet (Horizontal Slider Cards)
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  '虚拟优惠券卡包 (${filteredVouchers.length})',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: _showBuyVoucherDialog,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('买券/添券'),
-              ),
-            ],
+          LedgerSectionHeader(
+            title: '虚拟优惠券卡包 (${filteredVouchers.length})',
+            trailing: FilledButton.tonalIcon(
+              onPressed: _showBuyVoucherDialog,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('买券/添券'),
+            ),
           ),
-          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             children: <Widget>[
@@ -118,16 +112,9 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
           const SizedBox(height: 10),
 
           if (filteredVouchers.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Center(
-                  child: Text(
-                    '暂无符合条件的卡券，点击右上角「买券/添券」入库',
-                    style: TextStyle(color: cs.onSurfaceVariant),
-                  ),
-                ),
-              ),
+            const LedgerEmptyStateCard(
+              title: '暂无符合条件的卡券，点击右上角「买券/添券」入库',
+              padding: EdgeInsets.all(24),
             )
           else
             SizedBox(
@@ -144,104 +131,87 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
           const SizedBox(height: 20),
 
           // 2. Recurring Rules
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  '周期性扣款规则 (${engine.recurringRules.length})',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: _showAddRuleDialog,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('新增规则'),
-              ),
-            ],
+          LedgerSectionHeader(
+            title: '周期性扣款规则 (${engine.recurringRules.length})',
+            bottomPadding: 6,
+            trailing: TextButton.icon(
+              onPressed: _showAddRuleDialog,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('新增规则'),
+            ),
           ),
-          const SizedBox(height: 6),
           if (engine.recurringRules.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Center(
-                  child: Text(
-                    '暂无周期性扣款规则，点击右上角「新增规则」创建',
-                    style: TextStyle(color: cs.onSurfaceVariant),
-                  ),
-                ),
-              ),
+            const LedgerEmptyStateCard(
+              title: '暂无周期性扣款规则，点击右上角「新增规则」创建',
             )
           else
             for (final rule in engine.recurringRules)
-            Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            rule['title'] as String,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+              Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              rule['title'] as String,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
                           ),
-                        ),
-                        Text(
-                          '${rule['currency']} ${rule['amount']}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: cs.primary,
+                          Text(
+                            '${rule['currency']} ${rule['amount']}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: cs.primary,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${rule['cron_cycle'] == 'MONTHLY' ? '每月' : '每年'} 第 ${rule['trigger_day']} 日 · 归属 ${poolNameById(engine, rule['budget_pool_id'] as String?)}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: cs.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: <Widget>[
-                        IconButton(
-                          tooltip: '删除规则',
-                          icon: const Icon(Icons.delete_outline, size: 19),
-                          onPressed: () {
-                            engine.deleteRecurringRule(rule['id'] as int);
-                            widget.onEngineChanged();
-                          },
-                        ),
-                        const SizedBox(width: 4),
-                        FilledButton.tonalIcon(
-                          onPressed: () {
-                            final tx =
-                                engine.executeRecurringRule(rule['id'] as int);
-                            final h = tx['header'] as Map<String, dynamic>;
-                            widget.onEngineChanged();
-                            showLedgerSnackBar(
-                              context,
-                              '周期账单已入账: ${h['merchant_or_note']} ¥${h['total_net']}',
-                            );
-                          },
-                          icon: const Icon(Icons.bolt_rounded, size: 16),
-                          label: const Text('立即入账'),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${rule['cron_cycle'] == 'MONTHLY' ? '每月' : '每年'} 第 ${rule['trigger_day']} 日 · 归属 ${poolNameById(engine, rule['budget_pool_id'] as String?)}',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: cs.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: <Widget>[
+                          IconButton(
+                            tooltip: '删除规则',
+                            icon: const Icon(Icons.delete_outline, size: 19),
+                            onPressed: () {
+                              engine.deleteRecurringRule(rule['id'] as int);
+                              widget.onEngineChanged();
+                            },
+                          ),
+                          const SizedBox(width: 4),
+                          FilledButton.tonalIcon(
+                            onPressed: () {
+                              final tx =
+                                  engine.executeRecurringRule(rule['id'] as int);
+                              final h = tx['header'] as Map<String, dynamic>;
+                              widget.onEngineChanged();
+                              showLedgerSnackBar(
+                                context,
+                                '周期账单已入账: ${h['merchant_or_note']} ¥${h['total_net']}',
+                              );
+                            },
+                            icon: const Icon(Icons.bolt_rounded, size: 16),
+                            label: const Text('立即入账'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
         ],
       ),
     );
@@ -269,21 +239,13 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  Container(
+                  LedgerBadge(
+                    label: isPaid ? '有偿立减金' : '免费券',
+                    backgroundColor: cs.surface.withValues(alpha: 0.7),
+                    foregroundColor: cs.onSurface,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 7,
                       vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: cs.surface.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      isPaid ? '有偿立减金' : '免费券',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -356,342 +318,6 @@ class _WalletAndEngineTabState extends State<WalletAndEngineTab> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _AddRuleResult {
-  const _AddRuleResult({
-    required this.title,
-    required this.cronCycle,
-    required this.triggerDay,
-    required this.currency,
-    required this.amount,
-    required this.budgetPoolId,
-  });
-
-  final String title;
-  final String cronCycle;
-  final int triggerDay;
-  final String currency;
-  final String amount;
-  final String? budgetPoolId;
-}
-
-class _AddRuleDialog extends StatefulWidget {
-  const _AddRuleDialog({required this.budgetPools});
-
-  final List<Map<String, dynamic>> budgetPools;
-
-  @override
-  State<_AddRuleDialog> createState() => _AddRuleDialogState();
-}
-
-class _AddRuleDialogState extends State<_AddRuleDialog> {
-  final _titleCtrl = TextEditingController();
-  final _amtCtrl = TextEditingController(text: '20.00');
-  final _dayCtrl = TextEditingController(text: '1');
-  String _cycle = 'MONTHLY';
-  String _currency = 'CNY';
-  String? _poolId;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    final ids = widget.budgetPools.map((p) => p['id'] as String).toList();
-    _poolId = ids.contains('POOL_FIXED')
-        ? 'POOL_FIXED'
-        : (ids.isNotEmpty ? ids.first : null);
-  }
-
-  @override
-  void dispose() {
-    _titleCtrl.dispose();
-    _amtCtrl.dispose();
-    _dayCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('新增周期性扣款规则'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            TextField(
-              controller: _titleCtrl,
-              decoration: const InputDecoration(
-                labelText: '规则名称（如 校园宽带 / iCloud）',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (_) {
-                if (_error != null) setState(() => _error = null);
-              },
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    controller: _amtCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: '金额',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    key: ValueKey<String>(_currency),
-                    initialValue: _currency,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: '币种',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const <DropdownMenuItem<String>>[
-                      DropdownMenuItem(value: 'CNY', child: Text('CNY')),
-                      DropdownMenuItem(value: 'USD', child: Text('USD')),
-                      DropdownMenuItem(value: 'JPY', child: Text('JPY')),
-                      DropdownMenuItem(value: 'EUR', child: Text('EUR')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _currency = v);
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    key: ValueKey<String>(_cycle),
-                    initialValue: _cycle,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: '周期',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const <DropdownMenuItem<String>>[
-                      DropdownMenuItem(value: 'MONTHLY', child: Text('每月')),
-                      DropdownMenuItem(value: 'YEARLY', child: Text('每年')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _cycle = v);
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _dayCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: '触发日 (1-31)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String?>(
-              key: ValueKey<String?>(_poolId),
-              initialValue: _poolId,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: '关联资金池',
-                border: OutlineInputBorder(),
-              ),
-              items: <DropdownMenuItem<String?>>[
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('暂不绑定预算池'),
-                ),
-                ...widget.budgetPools.map(
-                  (p) => DropdownMenuItem<String?>(
-                    value: p['id'] as String,
-                    child: Text(
-                      p['name'] as String,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-              onChanged: (v) => setState(() => _poolId = v),
-            ),
-            if (_error != null) ...<Widget>[
-              const SizedBox(height: 8),
-              Text(
-                _error!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final title = _titleCtrl.text.trim();
-            if (title.isEmpty) {
-              setState(() => _error = '请输入规则名称');
-              return;
-            }
-            if ((double.tryParse(_amtCtrl.text.trim()) ?? 0) <= 0) {
-              setState(() => _error = '请输入大于 0 的有效金额');
-              return;
-            }
-            Navigator.of(context).pop(
-              _AddRuleResult(
-                title: title,
-                cronCycle: _cycle,
-                triggerDay: (int.tryParse(_dayCtrl.text.trim()) ?? 1)
-                    .clamp(1, 31),
-                currency: _currency,
-                amount: _amtCtrl.text.trim(),
-                budgetPoolId: _poolId,
-              ),
-            );
-          },
-          child: const Text('保存规则'),
-        ),
-      ],
-    );
-  }
-}
-
-class BuyVoucherDialog extends StatefulWidget {
-  const BuyVoucherDialog({super.key});
-
-  @override
-  State<BuyVoucherDialog> createState() => _BuyVoucherDialogState();
-}
-
-class _BuyVoucherDialogState extends State<BuyVoucherDialog> {
-  late final TextEditingController _titleCtrl;
-  late final TextEditingController _faceCtrl;
-  late final TextEditingController _costCtrl;
-  late final TextEditingController _minCtrl;
-  String _voucherType = 'PREPAID_COUPON';
-
-  @override
-  void initState() {
-    super.initState();
-    _titleCtrl = TextEditingController();
-    _faceCtrl = TextEditingController(text: '15.00');
-    _costCtrl = TextEditingController(text: '8.90');
-    _minCtrl = TextEditingController(text: '20.00');
-  }
-
-  @override
-  void dispose() {
-    _titleCtrl.dispose();
-    _faceCtrl.dispose();
-    _costCtrl.dispose();
-    _minCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('购买 / 新增卡券'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            DropdownButtonFormField<String>(
-              key: ValueKey<String>(_voucherType),
-              initialValue: _voucherType,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: '卡券类型'),
-              items: const <DropdownMenuItem<String>>[
-                DropdownMenuItem<String>(
-                  value: 'PREPAID_COUPON',
-                  child: Text(
-                    '有偿购入立减金 (成本核销结转)',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                DropdownMenuItem<String>(
-                  value: 'FREE_COUPON',
-                  child: Text('免费领券'),
-                ),
-              ],
-              onChanged: (v) {
-                if (v != null) {
-                  setState(() {
-                    _voucherType = v;
-                    if (v == 'FREE_COUPON') {
-                      _costCtrl.text = '0.00';
-                    }
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _titleCtrl,
-              decoration: const InputDecoration(
-                labelText: '名称/前缀 (选填，留空自动生成)',
-              ),
-            ),
-            TextField(
-              controller: _faceCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: '面额 (CNY)'),
-            ),
-            TextField(
-              controller: _costCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: '购券成本 (CNY)'),
-            ),
-            TextField(
-              controller: _minCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: '使用门槛 (CNY)'),
-            ),
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(<String, String>{
-            'title': _titleCtrl.text.trim(),
-            'voucherType': _voucherType,
-            'faceValue': _faceCtrl.text.trim(),
-            'acquireCost': _costCtrl.text.trim(),
-            'minSpend': _minCtrl.text.trim(),
-          }),
-          child: const Text('入库'),
-        ),
-      ],
     );
   }
 }
