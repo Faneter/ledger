@@ -95,6 +95,7 @@ class OverviewTab extends StatelessWidget {
     final totalRatio =
         totalBudget > 0 ? (totalSpent / totalBudget).clamp(0.0, 1.0) : 0.0;
     final remDays = (dailySummary['remainingDays'] as num?)?.toInt() ?? 15;
+    final monthTimeProgress = computeMonthTimeProgress(selectedMonth);
 
     return RefreshIndicator(
       onRefresh: onPullSync,
@@ -297,6 +298,11 @@ class OverviewTab extends StatelessWidget {
                 engine: engine,
                 pool: pool,
                 remainingDays: remDays,
+                totalDiscount: double.tryParse(
+                      (pool['total_saved_discount'] as String?) ?? '',
+                    ) ??
+                    0.0,
+                timeProgress: monthTimeProgress,
                 onTap: () =>
                     _openPoolEditorDialog(context, existingPoolStatus: pool),
               ),

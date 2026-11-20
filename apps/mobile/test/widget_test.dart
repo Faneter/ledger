@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:geek_ledger_mobile/main.dart';
 import 'package:geek_ledger_mobile/src/ledger_engine.dart';
+import 'package:geek_ledger_mobile/src/overview/pool_water_card.dart';
 import 'package:geek_ledger_mobile/src/platform_backup.dart';
 
 Future<void> _setPhoneViewport(WidgetTester tester) async {
@@ -791,7 +792,7 @@ void main() {
 
     expect(find.text('2026-12'), findsOneWidget);
     // 500.00 base + 380.00 rolled-over remaining = 880.00 available
-    expect(find.textContaining('可用 ¥880.00'), findsOneWidget);
+    expect(find.text('总额 ¥880.00'), findsOneWidget);
 
     // Retroactive expense of ¥30.00 in 2026-11 updates 2026-12 rolled-over balance to 850.00 automatically
     engine.recordManualTransaction(
@@ -813,7 +814,7 @@ void main() {
     await tester.tap(find.text('12月'));
     await tester.pumpAndSettle();
     expect(find.text('2026-12'), findsOneWidget);
-    expect(find.textContaining('可用 ¥850.00'), findsOneWidget);
+    expect(find.text('总额 ¥850.00'), findsOneWidget);
   });
 
   testWidgets(
@@ -879,5 +880,154 @@ void main() {
     expect(find.text('云同步与服务器'), findsOneWidget);
 
     engine.removeListener(listener);
+  });
+
+  testWidgets(
+      'PoolWaterCard renders remaining/overspend percentage, dual-segment discount progress bar with time marker, and 3-column single-line tabular footer',
+      (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
+    final engine = FlutterLedgerEngine();
+    final today = getLocalTodayDateStr();
+    final currentYm = today.substring(0, 7);
+
+    engine.upsertBudgetPool(
+      id: 'POOL_DAILY',
+      name: '日常',
+      poolType: 'DAILY',
+      rolloverStrategy: 'ACCUMULATE',
+      isMonthlyBudget: true,
+    );
+    engine.setMonthlyBudget(
+      yearMonth: currentYm,
+      poolId: 'POOL_DAILY',
+      baseAllocation: '800.00',
+    );
+    engine.upsertBudgetPool(
+      id: 'POOL_FIXED',
+      name: '固定刚需',
+      poolType: 'FIXED',
+      rolloverStrategy: 'RESET',
+      isMonthlyBudget: true,
+    );
+    engine.setMonthlyBudget(
+      yearMonth: currentYm,
+      poolId: 'POOL_FIXED',
+      baseAllocation: '204.00',
+    );
+    engine.upsertBudgetPool(
+      id: 'POOL_FLEX',
+      name: '弹性消费',
+      poolType: 'FLEX',
+      rolloverStrategy: 'ACCUMULATE',
+      isMonthlyBudget: true,
+    );
+    engine.setMonthlyBudget(
+      yearMonth: currentYm,
+      poolId: 'POOL_FLEX',
+      baseAllocation: '100.00',
+    );
+
+    // 420.65 gross - 35.75 discount = 384.90 net -> remaining 415.10 (51.9%)
+    engine.recordFromDsl(
+      '超市大采购 420.65 = 384.90',
+      txDate: today,
+      itemTargetOverrides: <int, Map<String, String?>>{
+        0: <String, String?>{'budget_pool_id': 'POOL_DAILY'},
+      },
+    );
+    // Overspend POOL_FLEX: 112.50 > 100.00 -> -12.50 (超支 12.5%)
+    engine.recordManualTransaction(
+      amount: '112.50',
+      budgetPoolId: 'POOL_FLEX',
+      merchantOrNote: '外设采购',
+      txDate: today,
+    );
+
+    await tester.pumpWidget(GeekLedgerApp(engine: engine));
+    await tester.pumpAndSettle();
+
+    // Daily pool header, segmented progress bar ratios, and 3-column footer
+    expect(find.text('日常'), findsOneWidget);
+    expect(find.text('¥415.10'), findsOneWidget);
+    expect(find.text('剩 51.9%'), findsOneWidget);
+    expect(find.text('总额 ¥800.00'), findsOneWidget);
+    expect(find.text('已用 ¥384.90'), findsOneWidget);
+    expect(find.textContaining('日均 ¥'), findsWidgets);
+    expect(find.textContaining('优惠 ¥'), findsNothing);
+
+    final bars = tester
+        .widgetList<SegmentedBudgetProgressBar>(
+          find.byType(SegmentedBudgetProgressBar),
+        )
+        .toList();
+    final dailyBar = bars.firstWhere((b) => b.label.contains('日常'));
+    expect(dailyBar.spentRatio, closeTo(384.90 / 800.00, 1e-4));
+    expect(dailyBar.discountRatio, closeTo(35.75 / 800.00, 1e-4));
+    expect(dailyBar.timeProgress, isNotNull);
+    expect(dailyBar.timeProgress, closeTo(computeMonthTimeProgress(currentYm)!, 1e-6));
+
+    // Verify tabular figures fontFeature on header amount & footer labels
+    final dailyAmountWidget = tester.widget<Text>(find.text('¥415.10'));
+    expect(
+      dailyAmountWidget.style?.fontFeatures,
+      contains(const FontFeature.tabularFigures()),
+    );
+    final dailyTotalWidget = tester.widget<Text>(find.text('总额 ¥800.00'));
+    expect(
+      dailyTotalWidget.style?.fontFeatures,
+      contains(const FontFeature.tabularFigures()),
+    );
+    expect(dailyTotalWidget.maxLines, 1);
+
+    // Scroll down to inspect Fixed pool and Overspent Flex pool
+    await tester.drag(find.byType(ListView), const Offset(0, -320));
+    await tester.pumpAndSettle();
+
+    // Fixed pool uses "剩余 ¥204.00" (not "日均") and has 0 discountRatio
+    final fixedCard = find.ancestor(
+      of: find.text('固定刚需'),
+      matching: find.byType(PoolWaterCard),
+    );
+    expect(fixedCard, findsOneWidget);
+    expect(
+      find.descendant(of: fixedCard, matching: find.text('剩余 ¥204.00')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: fixedCard, matching: find.textContaining('日均')),
+      findsNothing,
+    );
+    final fixedBar = tester.widget<SegmentedBudgetProgressBar>(
+      find.descendant(
+        of: fixedCard,
+        matching: find.byType(SegmentedBudgetProgressBar),
+      ),
+    );
+    expect(fixedBar.discountRatio, 0.0);
+
+    // Overspent pool shows negative remaining and "超支 12.5%"
+    final flexCard = find.ancestor(
+      of: find.text('弹性消费'),
+      matching: find.byType(PoolWaterCard),
+    );
+    expect(flexCard, findsOneWidget);
+    expect(
+      find.descendant(of: flexCard, matching: find.text('-¥12.50')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: flexCard, matching: find.text('超支 12.5%')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: flexCard, matching: find.text('总额 ¥100.00')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: flexCard, matching: find.text('已用 ¥112.50')),
+      findsOneWidget,
+    );
+
+    expect(tester.takeException(), isNull);
   });
 }
