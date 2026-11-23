@@ -348,42 +348,6 @@ mixin _LedgerEngineTxMutationsMixin on _LedgerEngineBase {
     }
     final tx = transactions[idx];
     final h = tx['header'] as Map<String, dynamic>;
-    final appliedVoucherId = h['applied_voucher_id'] as int?;
-    if (appliedVoucherId != null) {
-      final vIdx = vouchers.indexWhere((v) => v['id'] == appliedVoucherId);
-      if (vIdx != -1) {
-        final v = vouchers[vIdx];
-        v['status'] = 'AVAILABLE';
-        v['used_tx_id'] = null;
-        _appendOpLog('VOUCHER', '$appliedVoucherId', 'UPSERT', v);
-      }
-    }
-
-    final purchasedVouchers =
-        vouchers.where((v) => v['purchase_tx_id'] == txId).toList();
-    if (purchasedVouchers.isNotEmpty) {
-      final purchasedIds = purchasedVouchers.map((v) => v['id']).toSet();
-      for (final other in transactions) {
-        final oh = other['header'] as Map<String, dynamic>;
-        if (oh['is_deleted'] != true &&
-            purchasedIds.contains(oh['applied_voucher_id'])) {
-          oh['applied_voucher_id'] = null;
-          final otherHlc = hlc.now();
-          oh['updated_hlc'] = otherHlc;
-          _appendOpLog(
-            'TRANSACTION',
-            oh['id'] as String,
-            'UPSERT',
-            other,
-            otherHlc,
-          );
-        }
-      }
-      vouchers.removeWhere((v) => purchasedIds.contains(v['id']));
-      for (final vid in purchasedIds) {
-        _appendOpLog('VOUCHER', '$vid', 'DELETE', <String, dynamic>{'id': vid});
-      }
-    }
 
     final delHlc = hlc.now();
     h['is_deleted'] = true;
@@ -396,7 +360,7 @@ mixin _LedgerEngineTxMutationsMixin on _LedgerEngineBase {
     return _cloneMap(tx);
   }
 
-  /// Restores a previously soft-deleted transaction and re-binds its voucher if still available.
+  /// Restores a previously soft-deleted transaction.
   Map<String, dynamic> restoreTransaction(String txId) {
     final idx = transactions.indexWhere(
       (t) => (t['header'] as Map<String, dynamic>)['id'] == txId,
@@ -409,23 +373,6 @@ mixin _LedgerEngineTxMutationsMixin on _LedgerEngineBase {
     final restoreHlc = hlc.now();
     h['is_deleted'] = false;
     h['updated_hlc'] = restoreHlc;
-
-    final appliedVoucherId = h['applied_voucher_id'] as int?;
-    if (appliedVoucherId != null) {
-      final vIdx = vouchers.indexWhere((v) => v['id'] == appliedVoucherId);
-      if (vIdx != -1) {
-        final v = vouchers[vIdx];
-        if (v['status'] == 'AVAILABLE') {
-          v['status'] = 'USED';
-          v['used_tx_id'] = txId;
-          _appendOpLog('VOUCHER', '$appliedVoucherId', 'UPSERT', v);
-        } else if (v['used_tx_id'] != txId) {
-          h['applied_voucher_id'] = null;
-        }
-      } else {
-        h['applied_voucher_id'] = null;
-      }
-    }
 
     _appendOpLog('TRANSACTION', txId, 'UPSERT', tx, restoreHlc);
     final txDateStr = h['tx_date'] as String?;

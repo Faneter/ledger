@@ -11,8 +11,6 @@ import {
   MonthlyBudget,
   MonthlyBudgetStatusRow,
   ProjectTag,
-  Voucher,
-  VoucherType,
   TransactionHeader,
   TransactionItem,
   TransactionAggregate,
@@ -24,20 +22,16 @@ import {
   HybridLogicalClock,
   mergeOpLogEntries,
   parseQuickInputDsl,
-  computeOrderAllocation,
   allocateSplitDiscounts,
   processMastercardFxLifecycle,
   DEFAULT_FX_RATES,
   SplitItemInput,
   DEFAULT_CATEGORIES,
   DEFAULT_PROJECT_TAGS,
-  generateVoucherTitle,
   FxPreferenceConfig,
   getLocalTodayDateStr,
   getLocalYearMonthStr,
 } from '@ledger/core';
-
-export { generateVoucherTitle };
 
 export const LOCAL_STORAGE_KEY = 'geek_ledger_local_replica_v2';
 
@@ -45,7 +39,6 @@ export interface FullSyncBundle {
   nodeId: string;
   exportedAt: string;
   oplogs: SyncOpLogEntry[];
-  vouchers: Voucher[];
   monthlyBudgets: MonthlyBudget[];
   budgetPools?: BudgetPool[];
   categories?: Category[];
@@ -63,7 +56,6 @@ export interface LocalReplicaState {
   categories: Category[];
   monthlyBudgets: MonthlyBudget[];
   projectTags: ProjectTag[];
-  vouchers: Voucher[];
   recurringRules: RecurringRule[];
   transactions: TransactionAggregate[];
   oplogs: SyncOpLogEntry[];
@@ -256,33 +248,6 @@ export const CLEAN_SEED_MONTHLY_BUDGETS: MonthlyBudget[] = [
   },
 ];
 
-export const SEED_VOUCHERS: Voucher[] = [
-  {
-    id: 1,
-    title: '微信支付10元立减金',
-    voucher_type: 'PREPAID_COUPON',
-    face_value: '10.00',
-    acquire_cost: '5.99',
-    min_spend: '10.01',
-    status: 'AVAILABLE',
-    purchase_tx_id: null,
-    used_tx_id: null,
-    expire_date: '2026-12-31',
-  },
-  {
-    id: 2,
-    title: '美团外卖5元无门槛优惠券',
-    voucher_type: 'FREE_COUPON',
-    face_value: '5.00',
-    acquire_cost: '0.00',
-    min_spend: '0.00',
-    status: 'AVAILABLE',
-    purchase_tx_id: null,
-    used_tx_id: null,
-    expire_date: '2026-12-31',
-  },
-];
-
 export const SEED_RECURRING_RULES: RecurringRule[] = [
   {
     id: 1,
@@ -441,7 +406,7 @@ export class LocalLedgerEngine {
       }
     }
 
-    // 清理历史版本遗留的 accounts 状态与已废弃枚举 (REPAY_COUPON / AUTO_INVEST)
+    // 清理历史版本遗留的 accounts / fixedAssets / vouchers / AUTO_INVEST 状态
     if ('accounts' in (target as any)) {
       delete (target as any).accounts;
       cleaned = true;
@@ -450,12 +415,95 @@ export class LocalLedgerEngine {
       delete (target as any).fixedAssets;
       cleaned = true;
     }
-    if (Array.isArray(target.vouchers)) {
-      for (const v of target.vouchers) {
-        if ((v as any).voucher_type === 'REPAY_COUPON') {
-          v.voucher_type = 'FREE_COUPON';
+    if ('vouchers' in (target as any)) {
+      delete (target as any).vouchers;
+      cleaned = true;
+    }
+    if (Array.isArray(target.transactions)) {
+      const nextTxs: TransactionAggregate[] = [];
+      for (const tx of target.transactions) {
+        const txType = tx?.header?.tx_type as string | undefined;
+        if (txType !== 'EXPENSE' && txType !== 'INCOME') {
+          cleaned = true;
+          continue;
+        }
+        if (tx?.header && 'applied_voucher_id' in (tx.header as any)) {
+          delete (tx.header as any).applied_voucher_id;
           cleaned = true;
         }
+        if (tx && 'appliedVoucherId' in (tx as any)) {
+          delete (tx as any).appliedVoucherId;
+          cleaned = true;
+        }
+        nextTxs.push(tx);
+      }
+      if (nextTxs.length !== target.transactions.length) {
+        target.transactions = nextTxs;
+        cleaned = true;
+      }
+    }
+    if (Array.isArray(target.oplogs)) {
+      const nextOps: SyncOpLogEntry[] = [];
+      for (const op of target.oplogs) {
+        const et = (op as any)?.entity_type;
+        if (et === 'VOUCHER' || et === 'ACCOUNT' || et === 'FIXED_ASSET') {
+          cleaned = true;
+          continue;
+        }
+        if (et === 'TRANSACTION' && typeof op.payload_json === 'string') {
+          try {
+            const p = JSON.parse(op.payload_json);
+            const h = p?.header ?? p;
+            if (h?.tx_type && h.tx_type !== 'EXPENSE' && h.tx_type !== 'INCOME') {
+              cleaned = true;
+              continue;
+            }
+            if ((h && 'applied_voucher_id' in h) || (p && 'appliedVoucherId' in p)) {
+              if (h) delete h.applied_voucher_id;
+              if (p && 'appliedVoucherId' in p) delete p.appliedVoucherId;
+              nextOps.push({ ...op, payload_json: JSON.stringify(p) });
+              cleaned = true;
+              continue;
+            }
+          } catch {
+            // Keep unparseable op as-is
+          }
+        }
+        nextOps.push(op);
+      }
+      target.oplogs = nextOps;
+    }
+    if (Array.isArray(target.pendingSyncOps)) {
+      const nextPending = target.pendingSyncOps.filter((op: any) => {
+        const et = op?.entity_type;
+        if (et === 'VOUCHER' || et === 'ACCOUNT' || et === 'FIXED_ASSET') {
+          return false;
+        }
+        if (et === 'TRANSACTION' && typeof op.payload_json === 'string') {
+          try {
+            const p = JSON.parse(op.payload_json);
+            const h = p?.header ?? p;
+            if (h?.tx_type && h.tx_type !== 'EXPENSE' && h.tx_type !== 'INCOME') {
+              return false;
+            }
+          } catch {
+            // Ignore
+          }
+        }
+        return true;
+      });
+      if (nextPending.length !== target.pendingSyncOps.length) {
+        target.pendingSyncOps = nextPending;
+        cleaned = true;
+      }
+    }
+    if (Array.isArray(target.conflicts)) {
+      const nextConflicts = target.conflicts.filter(
+        (c: any) => c?.conflict_type !== 'VOUCHER_DOUBLE_SPEND'
+      );
+      if (nextConflicts.length !== target.conflicts.length) {
+        target.conflicts = nextConflicts;
+        cleaned = true;
       }
     }
     if (Array.isArray(target.recurringRules)) {
@@ -505,7 +553,7 @@ export class LocalLedgerEngine {
   }
 
   /**
-   * 重置为纯净账本状态（Stage 8 核心规范：0 余额账户、无默认优惠券、无默认固定资产、无交易流水）
+   * 重置为纯净账本状态（0 交易流水，仅保留标准 4 大月度预算池与收支分类体系）
    */
   public resetToCleanState(): void {
     this.state = this.buildCleanInitialState(this.state.nodeId);
@@ -521,7 +569,7 @@ export class LocalLedgerEngine {
   }
 
   /**
-   * 加载演示数据（包含花呗负债、主力银联卡、万事达外币卡、立减金与 iPhone 固定资产）
+   * 加载演示数据（包含示例预算池、专项预算与周期扣款规则）
    */
   public loadDemoData(): void {
     this.state = this.buildDemoInitialSeed(this.state.nodeId);
@@ -556,7 +604,6 @@ export class LocalLedgerEngine {
       categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
       monthlyBudgets: JSON.parse(JSON.stringify(CLEAN_SEED_MONTHLY_BUDGETS)),
       projectTags: [],
-      vouchers: [],
       recurringRules: [],
       transactions: [],
       oplogs: [],
@@ -581,7 +628,6 @@ export class LocalLedgerEngine {
       categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
       monthlyBudgets: JSON.parse(JSON.stringify(SEED_MONTHLY_BUDGETS)),
       projectTags: JSON.parse(JSON.stringify(DEFAULT_PROJECT_TAGS)),
-      vouchers: JSON.parse(JSON.stringify(SEED_VOUCHERS)),
       recurringRules: JSON.parse(JSON.stringify(SEED_RECURRING_RULES)),
       transactions: [],
       oplogs: [],
@@ -685,15 +731,10 @@ export class LocalLedgerEngine {
   // --------------------------------------------------------------------------
   // DSL 极速记账编译器与预览
   // --------------------------------------------------------------------------
-  public previewDsl(
-    rawText: string,
-    appliedVoucherId?: number | null
-  ): {
+  public previewDsl(rawText: string): {
     parsed: ReturnType<typeof parseQuickInputDsl>;
     is_fx_detected: boolean;
-    voucherSavings: string;
     effectiveNet: string;
-    voucherInfo: Voucher | null;
   } {
     const parsed = parseQuickInputDsl(rawText, {
       categories: this.state.categories,
@@ -702,84 +743,18 @@ export class LocalLedgerEngine {
       fxConfig: this.state.fxConfig,
     });
 
-    let voucherInfo: Voucher | null = null;
-    let voucherSavings = '0.00';
-    let effectiveNet = parsed.total_net;
-
-    if (appliedVoucherId != null) {
-      const v = this.state.vouchers.find((it) => it.id === appliedVoucherId);
-      if (v) {
-        if (v.status !== 'AVAILABLE') {
-          throw new Error(`优惠券「${v.title}」已被使用或已失效`);
-        }
-        if (parsed.tx_type === 'INCOME') {
-          throw new Error('收入交易不可使用优惠券');
-        }
-        const totalGrossDec = toDecimal(parsed.total_gross);
-        if (totalGrossDec.lessThan(toDecimal(v.min_spend))) {
-          throw new Error(
-            `未达到优惠券「${v.title}」的最低使用门槛（需满 ¥${v.min_spend}，当前金额 ¥${formatCny(totalGrossDec)}）`
-          );
-        }
-
-        voucherInfo = v;
-        if (parsed.tx_type === 'EXPENSE') {
-          const cashPaid = Decimal.max(
-            0,
-            toDecimal(parsed.total_net).minus(toDecimal(v.face_value))
-          );
-          const splitInputs: SplitItemInput[] = parsed.items.map((it) => ({
-            name: it.item_name,
-            gross: it.item_gross,
-            category_id: it.category_id,
-            budget_pool_id: it.budget_pool_id,
-            project_tag_id: it.project_tag_id,
-            is_primary: it.is_primary_item,
-          }));
-
-          const alloc = computeOrderAllocation(
-            splitInputs,
-            cashPaid,
-            parsed.allocation_mode,
-            {
-              face_value: v.face_value,
-              acquire_cost: v.acquire_cost,
-              voucher_type: v.voucher_type,
-            }
-          );
-
-          voucherSavings = alloc.voucher_net_savings;
-          effectiveNet = alloc.total_net;
-
-          parsed.total_gross = alloc.total_gross;
-          parsed.platform_discount = '0.00';
-          parsed.payment_discount = alloc.total_discount;
-          parsed.total_net = alloc.total_net;
-          parsed.items = alloc.items.map((it, idx) => ({
-            ...parsed.items[idx],
-            item_gross: it.gross,
-            allocated_discount: it.allocated_discount,
-            item_net: it.net,
-          }));
-        }
-      }
-    }
-
     return {
       parsed,
       is_fx_detected: Boolean(parsed.is_fx_detected),
-      voucherSavings,
-      effectiveNet,
-      voucherInfo,
+      effectiveNet: parsed.total_net,
     };
   }
 
   public recordFromDsl(
     rawText: string,
-    txDate?: string,
-    appliedVoucherId?: number | null
+    txDate?: string
   ): TransactionAggregate {
-    const preview = this.previewDsl(rawText, appliedVoucherId);
+    const preview = this.previewDsl(rawText);
     const parsed = preview.parsed;
     const hlc = this.hlc.now();
     const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -805,7 +780,6 @@ export class LocalLedgerEngine {
       settled_at: parsed.settlement_status === 'SETTLED' ? nowIso : null,
       raw_input_text: parsed.raw_input_text,
       merchant_or_note: parsed.merchant_or_note,
-      applied_voucher_id: appliedVoucherId ?? null,
       is_deleted: false,
       updated_hlc: hlc,
       created_at: nowIso,
@@ -828,34 +802,12 @@ export class LocalLedgerEngine {
     const txAggregate: TransactionAggregate = {
       header,
       items,
-      appliedVoucherId: appliedVoucherId ?? null,
     };
 
     // 1. 追加交易
     this.state.transactions.unshift(txAggregate);
 
-    // 2. 核销卡券
-    if (appliedVoucherId != null) {
-      const v = this.state.vouchers.find((it) => it.id === appliedVoucherId);
-      if (v) {
-        v.status = 'USED';
-        v.used_tx_id = txId;
-        const vHlc = this.hlc.now();
-        const vOp: SyncOpLogEntry = {
-          hlc: vHlc,
-          node_id: this.state.nodeId,
-          entity_type: 'VOUCHER',
-          entity_id: String(v.id),
-          op_type: 'UPSERT',
-          payload_json: JSON.stringify(v),
-          created_at: nowIso,
-        };
-        this.state.oplogs.push(vOp);
-        this.state.pendingSyncOps.push(vOp);
-      }
-    }
-
-    // 3. 追加 OpLog
+    // 2. 追加 OpLog
     const txOp: SyncOpLogEntry = {
       hlc,
       node_id: this.state.nodeId,
@@ -868,7 +820,7 @@ export class LocalLedgerEngine {
     this.state.oplogs.push(txOp);
     this.state.pendingSyncOps.push(txOp);
 
-    // 4. 重算并保存
+    // 3. 重算并保存
     this.recalculateAllBalances();
     this.saveToStorage();
 
@@ -887,7 +839,6 @@ export class LocalLedgerEngine {
     budget_pool_id?: string;
     project_tag_id?: string | null;
     merchant_or_note: string;
-    applied_voucher_id?: number | null;
     currency?: string; // default 'CNY'; if 'USD' etc., support hold_amount_cny or 102% hold
     hold_amount_cny?: string;
     fx_hold_ratio?: string;
@@ -901,115 +852,38 @@ export class LocalLedgerEngine {
 
     let totalGross = formatCny(params.amount);
     let paymentDiscount = formatCny(params.discount ?? '0.00');
-    let platformDiscount = '0.00';
+    const platformDiscount = '0.00';
     let totalNet = formatCny(
       Decimal.max(0, toDecimal(totalGross).minus(toDecimal(paymentDiscount)))
     );
     let items: TransactionItem[] = [];
-    let settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx ? 'PENDING_HOLD' : 'SETTLED';
+    const settlementStatus: 'PENDING_HOLD' | 'SETTLED' = isFx
+      ? 'PENDING_HOLD'
+      : 'SETTLED';
     let holdAmountCny = '0.00';
     let exchangeRate: string | null = isFx ? null : '1.000000';
     let fxCashbackRateToStore: string | null = null;
-
-    let appliedVoucher: Voucher | null = null;
-    if (params.applied_voucher_id != null) {
-      const v = this.state.vouchers.find(
-        (it) => it.id === params.applied_voucher_id
-      );
-      if (!v) {
-        throw new Error(`优惠券 "${params.applied_voucher_id}" 不存在`);
-      }
-      if (v.status !== 'AVAILABLE') {
-        throw new Error(`优惠券「${v.title}」已被使用或已失效`);
-      }
-      if (params.tx_type === 'INCOME') {
-        throw new Error('收入交易不可使用优惠券');
-      }
-      const totalGrossDec = isFx
-        ? roundCny(
-            toDecimal(params.amount).times(
-              DEFAULT_FX_RATES[currency] ?? '7.200000'
-            )
-          )
-        : toDecimal(params.amount);
-      if (totalGrossDec.lessThan(toDecimal(v.min_spend))) {
-        throw new Error(
-          `未达到优惠券「${v.title}」的最低使用门槛（需满 ¥${v.min_spend}，当前金额 ¥${formatCny(totalGrossDec)}）`
-        );
-      }
-      appliedVoucher = v;
-    }
 
     if (params.tx_type === 'EXPENSE') {
       const catId = params.category_id ?? (this.state.categories[0]?.id ?? 'CAT_FOOD');
       const cat = this.state.categories.find((c) => c.id === catId);
       const poolId = params.budget_pool_id ?? (cat?.default_pool_id ?? 'POOL_DAILY');
 
-      if (appliedVoucher) {
-        const v = appliedVoucher;
-        const cashPaid = Decimal.max(
-          0,
-          toDecimal(params.amount)
-            .minus(toDecimal(params.discount ?? 0))
-            .minus(toDecimal(v.face_value))
-        );
-          const splitInputs: SplitItemInput[] = [
-            {
-              name: params.merchant_or_note,
-              gross: totalGross,
-              category_id: catId,
-              budget_pool_id: poolId,
-              project_tag_id: params.project_tag_id ?? null,
-              is_primary: true,
-            },
-          ];
-          const alloc = computeOrderAllocation(
-            splitInputs,
-            cashPaid,
-            'SINGLE',
-            {
-              face_value: v.face_value,
-              acquire_cost: v.acquire_cost,
-              voucher_type: v.voucher_type,
-            }
-          );
-          totalGross = alloc.total_gross;
-          paymentDiscount = alloc.total_discount;
-          totalNet = alloc.total_net;
-          items = [
-            {
-              id: 1,
-              header_id: txId,
-              item_name: params.merchant_or_note,
-              category_id: catId,
-              budget_pool_id: poolId,
-              project_tag_id: params.project_tag_id ?? null,
-              item_gross: alloc.items[0].gross,
-              allocated_discount: alloc.items[0].allocated_discount,
-              item_net: alloc.items[0].net,
-              is_primary_item: true,
-              raw_formula_expr: null,
-            },
-          ];
-        }
-
-      if (items.length === 0) {
-        items = [
-          {
-            id: 1,
-            header_id: txId,
-            item_name: params.merchant_or_note,
-            category_id: catId,
-            budget_pool_id: poolId,
-            project_tag_id: params.project_tag_id ?? null,
-            item_gross: totalGross,
-            allocated_discount: paymentDiscount,
-            item_net: totalNet,
-            is_primary_item: true,
-            raw_formula_expr: null,
-          },
-        ];
-      }
+      items = [
+        {
+          id: 1,
+          header_id: txId,
+          item_name: params.merchant_or_note,
+          category_id: catId,
+          budget_pool_id: poolId,
+          project_tag_id: params.project_tag_id ?? null,
+          item_gross: totalGross,
+          allocated_discount: paymentDiscount,
+          item_net: totalNet,
+          is_primary_item: true,
+          raw_formula_expr: null,
+        },
+      ];
 
       if (isFx) {
         const fxRate = DEFAULT_FX_RATES[currency] ?? '7.200000';
@@ -1074,7 +948,6 @@ export class LocalLedgerEngine {
       settled_at: settlementStatus === 'SETTLED' ? nowIso : null,
       raw_input_text: `手动录入：${params.merchant_or_note} ${params.amount}`,
       merchant_or_note: params.merchant_or_note,
-      applied_voucher_id: params.applied_voucher_id ?? null,
       is_deleted: false,
       updated_hlc: hlc,
       created_at: nowIso,
@@ -1083,22 +956,9 @@ export class LocalLedgerEngine {
     const txAggregate: TransactionAggregate = {
       header,
       items,
-      appliedVoucherId: params.applied_voucher_id ?? null,
     };
 
     this.state.transactions.unshift(txAggregate);
-
-    if (params.applied_voucher_id != null) {
-      const v = this.state.vouchers.find(
-        (it) => it.id === params.applied_voucher_id
-      );
-      if (v) {
-        v.status = 'USED';
-        v.used_tx_id = txId;
-        this.appendOpLog('VOUCHER', String(v.id), 'UPSERT', v);
-      }
-    }
-
     this.appendOpLog('TRANSACTION', txId, 'UPSERT', txAggregate);
     this.recalculateAllBalances();
     this.saveToStorage();
@@ -1107,7 +967,7 @@ export class LocalLedgerEngine {
   }
 
   // --------------------------------------------------------------------------
-  // Stage 8: 交易编辑与删除 (支持优惠券自动回退与全账本重算)
+  // Stage 8: 交易编辑与删除 (支持全账本自动重算)
   // --------------------------------------------------------------------------
   public updateTransaction(
     txId: string,
@@ -1273,32 +1133,6 @@ export class LocalLedgerEngine {
     tx.header.is_deleted = true;
     const hlc = this.hlc.now();
     tx.header.updated_hlc = hlc;
-
-    // 1. 若该交易所使用的立减金需要释放回卡包
-    if (tx.header.applied_voucher_id != null) {
-      const v = this.state.vouchers.find((it) => it.id === tx.header.applied_voucher_id);
-      if (v) {
-        v.status = 'AVAILABLE';
-        v.used_tx_id = null;
-        this.appendOpLog('VOUCHER', String(v.id), 'UPSERT', v);
-      }
-    }
-
-    // 2. 若删除的是购券流水（VOUCHER_BUY），级联删除其对应的卡券
-    const purchasedVouchers = this.state.vouchers.filter(
-      (v) => v.purchase_tx_id === txId
-    );
-    for (const pv of purchasedVouchers) {
-      for (const otherTx of this.state.transactions) {
-        if (otherTx.header.applied_voucher_id === pv.id) {
-          otherTx.header.applied_voucher_id = null;
-          otherTx.header.updated_hlc = this.hlc.now();
-          this.appendOpLog('TRANSACTION', otherTx.header.id, 'UPSERT', otherTx);
-        }
-      }
-      this.state.vouchers = this.state.vouchers.filter((v) => v.id !== pv.id);
-      this.appendOpLog('VOUCHER', String(pv.id), 'DELETE', { id: pv.id });
-    }
 
     this.appendOpLog('TRANSACTION', txId, 'UPSERT', tx);
     this.recalculateAllBalances();
@@ -1520,111 +1354,8 @@ export class LocalLedgerEngine {
   }
 
   // --------------------------------------------------------------------------
-  // Stage 8: 虚拟卡包 (免费/有偿) 与周期性规则 CRUD
+  // Stage 8: 周期性规则 CRUD
   // --------------------------------------------------------------------------
-  public upsertVoucher(params: {
-    id?: number;
-    title?: string;
-    voucher_type: VoucherType;
-    face_value: string;
-    acquire_cost: string;
-    min_spend: string;
-    expire_date?: string | null;
-    status?: 'AVAILABLE' | 'USED' | 'EXPIRED';
-    txDate?: string;
-    tx_date?: string;
-  }): { voucher: Voucher; tx?: TransactionAggregate; transaction?: TransactionAggregate } {
-    const finalTitle =
-      params.title?.trim() ||
-      generateVoucherTitle(
-        params.voucher_type,
-        params.face_value,
-        params.min_spend,
-        params.acquire_cost
-      );
-
-    if (!params.id && Number(params.acquire_cost) > 0) {
-      return this.buyVoucher({
-        title: finalTitle,
-        voucher_type: params.voucher_type,
-        face_value: params.face_value,
-        acquire_cost: params.acquire_cost,
-        min_spend: params.min_spend,
-        expire_date: params.expire_date,
-        txDate: params.txDate ?? params.tx_date,
-      });
-    }
-
-    if (params.id) {
-      const v = this.state.vouchers.find((it) => it.id === params.id);
-      if (!v) {
-        throw new Error(`Voucher "${params.id}" not found`);
-      }
-      v.title = finalTitle;
-      v.voucher_type = params.voucher_type;
-      v.face_value = formatCny(params.face_value);
-      v.acquire_cost = formatCny(params.acquire_cost ?? '0.00');
-      v.min_spend = formatCny(params.min_spend ?? '0.00');
-      if (params.expire_date !== undefined) v.expire_date = params.expire_date;
-      if (params.status !== undefined) v.status = params.status;
-
-      this.appendOpLog('VOUCHER', String(v.id), 'UPSERT', v);
-      this.recalculateAllBalances();
-      this.saveToStorage();
-      return { voucher: v };
-    }
-
-    const nextId =
-      this.state.vouchers.reduce((max, it) => Math.max(max, it.id), 0) + 1;
-    const newV: Voucher = {
-      id: nextId,
-      title: finalTitle,
-      voucher_type: params.voucher_type,
-      face_value: formatCny(params.face_value),
-      acquire_cost: formatCny(params.acquire_cost ?? '0.00'),
-      min_spend: formatCny(params.min_spend ?? '0.00'),
-      status: params.status ?? 'AVAILABLE',
-      purchase_tx_id: null,
-      used_tx_id: null,
-      expire_date: params.expire_date ?? '2026-12-31',
-      created_at: new Date().toISOString(),
-    };
-    this.state.vouchers.unshift(newV);
-
-    this.appendOpLog('VOUCHER', String(newV.id), 'UPSERT', newV);
-    this.recalculateAllBalances();
-    this.saveToStorage();
-
-    return { voucher: newV };
-  }
-
-  public deleteVoucher(id: number): void {
-    const idx = this.state.vouchers.findIndex((v) => v.id === id);
-    if (idx !== -1) {
-      const v = this.state.vouchers[idx];
-      if (v.purchase_tx_id) {
-        const pTx = this.state.transactions.find((t) => t.header.id === v.purchase_tx_id);
-        if (pTx) {
-          pTx.header.is_deleted = true;
-          pTx.header.updated_hlc = this.hlc.now();
-          this.appendOpLog('TRANSACTION', pTx.header.id, 'UPSERT', pTx);
-        }
-      }
-      for (const tx of this.state.transactions) {
-        if (!tx.header.is_deleted && tx.header.applied_voucher_id === id) {
-          tx.header.applied_voucher_id = null;
-          tx.appliedVoucherId = null;
-          tx.header.updated_hlc = this.hlc.now();
-          this.appendOpLog('TRANSACTION', tx.header.id, 'UPSERT', tx);
-        }
-      }
-      this.state.vouchers.splice(idx, 1);
-      this.appendOpLog('VOUCHER', String(id), 'DELETE', { id });
-      this.recalculateAllBalances();
-      this.saveToStorage();
-    }
-  }
-
   public upsertRecurringRule(
     rule: Partial<RecurringRule> & { title: string; amount: string }
   ): RecurringRule {
@@ -1834,110 +1565,6 @@ export class LocalLedgerEngine {
     this.saveToStorage();
 
     return tx;
-  }
-
-  // --------------------------------------------------------------------------
-  // 虚拟卡包：有偿购券入库
-  // --------------------------------------------------------------------------
-  public buyVoucher(params: {
-    title?: string;
-    voucher_type?: VoucherType;
-    voucherType?: VoucherType;
-    face_value?: string;
-    faceValue?: string;
-    acquire_cost?: string;
-    acquireCost?: string;
-    min_spend?: string;
-    minSpend?: string;
-    expire_date?: string | null;
-    txDate?: string;
-    tx_date?: string;
-  }): { voucher: Voucher; tx: TransactionAggregate; transaction: TransactionAggregate } {
-    const voucherType = params.voucher_type ?? params.voucherType ?? 'PREPAID_COUPON';
-    const faceValue = formatCny(params.face_value ?? params.faceValue ?? '0.00');
-    const acquireCost = formatCny(params.acquire_cost ?? params.acquireCost ?? '0.00');
-    const minSpend = formatCny(params.min_spend ?? params.minSpend ?? '0.00');
-    const finalTitle =
-      params.title?.trim() ||
-      generateVoucherTitle(voucherType, faceValue, minSpend, acquireCost);
-    const nextId =
-      this.state.vouchers.reduce((max, v) => Math.max(max, v.id), 0) + 1;
-    const nowIso = new Date().toISOString();
-    const today = params.txDate ?? params.tx_date ?? getLocalTodayDateStr();
-    const txId = `tx_buy_voucher_${Date.now()}`;
-    const hlc = this.hlc.now();
-
-    const newVoucher: Voucher = {
-      id: nextId,
-      title: finalTitle,
-      voucher_type: voucherType,
-      face_value: faceValue,
-      acquire_cost: acquireCost,
-      min_spend: minSpend,
-      status: 'AVAILABLE',
-      purchase_tx_id: txId,
-      used_tx_id: null,
-      expire_date: params.expire_date ?? '2026-12-31',
-    };
-
-    const txHeader: TransactionHeader = {
-      id: txId,
-      tx_date: today,
-      tx_timestamp: nowIso,
-      tx_type: 'VOUCHER_BUY',
-      total_gross: acquireCost,
-      platform_discount: '0.00',
-      payment_discount: '0.00',
-      total_net: acquireCost,
-      allocation_mode: 'SINGLE',
-      original_currency: 'CNY',
-      original_amount: null,
-      exchange_rate: '1.000000',
-      settlement_status: 'SETTLED',
-      hold_amount_cny: '0.00',
-      settled_at: nowIso,
-      raw_input_text: `购买卡券: ${finalTitle}`,
-      merchant_or_note: `购买卡券: ${finalTitle}`,
-      applied_voucher_id: null,
-      is_deleted: false,
-      updated_hlc: hlc,
-      created_at: nowIso,
-    };
-
-    const tx: TransactionAggregate = {
-      header: txHeader,
-      items: [],
-    };
-
-    this.state.vouchers.unshift(newVoucher);
-    this.state.transactions.unshift(tx);
-
-    const vOp: SyncOpLogEntry = {
-      hlc: this.hlc.now(),
-      node_id: this.state.nodeId,
-      entity_type: 'VOUCHER',
-      entity_id: String(newVoucher.id),
-      op_type: 'UPSERT',
-      payload_json: JSON.stringify(newVoucher),
-      created_at: nowIso,
-    };
-    const txOp: SyncOpLogEntry = {
-      hlc,
-      node_id: this.state.nodeId,
-      entity_type: 'TRANSACTION',
-      entity_id: txId,
-      op_type: 'UPSERT',
-      payload_json: JSON.stringify(tx),
-      created_at: nowIso,
-    };
-
-    this.state.oplogs.push(vOp, txOp);
-    this.state.pendingSyncOps.push(vOp, txOp);
-
-    this.recalculateAllBalances();
-    this.saveToStorage();
-
-    return { voucher: newVoucher, tx, transaction: tx };
   }
 
   // --------------------------------------------------------------------------
@@ -2215,11 +1842,38 @@ export class LocalLedgerEngine {
 
       this.state.serverEpochId = serverEpochId;
 
-      // 3. 运行核心因果合并与语义冲突检测器
-      const mergeResult = mergeOpLogEntries(this.state.oplogs, serverOps);
+      // 3. 运行核心因果合并与语义冲突检测器（过滤历史卡包/双花冲突）
+      const filteredServerOps: SyncOpLogEntry[] = [];
+      for (const op of serverOps) {
+        const et = op.entity_type as string;
+        if (et === 'VOUCHER' || et === 'ACCOUNT' || et === 'FIXED_ASSET') {
+          continue;
+        }
+        if (et === 'TRANSACTION') {
+          try {
+            const p = JSON.parse(op.payload_json);
+            const h = p?.header ?? p;
+            if (h?.tx_type && h.tx_type !== 'EXPENSE' && h.tx_type !== 'INCOME') {
+              continue;
+            }
+            if ((h && 'applied_voucher_id' in h) || (p && 'appliedVoucherId' in p)) {
+              if (h) delete h.applied_voucher_id;
+              if (p && 'appliedVoucherId' in p) delete p.appliedVoucherId;
+              filteredServerOps.push({ ...op, payload_json: JSON.stringify(p) });
+              continue;
+            }
+          } catch {
+            // Keep unparseable op
+          }
+        }
+        filteredServerOps.push(op);
+      }
+
+      const mergeResult = mergeOpLogEntries(this.state.oplogs, filteredServerOps);
 
       // 记录新冲突
       for (const cf of mergeResult.detectedConflicts) {
+        if ((cf.conflict_type as string) === 'VOUCHER_DOUBLE_SPEND') continue;
         if (!this.state.conflicts.some((c) => c.id === cf.id)) {
           this.state.conflicts.unshift(cf);
         }
@@ -2228,6 +1882,7 @@ export class LocalLedgerEngine {
       // 服务端如果有持久化冲突也合入
       if (Array.isArray(data.conflicts)) {
         for (const cf of data.conflicts as SyncConflict[]) {
+          if ((cf.conflict_type as string) === 'VOUCHER_DOUBLE_SPEND') continue;
           if (!this.state.conflicts.some((c) => c.id === cf.id)) {
             this.state.conflicts.unshift(cf);
           }
@@ -2240,7 +1895,7 @@ export class LocalLedgerEngine {
       this.state.lastSyncAt = new Date().toISOString();
 
       // 单调推进时钟
-      for (const op of serverOps) {
+      for (const op of filteredServerOps) {
         this.hlc.receive(op.hlc);
       }
 
@@ -2253,7 +1908,7 @@ export class LocalLedgerEngine {
       return {
         success: true,
         serverResetDetected: false,
-        appliedRemoteCount: serverOps.length,
+        appliedRemoteCount: filteredServerOps.length,
         conflictsDetected: this.state.conflicts.length,
       };
     } catch (err) {
@@ -2280,7 +1935,8 @@ export class LocalLedgerEngine {
           // 账户体系已彻底移除，兼容忽略历史遗留的 ACCOUNT 同步日志
           continue;
         } else if (entityType === 'VOUCHER') {
-          this.state.vouchers = this.state.vouchers.filter((v) => String(v.id) !== entityId);
+          // 卡包功能已移除，兼容忽略历史同步日志
+          continue;
         } else if (entityType === 'BUDGET_POOL') {
           this.state.budgetPools = this.state.budgetPools.filter((b) => b.id !== entityId);
         } else if (entityType === 'MONTHLY_BUDGET' || entityType === 'BUDGET') {
@@ -2304,6 +1960,16 @@ export class LocalLedgerEngine {
         const payload = JSON.parse(op.payload_json);
         if (entityType === 'TRANSACTION') {
           const tx = payload as TransactionAggregate;
+          const txType = tx?.header?.tx_type as string | undefined;
+          if (txType !== 'EXPENSE' && txType !== 'INCOME') {
+            continue;
+          }
+          if ('applied_voucher_id' in (tx.header as any)) {
+            delete (tx.header as any).applied_voucher_id;
+          }
+          if ('appliedVoucherId' in (tx as any)) {
+            delete (tx as any).appliedVoucherId;
+          }
           const idx = this.state.transactions.findIndex(
             (t) => t.header.id === tx.header.id
           );
@@ -2313,13 +1979,8 @@ export class LocalLedgerEngine {
             this.state.transactions.unshift(tx);
           }
         } else if (entityType === 'VOUCHER') {
-          const v = payload as Voucher;
-          const idx = this.state.vouchers.findIndex((it) => it.id === v.id);
-          if (idx !== -1) {
-            this.state.vouchers[idx] = v;
-          } else {
-            this.state.vouchers.unshift(v);
-          }
+          // 卡包功能已移除，兼容忽略历史同步日志
+          continue;
         } else if (entityType === 'ACCOUNT') {
           // 账户体系已彻底移除，兼容忽略历史遗留的 ACCOUNT 同步日志
           continue;
@@ -2552,7 +2213,6 @@ export class LocalLedgerEngine {
   public importFullSyncBundle(bundle: Partial<FullSyncBundle>): {
     transactionsCount: number;
     poolsCount: number;
-    vouchersCount: number;
   } {
     if (!bundle || typeof bundle !== 'object') {
       throw new Error('无效的备份文件格式');
@@ -2561,11 +2221,11 @@ export class LocalLedgerEngine {
     const hasCoreArray =
       Array.isArray(bundle.transactions) ||
       Array.isArray(bundle.budgetPools) ||
-      Array.isArray(bundle.vouchers) ||
-      Array.isArray(bundle.monthlyBudgets);
+      Array.isArray(bundle.monthlyBudgets) ||
+      Array.isArray(bundle.oplogs);
 
     if (!hasCoreArray) {
-      throw new Error('备份文件中缺少账本核心数据（流水、预算池或卡券）');
+      throw new Error('备份文件中缺少账本核心数据（流水或预算池）');
     }
 
     const cloneOrFallback = <T>(val: T[] | undefined, fallback: T[]): T[] =>
@@ -2575,11 +2235,13 @@ export class LocalLedgerEngine {
     this.state.categories = cloneOrFallback(bundle.categories, DEFAULT_CATEGORIES);
     this.state.projectTags = cloneOrFallback(bundle.projectTags, []);
     this.state.recurringRules = cloneOrFallback(bundle.recurringRules, []);
-    this.state.vouchers = cloneOrFallback(bundle.vouchers, []);
     this.state.monthlyBudgets = cloneOrFallback(bundle.monthlyBudgets, CLEAN_SEED_MONTHLY_BUDGETS);
     this.state.transactions = cloneOrFallback(bundle.transactions, []);
     this.state.oplogs = cloneOrFallback(bundle.oplogs, []).filter(
-      (op: any) => op?.entity_type !== 'ACCOUNT' && op?.entity_type !== 'FIXED_ASSET'
+      (op: any) =>
+        op?.entity_type !== 'VOUCHER' &&
+        op?.entity_type !== 'ACCOUNT' &&
+        op?.entity_type !== 'FIXED_ASSET'
     );
 
     this.cleanupDeprecatedPoolsFromState(this.state);
@@ -2601,7 +2263,6 @@ export class LocalLedgerEngine {
     return {
       transactionsCount: this.state.transactions.filter((t) => !t.header?.is_deleted).length,
       poolsCount: this.state.budgetPools.filter((p) => p.is_monthly_budget).length,
-      vouchersCount: this.state.vouchers.length,
     };
   }
 
@@ -2614,7 +2275,6 @@ export class LocalLedgerEngine {
       projectTags: this.state.projectTags,
       recurringRules: this.state.recurringRules,
       oplogs: this.state.oplogs,
-      vouchers: this.state.vouchers,
       monthlyBudgets: this.state.monthlyBudgets,
       transactions: this.state.transactions,
     };

@@ -52,7 +52,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(state.budgetStatus.pools.length).toBe(4);
       expect(state.transactions).toEqual([]);
       expect(state.pendingFxTransactions).toEqual([]);
-      expect(state.vouchers.length).toBe(2);
       expect(state.metadata.categories.length).toBe(14);
       expect(state.metadata.projectTags.length).toBe(3);
       expect(state.metadata.recurringRules.length).toBe(2);
@@ -94,28 +93,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       });
       expect(res.statusCode).toBe(400);
       expect(res.body.error).toBeDefined();
-    });
-
-    it('should preview with applied voucher correctly', async () => {
-      // 卡券 1 为 10 元面值立减金 (成本 5.99)
-      const dsl = '麦当劳巨无霸 35.5 #饮食 @主力银联卡';
-      const previewRes = await server.inject({
-        method: 'POST',
-        url: '/api/dsl/preview',
-        body: {
-          rawText: dsl,
-          txDate: '2026-11-12',
-          appliedVoucherId: 1,
-        },
-      });
-
-      expect(previewRes.statusCode).toBe(200);
-      const { parsed } = previewRes.body;
-      expect(parsed.total_gross).toBe('35.50');
-      // 现场支付 25.50 + 卡券结转成本 5.99 = 31.49，优惠 4.01
-      expect(parsed.total_net).toBe('31.49');
-      expect(parsed.payment_discount).toBe('4.01');
-      expect(parsed.applied_voucher_id).toBe(1);
     });
 
     it('should record transaction from DSL and update state & oplog', async () => {
@@ -291,38 +268,9 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
   });
 
   // ==========================================================================
-  // 测试 3：购券与预算月末滚存
+  // 测试 3：预算月末滚存
   // ==========================================================================
-  describe('3. Voucher Buy & Month Rollover', () => {
-    it('should purchase voucher and record VOUCHER_BUY cost transaction', async () => {
-      // 购买瑞幸 20 元立减券 (实付 9.90)
-      const buyRes = await server.inject({
-        method: 'POST',
-        url: '/api/vouchers/buy',
-        body: {
-          title: '瑞幸咖啡20元立减券',
-          voucherType: 'PREPAID_COUPON',
-          faceValue: '20.00',
-          acquireCost: '9.90',
-          minSpend: '20.00',
-          txDate: '2026-11-12',
-        },
-      });
-      expect(buyRes.statusCode).toBe(200);
-      expect(buyRes.body.voucher.title).toBe('瑞幸咖啡20元立减券');
-      expect(buyRes.body.voucher.status).toBe('AVAILABLE');
-      expect(buyRes.body.transaction.header.tx_type).toBe('VOUCHER_BUY');
-      expect(buyRes.body.transaction.header.total_net).toBe('9.90');
-
-      const state = (
-        await server.inject({
-          method: 'GET',
-          url: '/api/state',
-        })
-      ).body;
-      expect(state.vouchers.length).toBe(3);
-    });
-
+  describe('3. Month Rollover', () => {
     it('should execute month rollover preserving accumulated pool surplus', async () => {
       // 消费 150 元，高频池总额 650，剩余 500 元
       await server.inject({
@@ -581,12 +529,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       client.recordFromDsl('聚餐 120.00 #饮食', '2026-11-05');
       client.recordFromDsl('冬季保暖卫衣 200.00 #服饰', '2026-11-06');
       client.recordFromDsl('咖啡 35.00 #饮食', '2026-11-07');
-      client.buyVoucher({
-        title: '星巴克大杯饮品立减券',
-        faceValue: '35.00',
-        acquireCost: '18.80',
-        minSpend: '35.00',
-      });
 
       // 2. 客户端向服务端同步全量操作日志
       const initialExchange = await server.inject({
@@ -609,9 +551,8 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       ).body;
       const initialEpoch = server.serverEpochId;
 
-      expect(preCrashState.oplogCount).toBeGreaterThanOrEqual(4);
-      expect(preCrashState.transactions.length).toBeGreaterThanOrEqual(4);
-      expect(preCrashState.vouchers.length).toBe(3); // 2 默认 + 1 新购
+      expect(preCrashState.oplogCount).toBeGreaterThanOrEqual(3);
+      expect(preCrashState.transactions.length).toBeGreaterThanOrEqual(3);
 
       // 3. 模拟服务器硬盘物理损坏/空库重启！(/api/sync/simulate-crash)
       const crashRes = await server.inject({
@@ -657,7 +598,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(recoveredState.transactions.length).toBe(
         preCrashState.transactions.length
       );
-      expect(recoveredState.vouchers.length).toBe(3);
 
       // 预算池执行水位 100% 恢复
       const recoveredDailyPool = recoveredState.budgetStatus.pools.find(
@@ -800,7 +740,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       expect(deleteRes.body.deleted).toBe(true);
     });
 
-    it('should support budget pools, categories, project tags, vouchers, and recurring rules CRUD', async () => {
+    it('should support budget pools, categories, project tags, and recurring rules CRUD', async () => {
       // 1. Budget Pool & Monthly Budget
       const poolRes = await server.inject({
         method: 'POST',
@@ -839,21 +779,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       });
       expect(tagRes.statusCode).toBe(200);
 
-      // 4. Voucher (free voucher)
-      const voucherRes = await server.inject({
-        method: 'POST',
-        url: '/api/vouchers',
-        body: {
-          title: '服务端免费领券',
-          voucher_type: 'FREE_COUPON',
-          face_value: '5.00',
-          acquire_cost: '0.00',
-          min_spend: '20.00',
-        },
-      });
-      expect(voucherRes.statusCode).toBe(200);
-
-      // 5. Recurring Rule & Execute
+      // 4. Recurring Rule & Execute
       const ruleRes = await server.inject({
         method: 'POST',
         url: '/api/recurring-rules',
@@ -908,16 +834,7 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
         target_budget: '1800.00',
       });
 
-      // 4. 购买一张立减金
-      const { voucher } = client.buyVoucher({
-        title: '数码外设50元抵扣券',
-        voucherType: 'PREPAID_COUPON',
-        faceValue: '50.00',
-        acquireCost: '20.00',
-        minSpend: '100.00',
-      });
-
-      // 5. 记一笔引用自定义分类、自定义资金池与自定义心愿标签的交易
+      // 4. 记一笔引用自定义分类、自定义资金池与自定义心愿标签的交易
       client.recordTransaction({
         header: {
           tx_date: '2026-11-12',
@@ -996,12 +913,6 @@ describe('Stage 5: @ledger/server Distributed Sync & Disaster Recovery Server', 
       );
       expect(customTag).toBeDefined();
       expect(customTag.target_budget).toBe('1800.00');
-
-      const customVoucher = stateRes.body.vouchers.find(
-        (v: any) => v.id === voucher.id
-      );
-      expect(customVoucher).toBeDefined();
-      expect(customVoucher.title).toBe('数码外设50元抵扣券');
     });
   });
 });

@@ -1,10 +1,45 @@
 part of '../ledger_engine.dart';
 
 mixin _LedgerEngineSyncMixin on _LedgerEngineBase {
+  List<Map<String, dynamic>> _sanitizeIncomingOps(
+    List<Map<String, dynamic>> ops,
+  ) {
+    final safe = <Map<String, dynamic>>[];
+    for (final raw in ops) {
+      if (raw['entity_type'] == 'VOUCHER') continue;
+      if (raw['entity_type'] == 'TRANSACTION' && raw['op_type'] != 'DELETE') {
+        try {
+          final decoded = jsonDecode(raw['payload_json'] as String);
+          if (decoded is Map) {
+            final header = decoded['header'] is Map
+                ? Map<String, dynamic>.from(decoded['header'] as Map)
+                : null;
+            final txType = header?['tx_type'];
+            if (header != null && txType != 'EXPENSE' && txType != 'INCOME') {
+              continue;
+            }
+            if (header != null && header.containsKey('applied_voucher_id')) {
+              header.remove('applied_voucher_id');
+              final clone = Map<String, dynamic>.from(raw);
+              final nextPayload = Map<String, dynamic>.from(decoded);
+              nextPayload['header'] = header;
+              clone['payload_json'] = jsonEncode(nextPayload);
+              safe.add(clone);
+              continue;
+            }
+          }
+        } catch (_) {}
+      }
+      safe.add(raw);
+    }
+    return safe;
+  }
+
   Map<String, dynamic> processSync(List<Map<String, dynamic>> incomingOps) {
+    final sanitizedIncoming = _sanitizeIncomingOps(incomingOps);
     final res = _bridge.mergeOplogEntries(
       existingOps: syncOplog,
-      incomingOps: incomingOps,
+      incomingOps: sanitizedIncoming,
       nowIso: _nowIso(),
     );
     final mergedRaw = res['mergedOps'] as List<dynamic>;
@@ -13,7 +48,7 @@ mixin _LedgerEngineSyncMixin on _LedgerEngineBase {
         .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
         .toList();
 
-    final incomingHlcs = incomingOps
+    final incomingHlcs = sanitizedIncoming
         .map((o) => (o['hlc'] ?? o['hlc_ts']) as String)
         .toSet();
     final accepted = winnersRaw.values
@@ -54,6 +89,12 @@ mixin _LedgerEngineSyncMixin on _LedgerEngineBase {
                 true;
           }
         } else {
+          final header = payload['header'] as Map<String, dynamic>?;
+          final txType = header?['tx_type'];
+          if (header != null && txType != 'EXPENSE' && txType != 'INCOME') {
+            break;
+          }
+          header?.remove('applied_voucher_id');
           final idx = transactions.indexWhere(
             (t) => (t['header'] as Map<String, dynamic>)['id'] == entityId,
           );
@@ -65,17 +106,7 @@ mixin _LedgerEngineSyncMixin on _LedgerEngineBase {
         }
         break;
       case 'VOUCHER':
-        final vid = int.tryParse(entityId);
-        if (opType == 'DELETE' && vid != null) {
-          vouchers.removeWhere((v) => v['id'] == vid);
-        } else {
-          final idx = vouchers.indexWhere((v) => v['id'] == payload['id']);
-          if (idx != -1) {
-            vouchers[idx] = payload;
-          } else {
-            vouchers.add(payload);
-          }
-        }
+        // Legacy voucher oplogs are ignored.
         break;
       case 'MONTHLY_BUDGET':
         final idx = monthlyBudgets.indexWhere(
@@ -218,6 +249,7 @@ mixin _LedgerEngineSyncMixin on _LedgerEngineBase {
         conflicts = (data['conflicts'] as List<dynamic>)
             .whereType<Map<dynamic, dynamic>>()
             .map((e) => Map<String, dynamic>.from(e))
+            .where((c) => c['conflict_type'] != 'VOUCHER_DOUBLE_SPEND')
             .toList();
       }
       syncedOplogCount = syncOplog.length;
@@ -278,6 +310,7 @@ mixin _LedgerEngineSyncMixin on _LedgerEngineBase {
         conflicts = (data['conflicts'] as List<dynamic>)
             .whereType<Map<dynamic, dynamic>>()
             .map((e) => Map<String, dynamic>.from(e))
+            .where((c) => c['conflict_type'] != 'VOUCHER_DOUBLE_SPEND')
             .toList();
       }
       syncedOplogCount = syncOplog.length;

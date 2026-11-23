@@ -3,7 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../ledger_engine.dart';
 import '../widgets/common_ui.dart';
 
-/// Standard visual transaction entry form (expense/income, FX fields, target chips, voucher picker).
+/// Standard visual transaction entry form (expense/income, FX fields, target chips).
 class VisualRecordForm extends StatelessWidget {
   const VisualRecordForm({
     super.key,
@@ -12,8 +12,6 @@ class VisualRecordForm extends StatelessWidget {
     required this.currency,
     required this.targetType,
     required this.targetId,
-    required this.selectedVoucherId,
-    required this.availableVouchers,
     required this.amountCtrl,
     required this.discountCtrl,
     required this.holdCnyCtrl,
@@ -23,7 +21,6 @@ class VisualRecordForm extends StatelessWidget {
     required this.onTxTypeChanged,
     required this.onCurrencyChanged,
     required this.onTargetChanged,
-    required this.onVoucherChanged,
     required this.onSubmit,
   });
 
@@ -32,8 +29,6 @@ class VisualRecordForm extends StatelessWidget {
   final String currency;
   final String targetType;
   final String targetId;
-  final int? selectedVoucherId;
-  final List<Map<String, dynamic>> availableVouchers;
   final TextEditingController amountCtrl;
   final TextEditingController discountCtrl;
   final TextEditingController holdCnyCtrl;
@@ -43,7 +38,6 @@ class VisualRecordForm extends StatelessWidget {
   final ValueChanged<String> onTxTypeChanged;
   final ValueChanged<String> onCurrencyChanged;
   final void Function(String targetType, String targetId) onTargetChanged;
-  final ValueChanged<int?> onVoucherChanged;
   final VoidCallback onSubmit;
 
   @override
@@ -215,33 +209,6 @@ class VisualRecordForm extends StatelessWidget {
                   ),
               ],
             ),
-          if (availableVouchers.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int?>(
-              key: ValueKey<int?>(selectedVoucherId),
-              initialValue: selectedVoucherId,
-              decoration: const InputDecoration(
-                labelText: '叠加虚拟卡包立减金 (可选)',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: <DropdownMenuItem<int?>>[
-                const DropdownMenuItem<int?>(
-                  value: null,
-                  child: Text('不使用卡券'),
-                ),
-                ...availableVouchers.map(
-                  (v) => DropdownMenuItem<int?>(
-                    value: v['id'] as int,
-                    child: Text(
-                      '${v['title']} (成本 ¥${v['acquire_cost']} / 满 ¥${v['min_spend']})',
-                    ),
-                  ),
-                ),
-              ],
-              onChanged: onVoucherChanged,
-            ),
-          ],
         ],
         const SizedBox(height: 16),
         FilledButton.icon(

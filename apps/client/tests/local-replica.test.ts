@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LocalLedgerEngine, LOCAL_STORAGE_KEY } from '../src/sync/local-replica';
-import { formatCny, generateVoucherTitle } from '@ledger/core';
 
 describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)', () => {
   let engine: LocalLedgerEngine;
@@ -28,12 +27,6 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
         (b) => b.pool_id === 'POOL_DAILY' && b.year_month === '2026-11'
       );
       expect(dailyBudget?.base_allocation).toBe('650.00');
-    });
-
-    it('应包含 2 张初始立减金', () => {
-      expect(engine.state.vouchers.length).toBe(2);
-      expect(engine.state.vouchers[0].title).toBe('微信支付10元立减金');
-      expect(engine.state.vouchers[0].status).toBe('AVAILABLE');
     });
   });
 
@@ -108,40 +101,6 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
     });
   });
 
-  describe('4. 虚拟卡包购券与叠加核销', () => {
-    it('能够购买立减金入库并生成 VOUCHER_BUY 流水', () => {
-      const res = engine.buyVoucher({
-        title: '美团5元立减券',
-        voucher_type: 'PREPAID_COUPON',
-        face_value: '5.00',
-        acquire_cost: '2.99',
-        min_spend: '5.01',
-      });
-
-      expect(res.voucher.title).toBe('美团5元立减券');
-      expect(res.voucher.status).toBe('AVAILABLE');
-      expect(engine.state.vouchers.length).toBe(3);
-      expect(res.tx.header.tx_type).toBe('VOUCHER_BUY');
-      expect(res.tx.header.total_net).toBe('2.99');
-    });
-
-    it('使用卡券记账时自动结转成本并标记 USED', () => {
-      // 使用默认第 1 张卡券（面值 10 元，成本 5.99）
-      const dsl = '塔斯汀汉堡 25 #饮食';
-      const tx = engine.recordFromDsl(dsl, '2026-11-12', 1);
-
-      // 验证卡券状态
-      const v = engine.state.vouchers.find((it) => it.id === 1);
-      expect(v?.status).toBe('USED');
-      expect(v?.used_tx_id).toBe(tx.header.id);
-
-      // 实付净额应结转购券成本 5.99：
-      // 原价 25，用券后实付 15.00，加上购券成本 5.99 = 20.99
-      expect(tx.header.total_net).toBe('20.99');
-      expect(tx.header.payment_discount).toBe('4.01'); // 10.00 - 5.99 净省 4.01
-    });
-  });
-
   describe('5. 分布式并发冲突模拟与仲裁 & 全量恢复包导出', () => {
     it('能够模拟并发冲突并成功仲裁解决', () => {
       engine.recordFromDsl('咸蛋黄拌面 16.8 #饮食');
@@ -159,18 +118,16 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
     it('能够导出符合格式的 FullSyncBundle 用于空库灾备反向恢复', () => {
       const bundle = engine.exportFullSyncBundle();
       expect(bundle.nodeId).toBe('test-client-node');
-      expect(bundle.vouchers.length).toBeGreaterThanOrEqual(2);
       expect(bundle.monthlyBudgets.length).toBe(4);
       expect(Array.isArray(bundle.oplogs)).toBe(true);
     });
   });
 
   describe('6. 二期 Stage 8：纯净账本与全生命周期 CRUD 管理测试', () => {
-    it('resetToCleanState() 应产生 0 卡券与 0 交易流水，仅保留 4 个预算池', () => {
+    it('resetToCleanState() 应产生 0 交易流水，仅保留 4 个预算池', () => {
       engine.resetToCleanState();
 
-      // 验证卡券、专项项目与交易流水全部为空数组
-      expect(engine.state.vouchers).toEqual([]);
+      // 验证专项项目与交易流水全部为空数组
       expect(engine.state.projectTags).toEqual([]);
       expect(engine.state.transactions).toEqual([]);
       expect(engine.state.recurringRules).toEqual([]);
@@ -229,43 +186,28 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(incomeTx.header.total_net).toBe('2000.00');
     });
 
-    it('updateTransaction() 与 deleteTransaction() 能精确更新预算池并自动回退已核销优惠券', () => {
+    it('updateTransaction() 与 deleteTransaction() 能精确更新预算池水位', () => {
       engine.resetToCleanState();
 
-      // 1. 创建一张立减金
-      const { voucher } = engine.upsertVoucher({
-        title: '外卖专享立减金',
-        voucher_type: 'FREE_COUPON',
-        face_value: '10.00',
-        acquire_cost: '0.00',
-        min_spend: '30.00',
-      });
-      expect(voucher.status).toBe('AVAILABLE');
-
-      // 2. 录入交易并核销立减金
+      // 1. 录入带立减折扣的交易
       const tx = engine.recordManualTransaction({
         tx_type: 'EXPENSE',
         tx_date: '2026-11-12',
         amount: '35.00',
+        discount: '10.00',
         category_id: 'CAT_FOOD',
         merchant_or_note: '达美乐比萨',
-        applied_voucher_id: voucher.id,
       });
 
       expect(tx.header.total_gross).toBe('35.00');
       expect(tx.header.payment_discount).toBe('10.00');
       expect(tx.header.total_net).toBe('25.00');
 
-      // 卡券状态变为 USED
-      const usedVoucher = engine.state.vouchers.find((v) => v.id === voucher.id);
-      expect(usedVoucher?.status).toBe('USED');
-      expect(usedVoucher?.used_tx_id).toBe(tx.header.id);
-
       const getDailySpent = () =>
         engine.getMonthlyBudgetStatus('2026-11').find((p) => p.pool_id === 'POOL_DAILY')?.spent_net;
       expect(getDailySpent()).toBe('25.00');
 
-      // 3. 编辑交易：修改原价为 40.00，实付变为 30.00
+      // 2. 编辑交易：修改原价为 40.00，实付变为 30.00
       const updated = engine.updateTransaction(tx.header.id, {
         total_gross: '40.00',
         merchant_or_note: '达美乐大比萨+可乐',
@@ -275,18 +217,13 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(updated.header.merchant_or_note).toBe('达美乐大比萨+可乐');
       expect(getDailySpent()).toBe('30.00');
 
-      // 4. 删除交易 deleteTransaction()
+      // 3. 删除交易 deleteTransaction()
       const deleted = engine.deleteTransaction(tx.header.id);
       expect(deleted.header.is_deleted).toBe(true);
       expect(getDailySpent()).toBe('0.00');
-
-      // 验证卡券自动恢复为 AVAILABLE，且 used_tx_id 清空
-      const restoredVoucher = engine.state.vouchers.find((v) => v.id === voucher.id);
-      expect(restoredVoucher?.status).toBe('AVAILABLE');
-      expect(restoredVoucher?.used_tx_id).toBeNull();
     });
 
-    it('upsertBudgetPool()、upsertMonthlyBudget()、upsertCategory()、upsertProjectTag()、upsertVoucher()与 executeRecurringRule() 全功能正常', () => {
+    it('upsertBudgetPool()、upsertMonthlyBudget()、upsertCategory()、upsertProjectTag() 与 executeRecurringRule() 全功能正常', () => {
       engine.resetToCleanState();
 
       // 1. upsertBudgetPool() & upsertMonthlyBudget()
@@ -320,32 +257,7 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       expect(wishGoal.id).toBeDefined();
       expect(wishGoal.target_budget).toBe('1500.00');
 
-      // 4. upsertVoucher() (有偿与免费)
-      // 有偿购券 (5.00 买 10.00)
-      const paidRes = engine.upsertVoucher({
-        title: '某团外卖10元立减券',
-        voucher_type: 'PREPAID_COUPON',
-        face_value: '10.00',
-        acquire_cost: '5.00',
-        min_spend: '10.01',
-      });
-      expect(paidRes.voucher.acquire_cost).toBe('5.00');
-      expect(paidRes.tx).toBeDefined();
-      expect(paidRes.tx?.header.tx_type).toBe('VOUCHER_BUY');
-      expect(paidRes.tx?.header.total_net).toBe('5.00');
-
-      // 免费领券 (0 元领券)
-      const freeRes = engine.upsertVoucher({
-        title: '免费领立减3元',
-        voucher_type: 'FREE_COUPON',
-        face_value: '3.00',
-        acquire_cost: '0.00',
-        min_spend: '20.00',
-      });
-      expect(freeRes.voucher.acquire_cost).toBe('0.00');
-      expect(freeRes.tx).toBeUndefined();
-
-      // 5. upsertRecurringRule() 与 executeRecurringRule()
+      // 4. upsertRecurringRule() 与 executeRecurringRule()
       const rule = engine.upsertRecurringRule({
         title: '每月固网宽带费',
         rule_type: 'FIXED_EXPENSE',
@@ -473,7 +385,6 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
           settled_at: null,
           raw_input_text: '手动录入：Gemini Pro 720',
           merchant_or_note: 'Gemini Pro',
-          applied_voucher_id: null,
           is_deleted: false,
           updated_hlc: engine.hlc.now(),
           created_at: new Date().toISOString(),
@@ -493,7 +404,6 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
             raw_formula_expr: null,
           },
         ],
-        appliedVoucherId: null,
       };
 
       engine.state.transactions.unshift(buggedTx);
@@ -511,97 +421,8 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
     });
   });
 
-  describe('Stage 12: Voucher min_spend & Cost Carry-Over', () => {
-    it('Voucher min_spend 验证：消费金额小于门槛时抛出异常，达到或超过门槛时成功录入', () => {
-      const { voucher } = engine.upsertVoucher({
-        title: '满50减5优惠券',
-        voucher_type: 'FREE_COUPON',
-        face_value: '5.00',
-        acquire_cost: '0.00',
-        min_spend: '50.00',
-      });
-
-      // 1. 30.00 < 50.00 应抛出门槛未达异常
-      expect(() => {
-        engine.recordManualTransaction({
-          tx_type: 'EXPENSE',
-          amount: '30.00',
-          merchant_or_note: '超市购物',
-          applied_voucher_id: voucher.id,
-        });
-      }).toThrow('未达到优惠券「满50减5优惠券」的最低使用门槛（需满 ¥50.00，当前金额 ¥30.00）');
-
-      // 2. 50.00 >= 50.00 应成功录入且抵扣 5.00
-      const tx = engine.recordManualTransaction({
-        tx_type: 'EXPENSE',
-        amount: '50.00',
-        merchant_or_note: '超市大采购',
-        applied_voucher_id: voucher.id,
-      });
-
-      expect(tx.header.total_gross).toBe('50.00');
-      expect(tx.header.payment_discount).toBe('5.00');
-      expect(tx.header.total_net).toBe('45.00');
-      expect(engine.state.vouchers.find((v) => v.id === voucher.id)?.status).toBe('USED');
-    });
-
-    it('generateVoucherTitle 能够根据类型与门槛正确自动生成卡券名称', () => {
-      // PREPAID_COUPON
-      expect(generateVoucherTitle('PREPAID_COUPON', '10.00', '30.00')).toBe('满30减10立减金');
-      expect(generateVoucherTitle('PREPAID_COUPON', '10.00', '0.00')).toBe('10元无门槛立减金');
-      // FREE_COUPON
-      expect(generateVoucherTitle('FREE_COUPON', '20.00', '100.00')).toBe('满100减20优惠券');
-      expect(generateVoucherTitle('FREE_COUPON', '5.00', '0.00')).toBe('5元无门槛优惠券');
-    });
-
-    it('upsertVoucher/buyVoucher 在未传 title 时能自动生成卡券名称', () => {
-      const { voucher: v1 } = engine.upsertVoucher({
-        voucher_type: 'PREPAID_COUPON',
-        face_value: '10.00',
-        acquire_cost: '0.00',
-        min_spend: '30.00',
-      });
-      expect(v1.title).toBe('满30减10立减金');
-
-      const { voucher: v2 } = engine.buyVoucher({
-        voucher_type: 'PREPAID_COUPON',
-        face_value: '20.00',
-        acquire_cost: '15.00',
-        min_spend: '50.00',
-      });
-      expect(v2.title).toBe('满50减20立减金');
-    });
-
-    it('buyVoucher 创建的 VOUCHER_BUY 流水 total_net 为 acquire_cost，删除该流水自动级联删除卡券', () => {
-      // 1. 购入一张面值 10.00 元，成本 5.99 元的立减金
-      const { voucher, tx } = engine.buyVoucher({
-        title: '美团外卖10元立减券',
-        voucher_type: 'PREPAID_COUPON',
-        face_value: '10.00',
-        acquire_cost: '5.99',
-        min_spend: '10.01',
-      });
-
-      // 验证 VOUCHER_BUY 流水账单字段：实付与票面金额一致，不提前虚构折扣
-      expect(tx.header.tx_type).toBe('VOUCHER_BUY');
-      expect(tx.header.total_gross).toBe('5.99');
-      expect(tx.header.platform_discount).toBe('0.00');
-      expect(tx.header.payment_discount).toBe('0.00');
-      expect(tx.header.total_net).toBe('5.99');
-
-      // 验证卡券在卡包中
-      expect(engine.state.vouchers.some((v) => v.id === voucher.id)).toBe(true);
-
-      // 2. 删除该 VOUCHER_BUY 交易流水
-      engine.deleteTransaction(tx.header.id);
-
-      // 验证卡券自动从卡包中级联删除
-      expect(engine.state.vouchers.some((v) => v.id === voucher.id)).toBe(false);
-    });
-  });
-
   describe('9. JSON 备份导入导出与废置池清理', () => {
-    it('exportFullSyncBundle + importFullSyncBundle 应完整恢复流水、预算池与优惠券，并过滤未引用的废置池', () => {
+    it('exportFullSyncBundle + importFullSyncBundle 应完整恢复流水与预算池，过滤未引用的废置池并兼容剥离历史卡包残留', () => {
       engine.resetToCleanState();
       engine.recordManualTransaction({
         tx_type: 'EXPENSE',
@@ -610,15 +431,39 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
         budget_pool_id: 'POOL_DAILY',
         merchant_or_note: '晚餐备份测试',
       });
-      engine.upsertVoucher({
-        voucher_type: 'FREE_COUPON',
-        face_value: '5.00',
-        acquire_cost: '0.00',
-        min_spend: '20.00',
-      });
 
       const exported = engine.exportFullSyncBundle();
-      // 模拟旧备份中含有未被引用的废置池
+      // 模拟旧备份中含有未被引用的废置池与已下线卡包残留数据
+      (exported as any).vouchers = [
+        {
+          id: 1,
+          title: '旧满减券',
+          voucher_type: 'FREE_COUPON',
+          face_value: '5.00',
+          acquire_cost: '0.00',
+          min_spend: '20.00',
+          status: 'AVAILABLE',
+        },
+      ];
+      (exported.transactions[0].header as any).applied_voucher_id = 1;
+      exported.transactions.push({
+        header: {
+          ...exported.transactions[0].header,
+          id: 'tx_legacy_voucher_buy',
+          tx_type: 'VOUCHER_BUY' as any,
+          merchant_or_note: '旧购券流水',
+        },
+        items: [],
+      });
+      exported.oplogs.push({
+        hlc: '00000001763251200009-0001-legacy',
+        node_id: 'legacy',
+        entity_type: 'VOUCHER' as any,
+        entity_id: '1',
+        op_type: 'UPSERT',
+        payload_json: '{}',
+        created_at: '2026-11-15T10:00:00Z',
+      });
       exported.budgetPools = [
         ...(exported.budgetPools || []),
         {
@@ -644,15 +489,17 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
       // 重置为空白账本后导入备份
       engine.resetToCleanState();
       expect(engine.state.transactions.length).toBe(0);
-      expect(engine.state.vouchers.length).toBe(0);
 
       const summary = engine.importFullSyncBundle(exported);
       expect(summary.transactionsCount).toBe(1);
       expect(summary.poolsCount).toBe(4);
-      expect(summary.vouchersCount).toBe(1);
 
+      expect('vouchers' in (engine.state as any)).toBe(false);
+      expect(engine.state.transactions).toHaveLength(1);
       expect(engine.state.transactions[0].header.merchant_or_note).toBe('晚餐备份测试');
-      expect(engine.state.vouchers.length).toBe(1);
+      expect('applied_voucher_id' in (engine.state.transactions[0].header as any)).toBe(false);
+      expect(engine.state.transactions.some((tx) => (tx.header.tx_type as string) === 'VOUCHER_BUY')).toBe(false);
+      expect(engine.state.oplogs.some((op) => (op.entity_type as string) === 'VOUCHER')).toBe(false);
       expect(engine.state.budgetPools.find((p) => p.id === 'POOL_FUND')).toBeUndefined();
       expect(engine.state.budgetPools.find((p) => p.id === 'POOL_ASSET')).toBeUndefined();
       expect(engine.state.pendingSyncOps.length).toBe(engine.state.oplogs.length);
@@ -707,24 +554,20 @@ describe('Stage 6: LocalLedgerEngine (纯前端本地优先账本副本引擎)',
     });
   });
 
-  describe('11. 卡券核销状态版本响应与实际月份天数计算', () => {
-    it('核销卡券后应递增 stateVersion 且可用立减金列表中不再包含已核销项', () => {
+  describe('11. 状态版本响应与实际月份天数计算', () => {
+    it('手动记账后应递增 stateVersion 并正确更新本地状态', () => {
       const prevVersion = engine.stateVersion;
-      const beforeAvailable = engine.state.vouchers.filter((v) => v.status === 'AVAILABLE');
-      expect(beforeAvailable.some((v) => v.id === 1)).toBe(true);
 
-      engine.recordManualTransaction({
+      const tx = engine.recordManualTransaction({
         tx_type: 'EXPENSE',
         tx_date: '2026-11-15',
         amount: '30.00',
         budget_pool_id: 'POOL_DAILY',
-        merchant_or_note: '测试立减金核销',
-        applied_voucher_id: 1,
+        merchant_or_note: '测试状态版本更新',
       });
 
       expect(engine.stateVersion).toBeGreaterThan(prevVersion);
-      const afterAvailable = engine.state.vouchers.filter((v) => v.status === 'AVAILABLE');
-      expect(afterAvailable.some((v) => v.id === 1)).toBe(false);
+      expect(engine.state.transactions.some((t) => t.header.id === tx.header.id)).toBe(true);
     });
 
     it('getDailyBudgetSummary 应按传入月份实际天数及当前日期计算剩余天数', () => {

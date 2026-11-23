@@ -3,13 +3,6 @@ part of '../ledger_engine.dart';
 mixin _LedgerEnginePersistenceMixin on _LedgerEngineBase {
   @override
   void _recomputeSeqWatermarks() {
-    var maxVoucherId = 0;
-    for (final v in vouchers) {
-      final id = _asInt(v['id']);
-      if (id > maxVoucherId) maxVoucherId = id;
-    }
-    _voucherSeq = maxVoucherId;
-
     var maxMbId = 0;
     for (final b in monthlyBudgets) {
       final id = _asInt(b['id']);
@@ -195,6 +188,7 @@ mixin _LedgerEnginePersistenceMixin on _LedgerEngineBase {
         conflicts = (map['conflicts'] as List<dynamic>)
             .whereType<Map<dynamic, dynamic>>()
             .map((e) => Map<String, dynamic>.from(e))
+            .where((c) => c['conflict_type'] != 'VOUCHER_DOUBLE_SPEND')
             .toList();
       }
       if (map['dismissedRecurringRuleIds'] is List) {

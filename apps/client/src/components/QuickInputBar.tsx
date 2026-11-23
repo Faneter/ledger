@@ -30,10 +30,8 @@ import SwapHorizRounded from '@mui/icons-material/SwapHorizRounded';
 import FlashOnRounded from '@mui/icons-material/FlashOnRounded';
 import EditNoteRounded from '@mui/icons-material/EditNoteRounded';
 import CheckRounded from '@mui/icons-material/CheckRounded';
-import LocalOfferRounded from '@mui/icons-material/LocalOfferRounded';
 import { LocalLedgerEngine } from '../sync/local-replica';
 import {
-  Voucher,
   DEFAULT_FX_RATES,
   toDecimal,
   roundCny,
@@ -55,7 +53,7 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   // 记账模式：'visual' (可视化表单) | 'dsl' (极速算式 DSL)
   const [mode, setMode] = useState<'visual' | 'dsl'>('visual');
 
-  // 订阅引擎状态变更，确保卡券核销、设置更新等无需刷新即可响应
+  // 订阅引擎状态变更，确保设置更新等无需刷新即可响应
   const [, setEngineVersion] = useState(() => engine.stateVersion);
   useEffect(() => {
     return engine.subscribe(() => {
@@ -71,11 +69,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   const [txDate, setTxDate] = useState(todayStr);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  // 可用卡券列表（基于 stateVersion 感知原地核销状态变化）
-  const availableVouchers: Voucher[] = useMemo(() => {
-    return engine.state.vouchers.filter((v) => v.status === 'AVAILABLE');
-  }, [engine, engine.stateVersion]);
 
   // --------------------------------------------------------------------------
   // Tab A: 可视化表单状态
@@ -114,16 +107,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
     };
   });
   const [merchantOrNote, setMerchantOrNote] = useState('');
-  const [selectedVoucherIdVisual, setSelectedVoucherIdVisual] = useState<number | null>(null);
-
-  // 当前折算人民币总金额 (用于校验优惠券门槛)
-  const currentCnyGross = useMemo(() => {
-    const amtNum = Number(amount || 0);
-    if (isNaN(amtNum) || amtNum <= 0) return 0;
-    if (currency === 'CNY') return amtNum;
-    const rate = Number(DEFAULT_FX_RATES[currency] ?? '7.200000');
-    return amtNum * rate;
-  }, [amount, currency]);
 
   // 外币预授权冻结金额预估折算
   const estimatedHoldAmount = useMemo(() => {
@@ -139,28 +122,16 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
   // Tab B: DSL 极客算式状态
   // --------------------------------------------------------------------------
   const [dslInput, setDslInput] = useState('');
-  const [selectedVoucherIdDsl, setSelectedVoucherIdDsl] = useState<number | null>(null);
-
-  // 若选中的卡券已被核销或失效，自动清除残留选中值
-  useEffect(() => {
-    const validIds = new Set(availableVouchers.map((v) => v.id));
-    if (selectedVoucherIdVisual != null && !validIds.has(selectedVoucherIdVisual)) {
-      setSelectedVoucherIdVisual(null);
-    }
-    if (selectedVoucherIdDsl != null && !validIds.has(selectedVoucherIdDsl)) {
-      setSelectedVoucherIdDsl(null);
-    }
-  }, [availableVouchers, selectedVoucherIdVisual, selectedVoucherIdDsl]);
 
   // 实时编译解析 DSL
   const preview = useMemo(() => {
     if (!dslInput.trim()) return null;
     try {
-      return engine.previewDsl(dslInput, selectedVoucherIdDsl);
+      return engine.previewDsl(dslInput);
     } catch {
       return null;
     }
-  }, [engine, engine.stateVersion, dslInput, selectedVoucherIdDsl]);
+  }, [engine, engine.stateVersion, dslInput]);
 
   // 成功处理与回调触发
   const triggerSuccess = (msg: string) => {
@@ -201,10 +172,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
         budget_pool_id: budgetPoolId,
         project_tag_id: projTagId,
         merchant_or_note: noteToSave,
-        applied_voucher_id:
-          txType === 'EXPENSE'
-            ? selectedVoucherIdVisual
-            : null,
         currency,
         hold_amount_cny: holdAmountCnyInput.trim() || undefined,
         fx_hold_ratio: (Number(fxHoldPct.trim() === '' ? 102 : fxHoldPct) / 100).toFixed(3),
@@ -220,7 +187,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
       setDiscount('');
       setMerchantOrNote('');
       setHoldAmountCnyInput('');
-      setSelectedVoucherIdVisual(null);
       setFxHoldPct(
         String(Number((Number(engine.state.fxConfig?.defaultHoldRatio ?? 1.02) * 100).toFixed(1)))
       );
@@ -237,11 +203,10 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
     if (!dslInput.trim()) return;
     try {
       setErrorMsg(null);
-      const tx = engine.recordFromDsl(dslInput, txDate, selectedVoucherIdDsl);
+      const tx = engine.recordFromDsl(dslInput, txDate);
       triggerSuccess(
         `✅ 记账成功！实付 ¥${tx.header.total_net}`
       );
-      setSelectedVoucherIdDsl(null);
       setDslInput('');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -338,7 +303,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                   onChange={(_, val) => {
                     if (val) {
                       setTxType(val);
-                      setSelectedVoucherIdVisual(null);
                     }
                   }}
                   size="small"
@@ -600,39 +564,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                 </Box>
               )}
 
-              {/* 支出专属：核销虚拟卡包立减金 */}
-              {txType === 'EXPENSE' && (
-                <TextField
-                  select
-                  fullWidth
-                  label="核销虚拟卡包立减金 (可选)"
-                  value={selectedVoucherIdVisual ?? ''}
-                  onChange={(e) =>
-                    setSelectedVoucherIdVisual(
-                      e.target.value ? Number(e.target.value) : null
-                    )
-                  }
-                >
-                  <MenuItem value="">(不使用卡券 / 纯原价实付)</MenuItem>
-                  {availableVouchers.map((v) => {
-                      const isUnderMinSpend =
-                        currentCnyGross > 0 &&
-                        currentCnyGross < Number(v.min_spend);
-                      return (
-                        <MenuItem
-                          key={v.id}
-                          value={v.id}
-                          disabled={isUnderMinSpend}
-                        >
-                          {v.title} · 面值 ¥{v.face_value} (成本 ¥{v.acquire_cost} / 门槛 ¥
-                          {v.min_spend})
-                          {isUnderMinSpend ? `（未满 ¥${v.min_spend} 门槛）` : ''}
-                        </MenuItem>
-                      );
-                    })}
-                </TextField>
-              )}
-
               {/* 外币提示 */}
               {txType === 'EXPENSE' && currency !== 'CNY' && (
                 <Alert severity="info" sx={{ borderRadius: 3 }}>
@@ -736,51 +667,6 @@ export const QuickInputBar: React.FC<QuickInputBarProps> = ({
                 <strong>外币消费自动感知：</strong>已识别外币消费（自动启用预授权冻结挂起与返现核算）
               </Alert>
             )}
-
-            {/* 叠加立减金选择器 */}
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={1}
-              sx={{
-                justifyContent: 'space-between',
-                alignItems: { sm: 'center' },
-              }}
-            >
-              <TextField
-                select
-                size="small"
-                label="🎟️ 虚拟卡包立减金叠加核销"
-                value={selectedVoucherIdDsl ?? ''}
-                onChange={(e) =>
-                  setSelectedVoucherIdDsl(
-                    e.target.value ? Number(e.target.value) : null
-                  )
-                }
-                sx={{ minWidth: 260 }}
-              >
-                <MenuItem value="">(不使用卡券 / 纯现金原价实付)</MenuItem>
-                {availableVouchers.map((v) => (
-                  <MenuItem key={v.id} value={v.id}>
-                    {v.title} · 面值 ¥{v.face_value} (成本 ¥{v.acquire_cost} / 门槛 ¥
-                    {v.min_spend})
-                  </MenuItem>
-                ))}
-              </TextField>
-
-              {preview?.voucherInfo && (
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    结转成本: ¥{preview.voucherInfo.acquire_cost}
-                  </Typography>
-                  <Chip
-                    size="small"
-                    color="success"
-                    icon={<LocalOfferRounded />}
-                    label={`净省 ¥${preview.voucherSavings}`}
-                  />
-                </Stack>
-              )}
-            </Stack>
 
             {/* 实时解析与多品分摊预览表 */}
             {preview && preview.parsed && (

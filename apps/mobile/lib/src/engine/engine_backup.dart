@@ -10,7 +10,6 @@ mixin _LedgerEngineBackupMixin on _LedgerEngineBase {
       'monthlyBudgets': _cloneListOfMaps(monthlyBudgets),
       'categories': _cloneListOfMaps(categories),
       'projectTags': _cloneListOfMaps(projectTags),
-      'vouchers': _cloneListOfMaps(vouchers),
       'recurringRules': _cloneListOfMaps(recurringRules),
       'transactions': _cloneListOfMaps(transactions),
       'settings': Map<String, String>.from(settings),
@@ -110,27 +109,6 @@ mixin _LedgerEngineBackupMixin on _LedgerEngineBase {
           })
           .toList();
     }
-    if (map['vouchers'] is List) {
-      vouchers = (map['vouchers'] as List<dynamic>)
-          .whereType<Map<dynamic, dynamic>>()
-          .map((e) {
-            final row = Map<String, dynamic>.from(e);
-            row['id'] = _asInt(row['id']);
-            row['title'] = _asStr(row['title'], '优惠券');
-            final rawType = _asStr(row['voucher_type'], 'FREE_COUPON');
-            row['voucher_type'] =
-                rawType == 'REPAY_COUPON' ? 'FREE_COUPON' : rawType;
-            row['face_value'] = _asMoney(row['face_value']);
-            row['acquire_cost'] = _asMoney(row['acquire_cost']);
-            row['min_spend'] = _asMoney(row['min_spend']);
-            row['status'] = _asStr(row['status'], 'AVAILABLE');
-            row['purchase_tx_id'] = _asNullableStr(row['purchase_tx_id']);
-            row['used_tx_id'] = _asNullableStr(row['used_tx_id']);
-            row['expire_date'] = _asNullableStr(row['expire_date']);
-            return row;
-          })
-          .toList();
-    }
     if (map['recurringRules'] is List) {
       recurringRules = (map['recurringRules'] as List<dynamic>)
           .whereType<Map<dynamic, dynamic>>()
@@ -201,8 +179,7 @@ mixin _LedgerEngineBackupMixin on _LedgerEngineBase {
                 _asMoney(rawHeader['hold_amount_cny']);
             rawHeader['fx_cashback_rate'] =
                 _asNullableStr(rawHeader['fx_cashback_rate']);
-            rawHeader['applied_voucher_id'] =
-                _asNullableInt(rawHeader['applied_voucher_id']);
+            rawHeader.remove('applied_voucher_id');
             rawHeader['raw_input_text'] =
                 _asNullableStr(rawHeader['raw_input_text']);
             rawHeader['merchant_or_note'] = _asStr(
@@ -246,6 +223,10 @@ mixin _LedgerEngineBackupMixin on _LedgerEngineBase {
               'items': normalizedItems,
             };
           })
+          .where((tx) {
+            final t = (tx['header'] as Map<String, dynamic>)['tx_type'];
+            return t == 'EXPENSE' || t == 'INCOME';
+          })
           .toList();
     }
     if (map['settings'] is Map) {
@@ -285,7 +266,8 @@ mixin _LedgerEngineBackupMixin on _LedgerEngineBase {
           .where(
             (op) =>
                 op['entity_type'] != 'ACCOUNT' &&
-                op['entity_type'] != 'FIXED_ASSET',
+                op['entity_type'] != 'FIXED_ASSET' &&
+                op['entity_type'] != 'VOUCHER',
           )
           .toList();
     }
@@ -311,7 +293,6 @@ mixin _LedgerEngineBackupMixin on _LedgerEngineBase {
           )
           .length,
       'poolsCount': budgetPools.length,
-      'vouchersCount': vouchers.length,
     };
   }
 
@@ -330,7 +311,6 @@ mixin _LedgerEngineBackupMixin on _LedgerEngineBase {
         : map;
     final hasCoreArray = payload['transactions'] is List ||
         payload['budgetPools'] is List ||
-        payload['vouchers'] is List ||
         payload['monthlyBudgets'] is List ||
         payload['projectTags'] is List ||
         payload['recurringRules'] is List ||

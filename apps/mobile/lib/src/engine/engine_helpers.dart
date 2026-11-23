@@ -93,12 +93,6 @@ int _asInt(dynamic v, [int fallback = 0]) {
   return fallback;
 }
 
-int? _asNullableInt(dynamic v) {
-  if (v == null) return null;
-  if (v is String && v.trim().isEmpty) return null;
-  return _asInt(v, 0);
-}
-
 String _asStr(dynamic v, [String fallback = '']) {
   if (v == null) return fallback;
   return v.toString();

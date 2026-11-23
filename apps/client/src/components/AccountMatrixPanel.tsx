@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Card,
@@ -24,9 +24,6 @@ import {
   Switch,
   FormControlLabel,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
-import { PageSectionTabs } from './PageSectionTabs';
-import ConfirmationNumberRounded from '@mui/icons-material/ConfirmationNumberRounded';
 import EventRepeatRounded from '@mui/icons-material/EventRepeatRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
 import EditRounded from '@mui/icons-material/EditRounded';
@@ -37,9 +34,6 @@ import {
   RecurringRule,
   RecurringRuleType,
   CronCycle,
-  Voucher,
-  VoucherType,
-  generateVoucherTitle,
 } from '@ledger/core';
 import { LocalLedgerEngine } from '../sync/local-replica';
 
@@ -52,10 +46,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   engine,
   onRefresh,
 }) => {
-  // 1. 标签页控制 (0: 优惠券卡包, 1: 周期性扣款)
-  const [activeTab, setActiveTab] = useState(0);
-
-  // 2. 全局反馈提示 Toast
+  // 1. 全局反馈提示 Toast
   const [toast, setToast] = useState<{
     open: boolean;
     message: string;
@@ -73,43 +64,11 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
     setToast({ open: true, message, severity });
   };
 
-  // 优惠券过滤器 ('ALL' | 'AVAILABLE' | 'USED' | 'EXPIRED')
-  const [voucherFilter, setVoucherFilter] = useState<string>('ALL');
-
-  const filteredVouchers = useMemo(() => {
-    if (voucherFilter === 'ALL') return engine.state.vouchers;
-    return engine.state.vouchers.filter((v) => v.status === voucherFilter);
-  }, [engine.stateVersion, voucherFilter]);
-
   // ===========================================================================
   // 弹窗状态与表单模型
   // ===========================================================================
 
-  // 1. 优惠券编辑/登记弹窗
-  const [voucherModalOpen, setVoucherModalOpen] = useState(false);
-  const [voucherEditingId, setVoucherEditingId] = useState<number | null>(null);
-  const [voucherMode, setVoucherMode] = useState<'FREE' | 'BUY' | 'EDIT'>('FREE');
-  const [voucherForm, setVoucherForm] = useState<{
-    customPrefix: string;
-    title: string;
-    voucher_type: VoucherType;
-    face_value: string;
-    acquire_cost: string;
-    min_spend: string;
-    expire_date: string;
-    status: 'AVAILABLE' | 'USED' | 'EXPIRED';
-  }>({
-    customPrefix: '',
-    title: '',
-    voucher_type: 'FREE_COUPON',
-    face_value: '',
-    acquire_cost: '',
-    min_spend: '',
-    expire_date: '',
-    status: 'AVAILABLE',
-  });
-
-  // 2. 周期规则编辑/新增弹窗
+  // 周期规则编辑/新增弹窗
   const [ruleModalOpen, setRuleModalOpen] = useState(false);
   const [ruleEditingId, setRuleEditingId] = useState<number | null>(null);
   const [ruleForm, setRuleForm] = useState<{
@@ -133,131 +92,7 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
   });
 
   // ===========================================================================
-  // Tab 0: 优惠券卡包操作逻辑
-  // ===========================================================================
-
-  const handleOpenFreeVoucherModal = (sampleTitle?: string, sampleFace?: string, sampleMin?: string) => {
-    setVoucherEditingId(null);
-    setVoucherMode('FREE');
-    setVoucherForm({
-      customPrefix: '',
-      title: sampleTitle || '',
-      voucher_type: 'FREE_COUPON',
-      face_value: sampleFace || '',
-      acquire_cost: '',
-      min_spend: sampleMin || '',
-      expire_date: '',
-      status: 'AVAILABLE',
-    });
-    setVoucherModalOpen(true);
-  };
-
-  const handleOpenBuyVoucherModal = (sampleTitle?: string, sampleFace?: string, sampleCost?: string, sampleMin?: string) => {
-    setVoucherEditingId(null);
-    setVoucherMode('BUY');
-    setVoucherForm({
-      customPrefix: '',
-      title: sampleTitle || '',
-      voucher_type: 'PREPAID_COUPON',
-      face_value: sampleFace || '',
-      acquire_cost: sampleCost || '',
-      min_spend: sampleMin || '',
-      expire_date: '',
-      status: 'AVAILABLE',
-    });
-    setVoucherModalOpen(true);
-  };
-
-  const handleOpenEditVoucher = (v: Voucher) => {
-    setVoucherEditingId(v.id);
-    setVoucherMode('EDIT');
-    setVoucherForm({
-      customPrefix: '',
-      title: v.title,
-      voucher_type: v.voucher_type,
-      face_value: v.face_value,
-      acquire_cost: v.acquire_cost,
-      min_spend: v.min_spend,
-      expire_date: v.expire_date || '',
-      status: (v.status === 'REFUNDED' ? 'USED' : v.status) as 'AVAILABLE' | 'USED' | 'EXPIRED',
-    });
-    setVoucherModalOpen(true);
-  };
-
-  const handleSaveVoucher = () => {
-    if (isNaN(Number(voucherForm.face_value)) || Number(voucherForm.face_value) <= 0) {
-      showToast('请输入有效的面值金额', 'warning');
-      return;
-    }
-
-    const resolvedCost = voucherForm.acquire_cost.trim() || '0.00';
-    const resolvedMinSpend = voucherForm.min_spend.trim() || '0.00';
-
-    const autoTitle = generateVoucherTitle(
-      voucherForm.voucher_type,
-      voucherForm.face_value,
-      resolvedMinSpend,
-      resolvedCost
-    );
-    const resolvedTitle = voucherForm.customPrefix.trim()
-      ? `${voucherForm.customPrefix.trim()} ${autoTitle}`
-      : voucherMode === 'EDIT' && voucherForm.title.trim()
-      ? voucherForm.title.trim()
-      : autoTitle;
-
-    try {
-      if (voucherMode === 'BUY') {
-        engine.buyVoucher({
-          title: resolvedTitle,
-          voucher_type: voucherForm.voucher_type,
-          face_value: voucherForm.face_value,
-          acquire_cost: resolvedCost,
-          min_spend: resolvedMinSpend,
-          expire_date: voucherForm.expire_date || null,
-        });
-        showToast(
-          `成功购入立减金【${resolvedTitle}】，已扣款 ¥${resolvedCost}`,
-          'success'
-        );
-      } else {
-        engine.upsertVoucher({
-          id: voucherEditingId || undefined,
-          title: resolvedTitle,
-          voucher_type: voucherForm.voucher_type,
-          face_value: voucherForm.face_value,
-          acquire_cost: resolvedCost,
-          min_spend: resolvedMinSpend,
-          expire_date: voucherForm.expire_date || null,
-          status: voucherForm.status,
-        });
-        showToast(
-          voucherEditingId
-            ? `卡券【${resolvedTitle}】已更新`
-            : `成功登记免费卡券【${resolvedTitle}】`,
-          'success'
-        );
-      }
-
-      setVoucherModalOpen(false);
-      onRefresh?.();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), 'error');
-    }
-  };
-
-  const handleDeleteVoucher = (vId: number, vTitle: string) => {
-    if (!window.confirm(`确定要删除优惠券【${vTitle}】吗？`)) return;
-    try {
-      engine.deleteVoucher(vId);
-      showToast(`优惠券【${vTitle}】已删除`, 'success');
-      onRefresh?.();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), 'error');
-    }
-  };
-
-  // ===========================================================================
-  // Tab 1: 周期性规则操作逻辑
+  // 周期性规则操作逻辑
   // ===========================================================================
 
   const handleOpenAddRule = (sampleTitle?: string, sampleAmt?: string, sampleDay?: number, sampleType?: RecurringRuleType) => {
@@ -358,246 +193,8 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      {/* 顶部主选项卡切换 */}
-      <PageSectionTabs
-        value={activeTab}
-        onChange={setActiveTab}
-        tabs={[
-          {
-            label: '优惠券卡包',
-            icon: <ConfirmationNumberRounded fontSize="small" />,
-          },
-          {
-            label: '周期性扣款',
-            icon: <EventRepeatRounded fontSize="small" />,
-          },
-        ]}
-      />
-
-      {/* ===================================================================== */}
-      {/* Tab 0: 优惠券卡包 (Vouchers) */}
-      {/* ===================================================================== */}
-      {activeTab === 0 && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-          {/* 顶栏：卡券过滤与新增操作 */}
-          <Card sx={{ p: 2 }}>
-            <Stack
-              direction={{ xs: 'column', md: 'row' }}
-              spacing={2}
-              sx={{ alignItems: { md: 'center' }, justifyContent: 'space-between' }}
-            >
-              <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 700, mr: 1 }}>
-                  卡券状态过滤:
-                </Typography>
-                {[
-                  { key: 'ALL', label: '全部' },
-                  { key: 'AVAILABLE', label: '待核销/可用' },
-                  { key: 'USED', label: '已核销' },
-                  { key: 'EXPIRED', label: '已过期' },
-                ].map((item) => (
-                  <Chip
-                    key={item.key}
-                    label={item.label}
-                    color={voucherFilter === item.key ? 'primary' : 'default'}
-                    variant={voucherFilter === item.key ? 'filled' : 'outlined'}
-                    onClick={() => setVoucherFilter(item.key)}
-                  />
-                ))}
-              </Stack>
-
-              <Stack direction="row" spacing={1.5}>
-                <Button
-                  variant="outlined"
-                  color="success"
-                  startIcon={<AddRounded />}
-                  onClick={() => handleOpenFreeVoucherModal()}
-                >
-                  免费领券登记
-                </Button>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  startIcon={<AddRounded />}
-                  onClick={() => handleOpenBuyVoucherModal()}
-                >
-                  有偿购券入库
-                </Button>
-              </Stack>
-            </Stack>
-          </Card>
-
-          {/* 卡券空状态 */}
-          {filteredVouchers.length === 0 ? (
-            <Card sx={{ p: 4, textAlign: 'center' }}>
-              <ConfirmationNumberRounded sx={{ fontSize: 56, color: 'text.secondary', mb: 1 }} />
-              <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-                当前卡包中没有符合条件的立减金或优惠券
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'text.secondary', maxWidth: 500, mx: 'auto', mb: 3 }}>
-                纯净模式下未预置任何测试卡券。你可以点击上方按钮免费登记平台券，或快捷录入示例券体验立减金凑单等比分摊：
-              </Typography>
-              <Stack direction="row" spacing={1.5} sx={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-                <Button
-                  variant="outlined"
-                  color="success"
-                  startIcon={<AddRounded />}
-                  onClick={() =>
-                    handleOpenFreeVoucherModal('平台通用优惠券', '5.00', '50.00')
-                  }
-                >
-                  添加示例: 满50减5平台优惠券 (面值 ¥5.00 / 满 ¥50.00)
-                </Button>
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  startIcon={<AddRounded />}
-                  onClick={() =>
-                    handleOpenBuyVoucherModal('微信支付10元立减金', '10.00', '5.99', '10.01')
-                  }
-                >
-                  添加示例: 有偿购入立减金 (面值 ¥10.00 / 购券成本 ¥5.99)
-                </Button>
-              </Stack>
-            </Card>
-          ) : (
-            <Grid container spacing={2}>
-              {filteredVouchers.map((v) => {
-                const isAvail = v.status === 'AVAILABLE';
-                const isPaid = Number(v.acquire_cost) > 0;
-                const netSaved = (Number(v.face_value) - Number(v.acquire_cost)).toFixed(2);
-
-                return (
-                  <Grid size={{ xs: 12, sm: 6, md: 4 }} key={v.id}>
-                    <Card
-                      sx={{
-                        height: '100%',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                        border: '1px solid',
-                        borderColor: isAvail ? (isPaid ? 'primary.main' : 'success.main') : 'divider',
-                        opacity: isAvail ? 1 : 0.75,
-                        transition: 'transform 0.15s ease-in-out',
-                        '&:hover': {
-                          transform: 'translateY(-2px)',
-                          boxShadow: 3,
-                        },
-                      }}
-                    >
-                      <CardContent sx={{ p: 2 }}>
-                        {/* 头部信息 */}
-                        <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                            {v.title}
-                          </Typography>
-                          <Stack direction="row" spacing={0.5}>
-                            <Chip
-                              size="small"
-                              label={
-                                v.voucher_type === 'PREPAID_COUPON'
-                                  ? '有偿立减金'
-                                  : '免费平台券'
-                              }
-                              color={
-                                v.voucher_type === 'PREPAID_COUPON'
-                                  ? 'primary'
-                                  : 'success'
-                              }
-                            />
-                            <Chip
-                              size="small"
-                              label={
-                                v.status === 'AVAILABLE'
-                                  ? '待核销'
-                                  : v.status === 'USED'
-                                  ? '已使用'
-                                  : '已过期'
-                              }
-                              color={
-                                v.status === 'AVAILABLE'
-                                  ? 'success'
-                                  : v.status === 'EXPIRED'
-                                  ? 'error'
-                                  : 'default'
-                              }
-                              variant={v.status === 'AVAILABLE' ? 'filled' : 'outlined'}
-                            />
-                          </Stack>
-                        </Stack>
-
-                        {/* 金额详情 */}
-                        <Box sx={{ my: 1.5 }}>
-                          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              抵扣面值金额
-                            </Typography>
-                            <Typography variant="h5" sx={{ fontWeight: 900, color: 'success.main' }}>
-                              ¥{v.face_value}
-                            </Typography>
-                          </Stack>
-
-                          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              实付购券成本
-                            </Typography>
-                            <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                              ¥{v.acquire_cost}
-                            </Typography>
-                          </Stack>
-
-                          <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', mt: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              使用门槛
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                              满 ¥{v.min_spend} 可用 · 净省 ¥{netSaved}
-                            </Typography>
-                          </Stack>
-
-                          <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 1 }}>
-                            有效期限: {v.expire_date || '长期有效'}
-                          </Typography>
-                        </Box>
-                      </CardContent>
-
-                      {/* 底栏动作按钮 */}
-                      <Box
-                        sx={{
-                          p: 1.5,
-                          pt: 0,
-                          display: 'flex',
-                          justifyContent: 'flex-end',
-                          gap: 1,
-                          borderTop: '1px solid',
-                          borderColor: 'divider',
-                        }}
-                      >
-                        <Tooltip title="编辑卡券">
-                          <IconButton size="small" color="primary" onClick={() => handleOpenEditVoucher(v)}>
-                            <EditRounded fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="删除卡券">
-                          <IconButton size="small" color="error" onClick={() => handleDeleteVoucher(v.id, v.title)}>
-                            <DeleteOutlineRounded fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Box>
-                    </Card>
-                  </Grid>
-                );
-              })}
-            </Grid>
-          )}
-        </Box>
-      )}
-
-      {/* ===================================================================== */}
-      {/* Tab 1: 周期性扣款 (Recurring Rules) */}
-      {/* ===================================================================== */}
-      {activeTab === 1 && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+      {/* 周期性扣款 (Recurring Rules) */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
           {/* 顶栏：周期规则头部 */}
           <Card sx={{ p: 2 }}>
             <Stack
@@ -773,167 +370,10 @@ export const AccountMatrixPanel: React.FC<AccountMatrixPanelProps> = ({
               })}
             </Grid>
           )}
-        </Box>
-      )}
+      </Box>
 
       {/* ===================================================================== */}
-      {/* 弹窗 1: 优惠券编辑 / 登记 Dialog */}
-      {/* ===================================================================== */}
-      <Dialog
-        open={voucherModalOpen}
-        onClose={() => setVoucherModalOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle sx={{ fontWeight: 700 }}>
-          {voucherMode === 'BUY'
-            ? '有偿购券入库登记'
-            : voucherMode === 'EDIT'
-            ? `编辑卡券: ${voucherForm.title}`
-            : '免费领券登记'}
-        </DialogTitle>
-        <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          <TextField
-            label="备注前缀（选填，如：微信/招行，不填自动生成名称）"
-            fullWidth
-            size="small"
-            value={voucherForm.customPrefix}
-            onChange={(e) =>
-              setVoucherForm({ ...voucherForm, customPrefix: e.target.value })
-            }
-            placeholder="如: 微信 / 招行"
-          />
-
-          <Box
-            sx={{
-              p: 1.2,
-              borderRadius: '12px',
-              bgcolor: (t) =>
-                t.palette.mode === 'light'
-                  ? alpha(t.palette.primary.main, 0.08)
-                  : alpha(t.palette.primary.main, 0.16),
-              border: '1px dashed',
-              borderColor: 'primary.main',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-            }}
-          >
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              自动生成卡券名称：
-            </Typography>
-            <Chip
-              size="small"
-              color="primary"
-              variant="outlined"
-              label={
-                Number(voucherForm.face_value) > 0
-                  ? `${voucherForm.customPrefix.trim() ? voucherForm.customPrefix.trim() + ' ' : ''}${generateVoucherTitle(
-                      voucherForm.voucher_type,
-                      voucherForm.face_value,
-                      voucherForm.min_spend || '0.00',
-                      voucherForm.acquire_cost || '0.00'
-                    )}`
-                  : '填写面值后自动生成'
-              }
-              sx={{ fontWeight: 700 }}
-            />
-          </Box>
-
-          <FormControl fullWidth size="small">
-            <InputLabel>卡券类型</InputLabel>
-            <Select
-              value={voucherForm.voucher_type}
-              label="卡券类型"
-              onChange={(e) =>
-                setVoucherForm({
-                  ...voucherForm,
-                  voucher_type: e.target.value as VoucherType,
-                })
-              }
-            >
-              <MenuItem value="PREPAID_COUPON">有偿购买立减金</MenuItem>
-              <MenuItem value="FREE_COUPON">免费平台优惠券</MenuItem>
-            </Select>
-          </FormControl>
-
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-            <TextField
-              label="面值金额 (¥)"
-              fullWidth
-              size="small"
-              type="number"
-              value={voucherForm.face_value}
-              onChange={(e) => setVoucherForm({ ...voucherForm, face_value: e.target.value })}
-              placeholder="如 10.00"
-            />
-            <TextField
-              label="实付购券成本 (¥)"
-              fullWidth
-              size="small"
-              type="number"
-              value={voucherForm.acquire_cost}
-              onChange={(e) => setVoucherForm({ ...voucherForm, acquire_cost: e.target.value })}
-              placeholder="免费领券填 0.00"
-              disabled={voucherMode === 'FREE'}
-            />
-          </Stack>
-
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-            <TextField
-              label="最低使用门槛 (满 ¥ 可用)"
-              fullWidth
-              size="small"
-              type="number"
-              value={voucherForm.min_spend}
-              onChange={(e) => setVoucherForm({ ...voucherForm, min_spend: e.target.value })}
-              placeholder="如 10.01"
-            />
-            <TextField
-              label="有效截止日期"
-              fullWidth
-              size="small"
-              type="date"
-              value={voucherForm.expire_date}
-              onChange={(e) => setVoucherForm({ ...voucherForm, expire_date: e.target.value })}
-              slotProps={{ inputLabel: { shrink: true } }}
-            />
-          </Stack>
-
-          {voucherMode === 'EDIT' && (
-            <FormControl fullWidth size="small">
-              <InputLabel>卡券状态</InputLabel>
-              <Select
-                value={voucherForm.status}
-                label="卡券状态"
-                onChange={(e) =>
-                  setVoucherForm({
-                    ...voucherForm,
-                    status: e.target.value as 'AVAILABLE' | 'USED' | 'EXPIRED',
-                  })
-                }
-              >
-                <MenuItem value="AVAILABLE">待核销 / 可用</MenuItem>
-                <MenuItem value="USED">已核销使用</MenuItem>
-                <MenuItem value="EXPIRED">已过期失效</MenuItem>
-              </Select>
-            </FormControl>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setVoucherModalOpen(false)}>取消</Button>
-          <Button
-            variant="contained"
-            color={voucherMode === 'BUY' ? 'primary' : 'success'}
-            onClick={handleSaveVoucher}
-          >
-            {voucherMode === 'BUY' ? '确认支付购券入库' : '保存优惠券'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* ===================================================================== */}
-      {/* 弹窗 2: 周期规则新增与编辑 Dialog */}
+      {/* 弹窗：周期规则新增与编辑 Dialog */}
       {/* ===================================================================== */}
       <Dialog
         open={ruleModalOpen}

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   allocateSplitDiscounts,
-  applyVoucherToOrder,
   computeOrderAllocation,
 } from '../src/allocation.js';
 import { processMastercardFxLifecycle } from '../src/mastercard-fx.js';
@@ -201,53 +200,19 @@ describe('Stage 2: Core Financial Engines & Distributed HLC Synchronization', ()
   });
 
   // ==========================================================================
-  // 2. 优惠券与立减金核销计算 (Voucher Wallet Redemption)
+  // 2. 整单实付分摊结果聚合计算 (computeOrderAllocation)
   // ==========================================================================
-  describe('applyVoucherToOrder & computeOrderAllocation', () => {
-    it('should calculate PRD 1.2 voucher redemption: 5.99 bought 10.00 prepaid coupon', () => {
-      // 消费原价 15.00 元，用面值 10.00 元（购入成本 5.99 元）立减金，现场微信再付 5.00 元
-      const res = applyVoucherToOrder('15.00', '5.00', {
-        face_value: '10.00',
-        acquire_cost: '5.99',
-        voucher_type: 'PREPAID_COUPON',
-      });
-
-      expect(res.order_gross).toBe('15.00');
-      expect(res.cash_paid).toBe('5.00');
-      expect(res.voucher_acquire_cost).toBe('5.99');
-      // 计入预算的实际总成本：5.00 + 5.99 = 10.99
-      expect(res.effective_budget_net).toBe('10.99');
-      // 薅羊毛净省金额：10.00 - 5.99 = 4.01
-      expect(res.net_savings).toBe('4.01');
-    });
-
-    it('should calculate FREE_COUPON with zero acquire cost', () => {
-      const res = applyVoucherToOrder('30.00', '20.00', {
-        face_value: '10.00',
-        acquire_cost: '0.00',
-        voucher_type: 'FREE_COUPON',
-      });
-
-      expect(res.effective_budget_net).toBe('20.00');
-      expect(res.net_savings).toBe('10.00');
-    });
-
-    it('should compute complete order allocation result with computeOrderAllocation', () => {
+  describe('computeOrderAllocation', () => {
+    it('should compute complete order allocation result with cashActuallyPaid', () => {
       const items: SplitItemInput[] = [
         { name: '午餐', gross: '15.00', category_id: 'CAT_FOOD' },
       ];
-      const comp = computeOrderAllocation(items, '5.00', 'SINGLE', {
-        face_value: '10.00',
-        acquire_cost: '5.99',
-        voucher_type: 'PREPAID_COUPON',
-      });
+      const comp = computeOrderAllocation(items, '10.99', 'SINGLE');
 
       expect(comp.total_gross).toBe('15.00');
-      expect(comp.cash_paid).toBe('5.00');
+      expect(comp.cash_paid).toBe('10.99');
       expect(comp.total_net).toBe('10.99');
       expect(comp.total_discount).toBe('4.01');
-      expect(comp.voucher_net_savings).toBe('4.01');
-      expect(comp.voucher_cost_carryover).toBe('5.99');
       expect(comp.items.length).toBe(1);
       expect(comp.items[0].net).toBe('10.99');
       expect(comp.items[0].allocated_discount).toBe('4.01');
@@ -418,7 +383,6 @@ describe('Stage 2: Core Financial Engines & Distributed HLC Synchronization', ()
     const createTxAggregate = (
       id: string,
       net: string,
-      appliedVoucherId: number | null = null,
       status: 'PENDING_HOLD' | 'SETTLED' = 'SETTLED'
     ): TransactionAggregate => ({
       header: {
@@ -455,7 +419,6 @@ describe('Stage 2: Core Financial Engines & Distributed HLC Synchronization', ()
           raw_formula_expr: null,
         },
       ],
-      appliedVoucherId,
     });
 
     it('should be idempotent: merge(A, A) === A', () => {
@@ -594,51 +557,6 @@ describe('Stage 2: Core Financial Engines & Distributed HLC Synchronization', ()
       expect(res.detectedConflicts[0].entity_id).toBe('TX_FX_001');
       expect(res.detectedConflicts[0].winner_hlc).toBe(opSettled.hlc);
       expect(res.detectedConflicts[0].loser_hlc).toBe(opHold.hlc);
-    });
-
-    it('should capture VOUCHER_DOUBLE_SPEND when two distinct transactions offline redeem the same voucher', () => {
-      // 场景：同一张优惠券 (ID: 888) 在手机端与平板端离线时，分别被两笔不同交易 (TX_FOOD_1 与 TX_MART_2) 绑定核销
-      const opTx1: SyncOpLogEntry = {
-        hlc: '000000000001000-0000-phone', // 较早发生（首销有效）
-        node_id: 'phone',
-        entity_type: 'TRANSACTION',
-        entity_id: 'TX_FOOD_1',
-        op_type: 'UPSERT',
-        payload_json: JSON.stringify(
-          createTxAggregate('TX_FOOD_1', '15.00', 888)
-        ),
-        created_at: '2026-11-12T10:00:00Z',
-      };
-
-      const opTx2: SyncOpLogEntry = {
-        hlc: '000000000002000-0000-tablet', // 较晚发生（双重核销冲突）
-        node_id: 'tablet',
-        entity_type: 'TRANSACTION',
-        entity_id: 'TX_MART_2',
-        op_type: 'UPSERT',
-        payload_json: JSON.stringify(
-          createTxAggregate('TX_MART_2', '30.00', 888)
-        ),
-        created_at: '2026-11-12T10:05:00Z',
-      };
-
-      const res = mergeOpLogEntries([opTx1], [opTx2]);
-
-      // 两笔不同交易都在胜出聚合根中（因 entity_id 不同）
-      expect(res.winningEntities.size).toBe(2);
-
-      // 但检测到了 VOUCHER_DOUBLE_SPEND 冲突
-      const voucherConflicts = res.detectedConflicts.filter(
-        (c) => c.conflict_type === 'VOUCHER_DOUBLE_SPEND'
-      );
-      expect(voucherConflicts.length).toBe(1);
-
-      const conflict = voucherConflicts[0];
-      expect(conflict.entity_id).toBe('888');
-      expect(conflict.winner_hlc).toBe(opTx1.hlc); // 较早首销获胜
-      expect(conflict.loser_hlc).toBe(opTx2.hlc); // 较晚核销为失败方
-      expect(conflict.loser_payload_json).toBe(opTx2.payload_json);
-      expect(conflict.status).toBe('PENDING');
     });
   });
 });

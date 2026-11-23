@@ -236,33 +236,6 @@ const List<Map<String, dynamic>> _seedProjectTags = <Map<String, dynamic>>[
   },
 ];
 
-const List<Map<String, dynamic>> _seedVouchers = <Map<String, dynamic>>[
-  <String, dynamic>{
-    'id': 1,
-    'title': '微信支付10元立减金',
-    'voucher_type': 'PREPAID_COUPON',
-    'face_value': '10.00',
-    'acquire_cost': '5.99',
-    'min_spend': '10.01',
-    'status': 'AVAILABLE',
-    'purchase_tx_id': null,
-    'used_tx_id': null,
-    'expire_date': '2026-12-31',
-  },
-  <String, dynamic>{
-    'id': 2,
-    'title': '美团外卖5元无门槛优惠券',
-    'voucher_type': 'FREE_COUPON',
-    'face_value': '5.00',
-    'acquire_cost': '0.00',
-    'min_spend': '0.00',
-    'status': 'AVAILABLE',
-    'purchase_tx_id': null,
-    'used_tx_id': null,
-    'expire_date': '2026-12-31',
-  },
-];
-
 const List<Map<String, dynamic>> _seedRecurringRules = <Map<String, dynamic>>[
   <String, dynamic>{
     'id': 1,

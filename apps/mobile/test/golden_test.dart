@@ -188,16 +188,7 @@ void main() {
         );
         break;
       case 'generateVoucherTitle':
-        final m = input as Map<String, dynamic>;
-        checkEq(
-          bridge.generateVoucherTitle(
-            voucherType: m['voucherType'] as String,
-            faceValue: m['faceValue'] as Object,
-            minSpend: (m['minSpend'] as Object?) ?? '0.00',
-          ),
-          expected,
-          'money:$id',
-        );
+        // Voucher wallet feature removed; skip legacy golden case without failing.
         break;
       default:
         check(false, 'Unknown money helper fn: $fnName');
@@ -270,55 +261,6 @@ void main() {
     for (var i = 0; i < exp.length; i++) {
       for (final kv in exp[i].entries) {
         checkEq(got[i][kv.key], kv.value, 'split:$id[$i].${kv.key}');
-      }
-    }
-  }
-
-  // Suite 5: voucher_cost_carryover
-  for (final rawCase in suites['voucher_cost_carryover'] as List<dynamic>) {
-    final c = rawCase as Map<String, dynamic>;
-    final id = c['id'] as String;
-    final fnName = c['fn'] as String;
-    final input = c['input'] as Map<String, dynamic>;
-    final exp = c['expected'] as Map<String, dynamic>;
-    if (fnName == 'applyVoucherToOrder') {
-      final got = bridge.applyVoucherToOrder(
-        orderGross: input['orderGross'] as Object,
-        cashActuallyPaidAfterVoucher:
-            input['cashActuallyPaidAfterVoucher'] as Object,
-        voucher: Map<String, dynamic>.from(
-          input['voucher'] as Map<dynamic, dynamic>,
-        ),
-      );
-      for (final kv in exp.entries) {
-        checkEq(got[kv.key], kv.value, 'voucher:$id.${kv.key}');
-      }
-    } else {
-      final got = bridge.computeOrderAllocation(
-        items: (input['items'] as List<dynamic>)
-            .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
-            .toList(),
-        cashActuallyPaid: input['cashActuallyPaid'] as Object,
-        mode: (input['mode'] as String?) ?? 'PROPORTIONAL',
-        voucher: input['voucher'] != null
-            ? Map<String, dynamic>.from(
-                input['voucher'] as Map<dynamic, dynamic>,
-              )
-            : null,
-      );
-      for (final kv in exp.entries) {
-        if (kv.key == 'items') {
-          final gotItems = (got['items'] as List<dynamic>).cast<Map<String, dynamic>>();
-          final expItems = (kv.value as List<dynamic>).cast<Map<String, dynamic>>();
-          checkEq(gotItems.length, expItems.length, 'voucher:$id.items.len');
-          for (var i = 0; i < expItems.length; i++) {
-            for (final ikv in expItems[i].entries) {
-              checkEq(gotItems[i][ikv.key], ikv.value, 'voucher:$id.items[$i].${ikv.key}');
-            }
-          }
-        } else {
-          checkEq(got[kv.key], kv.value, 'voucher:$id.${kv.key}');
-        }
       }
     }
   }
@@ -473,89 +415,6 @@ void main() {
       engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15'),
       exp['after_step_2_budget_status'] as Map<String, dynamic>,
       'scenario_b.step2.dashboard',
-    );
-  }
-
-  // Scenario C: voucher buy -> redeem -> delete rollback
-  {
-    final sc = sMap['scenario_c_voucher_buy_redeem_and_delete_rollback']!;
-    final actions = sc['actions'] as List<dynamic>;
-    final exp = sc['expected'] as Map<String, dynamic>;
-    final engine = FlutterLedgerEngine(bridge: bridge, seedDemoData: true);
-    final refs = <String, String>{};
-
-    // Step 1: buyVoucher
-    final s1p = (actions[0] as Map<String, dynamic>)['params'] as Map<String, dynamic>;
-    final buyRes = engine.buyVoucher(
-      voucherType: s1p['voucherType'] as String,
-      faceValue: s1p['faceValue'] as String,
-      acquireCost: s1p['acquireCost'] as String,
-      minSpend: s1p['minSpend'] as String,
-      txDate: s1p['txDate'] as String?,
-    );
-    final buyTx = buyRes['transaction'] as Map<String, dynamic>;
-    final createdVoucher = buyRes['voucher'] as Map<String, dynamic>;
-    refs['TX_1'] = (buyTx['header'] as Map<String, dynamic>)['id'] as String;
-    assertTxMatches(buyTx, exp['step_1_buy_tx'] as Map<String, dynamic>, refs, 'scenario_c.step1.tx');
-    final expV = exp['step_1_created_voucher'] as Map<String, dynamic>;
-    checkEq(createdVoucher['id'], expV['id'], 'scenario_c.step1.voucher.id');
-    checkEq(createdVoucher['title'], expV['title'], 'scenario_c.step1.voucher.title');
-    checkEq(createdVoucher['status'], expV['status'], 'scenario_c.step1.voucher.status');
-    checkEq(createdVoucher['purchase_tx_id'], refs['TX_1'], 'scenario_c.step1.voucher.purchase_tx_id');
-    assertBudgetDashboardMatches(
-      engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15'),
-      exp['step_1_budget_status'] as Map<String, dynamic>,
-      'scenario_c.step1.dashboard',
-    );
-
-    // Step 2: redeem single tx with voucher 1
-    final s2 = actions[1] as Map<String, dynamic>;
-    final tx2 = engine.recordFromDsl(
-      s2['rawText'] as String,
-      txDate: s2['txDate'] as String?,
-      appliedVoucherId: s2['appliedVoucherId'] as int?,
-    );
-    refs['TX_2'] = (tx2['header'] as Map<String, dynamic>)['id'] as String;
-    assertTxMatches(tx2, exp['step_2_redeem_single_tx'] as Map<String, dynamic>, refs, 'scenario_c.step2.tx');
-    final v1 = engine.vouchers.firstWhere((v) => v['id'] == 1);
-    checkEq(v1['status'], exp['step_2_voucher_1_status'], 'scenario_c.step2.v1_status');
-    assertBudgetDashboardMatches(
-      engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15'),
-      exp['step_2_budget_status'] as Map<String, dynamic>,
-      'scenario_c.step2.dashboard',
-    );
-
-    // Step 3: redeem split tx with voucher 3
-    final s3 = actions[2] as Map<String, dynamic>;
-    final tx3 = engine.recordFromDsl(
-      s3['rawText'] as String,
-      txDate: s3['txDate'] as String?,
-      appliedVoucherId: s3['appliedVoucherId'] as int?,
-    );
-    refs['TX_3'] = (tx3['header'] as Map<String, dynamic>)['id'] as String;
-    assertTxMatches(tx3, exp['step_3_redeem_split_tx'] as Map<String, dynamic>, refs, 'scenario_c.step3.tx');
-    assertBudgetDashboardMatches(
-      engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15'),
-      exp['step_3_budget_status'] as Map<String, dynamic>,
-      'scenario_c.step3.dashboard',
-    );
-
-    // Step 4: delete TX_3 -> rollback voucher 3 & budget
-    final s4 = actions[3] as Map<String, dynamic>;
-    final delTx3 = engine.deleteTransaction(refs[s4['target_tx_ref'] as String]!);
-    checkEq(
-      (delTx3['header'] as Map<String, dynamic>)['is_deleted'],
-      exp['step_4_deleted_tx_is_deleted'],
-      'scenario_c.step4.is_deleted',
-    );
-    final v3 = engine.vouchers.firstWhere((v) => v['id'] == 3);
-    final expV3 = exp['step_4_voucher_3_restored'] as Map<String, dynamic>;
-    checkEq(v3['status'], expV3['status'], 'scenario_c.step4.v3.status');
-    checkEq(v3['used_tx_id'], expV3['used_tx_id'], 'scenario_c.step4.v3.used_tx_id');
-    assertBudgetDashboardMatches(
-      engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15'),
-      exp['step_4_budget_status'] as Map<String, dynamic>,
-      'scenario_c.step4.dashboard',
     );
   }
 

@@ -110,9 +110,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
       // 3. 交易类型过滤
       if (typeFilter !== 'ALL') {
-        if (typeFilter === 'EXPENSE') {
-          if (h.tx_type !== 'EXPENSE' && h.tx_type !== 'VOUCHER_BUY') return false;
-        } else if (h.tx_type !== typeFilter) return false;
+        if (h.tx_type !== typeFilter) return false;
       }
 
       // 4. 归属资金池 / 专项过滤
@@ -148,7 +146,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
     for (const tx of filteredTransactions) {
       const h = tx.header;
-      if (h.tx_type === 'EXPENSE' || h.tx_type === 'VOUCHER_BUY') {
+      if (h.tx_type === 'EXPENSE') {
         totalExpense += Number(h.total_net);
         const discountVal =
           Number(h.payment_discount) > 0
@@ -278,7 +276,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     if (!deletingTxId) return;
     try {
       engine.deleteTransaction(deletingTxId);
-      setToastMsg(`🗑️ 账单 ${deletingTxId} 已成功删除，相关预算池与优惠券已回退！`);
+      setToastMsg(`🗑️ 账单 ${deletingTxId} 已成功删除，相关预算池已回退！`);
       setDeletingTxId(null);
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -400,7 +398,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 <MenuItem value="ALL">全部类型</MenuItem>
                 <MenuItem value="EXPENSE">支出</MenuItem>
                 <MenuItem value="INCOME">收入</MenuItem>
-                <MenuItem value="VOUCHER_BUY">购券支出</MenuItem>
               </TextField>
 
               {/* 归属资金池 / 专项筛选 */}
@@ -515,8 +512,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             const h = tx.header;
             const isExpense = h.tx_type === 'EXPENSE';
             const isIncome = h.tx_type === 'INCOME';
-            const isVoucherBuy = h.tx_type === 'VOUCHER_BUY';
-            const isExpenseLike = isExpense || isVoucherBuy;
             const isExpanded = !!expandedTxs[h.id];
             const hasMultipleItems = tx.items.length > 1;
 
@@ -531,7 +526,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                       justifyContent: 'space-between',
                     }}
                   >
-                    {/* 左侧：类型图标、标题、分类、账户 */}
+                    {/* 左侧：类型图标、标题、分类 */}
                     <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, flex: 1 }}>
                       <Box
                         sx={{
@@ -541,7 +536,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          bgcolor: isExpenseLike
+                          bgcolor: isExpense
                             ? (t) =>
                                 t.palette.mode === 'light' ? '#ffebe9' : '#3d1618'
                             : isIncome
@@ -549,7 +544,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                                 t.palette.mode === 'light' ? '#e6f4ea' : '#143821'
                             : (t) =>
                                 t.palette.mode === 'light' ? '#e0f7fa' : '#00363d',
-                          color: isExpenseLike
+                          color: isExpense
                             ? 'error.main'
                             : isIncome
                             ? 'success.main'
@@ -558,7 +553,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           mt: 0.3,
                         }}
                       >
-                        {isExpenseLike ? (
+                        {isExpense ? (
                           <TrendingDownRounded fontSize="small" />
                         ) : isIncome ? (
                           <TrendingUpRounded fontSize="small" />
@@ -577,18 +572,14 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           <Chip
                             size="small"
                             label={
-                              isVoucherBuy
-                                ? '购券支出'
-                                : isExpense
+                              isExpense
                                 ? '支出'
                                 : isIncome
                                 ? '收入'
                                 : '其他'
                             }
                             color={
-                              isVoucherBuy
-                                ? 'primary'
-                                : isExpense
+                              isExpense
                                 ? 'error'
                                 : isIncome
                                 ? 'success'
@@ -598,7 +589,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           />
 
                           {/* 支出归属胶囊（多子项按池/专项去重展示） */}
-                          {isExpenseLike && (() => {
+                          {isExpense && (() => {
                             const seen = new Set<string>();
                             return tx.items.map((it, idx) => {
                               const key = it.project_tag_id
@@ -643,17 +634,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                               );
                             });
                           })()}
-
-                          {/* 立减金使用标记 */}
-                          {h.applied_voucher_id != null && (
-                            <Chip
-                              size="small"
-                              label="🎟️ 已用立减金"
-                              color="success"
-                              variant="outlined"
-                              sx={{ height: 20, fontSize: '0.7rem' }}
-                            />
-                          )}
 
                           {/* 清算状态标记 */}
                           {h.settlement_status === 'PENDING_HOLD' ? (
@@ -754,14 +734,14 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             fontWeight: 800,
                             fontVariantNumeric: 'tabular-nums',
                             lineHeight: 1.1,
-                            color: isExpenseLike
+                            color: isExpense
                               ? 'text.primary'
                               : isIncome
                               ? 'success.main'
                               : 'secondary.main',
                           }}
                         >
-                          {isExpenseLike ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
+                          {isExpense ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
                         </Typography>
 
                         <Stack
@@ -1116,7 +1096,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           </Typography>
           <Alert severity="warning" sx={{ borderRadius: 2 }}>
             <strong>自动平衡回退：</strong>
-            删除后，该笔交易的扣款将被自动原路返还至账户余额；若本交易使用了虚拟卡包立减金，该券将自动恢复为可用状态（AVAILABLE）。
+            删除后，该笔交易关联的月度预算池或专项支出统计将自动回退重算。
           </Alert>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>

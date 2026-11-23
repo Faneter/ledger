@@ -51,7 +51,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
   late final TextEditingController _dslCtrl;
   final FocusNode _dslFocus = FocusNode();
   bool _showTagBar = false;
-  int? _selectedVoucherIdDsl;
   int? _primaryItemOverrideIndex;
   final Map<int, Map<String, String?>> _itemTargetOverrides =
       <int, Map<String, String?>>{};
@@ -70,7 +69,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
   String _currency = 'CNY';
   String _targetType = 'NONE';
   String _targetId = '';
-  int? _selectedVoucherIdVisual;
 
   @override
   void initState() {
@@ -167,7 +165,7 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
           return '$k:${m['budget_pool_id'] ?? ''}:${m['project_tag_id'] ?? ''}';
         })
         .join(',');
-    return '${widget.engine.stateVersion}|$raw|$_selectedVoucherIdDsl|$_primaryItemOverrideIndex|$overrideSig';
+    return '${widget.engine.stateVersion}|$raw|$_primaryItemOverrideIndex|$overrideSig';
   }
 
   Map<String, dynamic>? _compilePreview() {
@@ -184,7 +182,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
     try {
       final result = widget.engine.previewDsl(
         raw,
-        appliedVoucherId: _selectedVoucherIdDsl,
         primaryItemOverrideIndex: _primaryItemOverrideIndex,
         itemTargetOverrides:
             _itemTargetOverrides.isEmpty ? null : _itemTargetOverrides,
@@ -224,7 +221,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
       final tx = widget.engine.recordFromDsl(
         raw,
         txDate: _txDate,
-        appliedVoucherId: _selectedVoucherIdDsl,
         primaryItemOverrideIndex: _primaryItemOverrideIndex,
         itemTargetOverrides:
             _itemTargetOverrides.isEmpty ? null : _itemTargetOverrides,
@@ -283,8 +279,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
             : null,
         fxHoldRatio: (holdRatioPct / 100).toStringAsFixed(3),
         fxCashbackRate: (cashbackPct / 100).toStringAsFixed(4),
-        appliedVoucherId:
-            _txType == 'EXPENSE' ? _selectedVoucherIdVisual : null,
       );
       Navigator.of(context).pop(tx);
     } catch (e) {
@@ -296,9 +290,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-    final availableVouchers = widget.engine.vouchers
-        .where((v) => v['status'] == 'AVAILABLE')
-        .toList();
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -355,15 +346,13 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                 child: _mode == 'dsl'
-                    ? _buildDslWorkspace(cs, availableVouchers)
+                    ? _buildDslWorkspace(cs)
                     : VisualRecordForm(
                         engine: widget.engine,
                         txType: _txType,
                         currency: _currency,
                         targetType: _targetType,
                         targetId: _targetId,
-                        selectedVoucherId: _selectedVoucherIdVisual,
-                        availableVouchers: availableVouchers,
                         amountCtrl: _amountCtrl,
                         discountCtrl: _discountCtrl,
                         holdCnyCtrl: _holdCnyCtrl,
@@ -373,7 +362,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
                         onTxTypeChanged: (next) {
                           setState(() {
                             _txType = next;
-                            _selectedVoucherIdVisual = null;
                             _errorMsg = null;
                           });
                         },
@@ -385,8 +373,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
                             _targetId = id;
                           });
                         },
-                        onVoucherChanged: (val) =>
-                            setState(() => _selectedVoucherIdVisual = val),
                         onSubmit: _submitVisual,
                       ),
               ),
@@ -424,10 +410,7 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
     );
   }
 
-  Widget _buildDslWorkspace(
-    ColorScheme cs,
-    List<Map<String, dynamic>> availableVouchers,
-  ) {
+  Widget _buildDslWorkspace(ColorScheme cs) {
     final preview = _compilePreview();
     final parsed = preview?['parsed'] as Map<String, dynamic>?;
 
@@ -493,7 +476,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
                       setState(() {
                         _primaryItemOverrideIndex = null;
                         _itemTargetOverrides.clear();
-                        _selectedVoucherIdDsl = null;
                         _errorMsg = null;
                       });
                     },
@@ -510,14 +492,6 @@ class _QuickRecordSheetState extends State<QuickRecordSheet> {
         DslSplitPreviewSection(
           engine: widget.engine,
           preview: preview,
-          availableVouchers: availableVouchers,
-          selectedVoucherId: _selectedVoucherIdDsl,
-          onSelectVoucher: (voucherId) {
-            setState(() {
-              _selectedVoucherIdDsl = voucherId;
-              _errorMsg = null;
-            });
-          },
           onTogglePrimaryItem: (nextIndex) {
             setState(() {
               _primaryItemOverrideIndex = nextIndex;

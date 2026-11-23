@@ -1,5 +1,3 @@
-import { invokeRustCore } from './wasm-bridge.js';
-
 /**
  * 极客大学生个人记账与预算管理系统 - 核心领域模型与类型契约
  * 所有金额字段统一采用 string 表示两位小数精确金额（如 "31.95"），避免 JSON/浮点数序列化精度丢失。
@@ -124,58 +122,6 @@ export interface ProjectTag {
   created_at?: string;
 }
 
-// ============================================================================
-// 4. 卡包与优惠券相关类型定义
-// ============================================================================
-
-/**
- * 优惠券类型
- * - PREPAID_COUPON: 有偿购入立减金（如 5.99 买 10 元立减金）
- * - FREE_COUPON: 免费领取立减券/满减券
- */
-export type VoucherType = 'PREPAID_COUPON' | 'FREE_COUPON';
-
-/**
- * 优惠券核销状态
- */
-export type VoucherStatus = 'AVAILABLE' | 'USED' | 'EXPIRED' | 'REFUNDED';
-
-/**
- * 优惠券与立减金实体接口 (vouchers)
- */
-export interface Voucher {
-  id: number;
-  title: string;
-  voucher_type: VoucherType;
-  face_value: string;
-  acquire_cost: string;
-  min_spend: string;
-  status: VoucherStatus;
-  purchase_tx_id: string | null;
-  used_tx_id: string | null;
-  expire_date: string | null;
-  created_at?: string;
-}
-
-/**
- * 自动生成卡券/立减金默认标题
- */
-export function generateVoucherTitle(
-  voucherType: VoucherType | string,
-  faceValue: string | number,
-  minSpend: string | number,
-  _acquireCost?: string | number
-): string {
-  const faceStr = faceValue === '' || faceValue == null ? '0' : String(faceValue);
-  const minStr = minSpend === '' || minSpend == null ? '0' : String(minSpend);
-  return invokeRustCore<string>({
-    op: 'generate_voucher_title',
-    voucherType,
-    faceValue: faceStr,
-    minSpend: minStr,
-  });
-}
-
 /**
  * 获取本地时区的今日日期字符串 (YYYY-MM-DD)，避免 UTC 偏移导致凌晨差一天
  */
@@ -201,14 +147,8 @@ export function getLocalYearMonthStr(now: Date = new Date()): string {
  * 交易类型
  * - EXPENSE: 常规/专项支出
  * - INCOME: 收入（生活费/兼职/奖学金）
- * - VOUCHER_BUY: 购买立减金（资金转入虚拟卡包）
- * - VOUCHER_EXPIRE: 购入立减金过期损耗
  */
-export type TransactionType =
-  | 'EXPENSE'
-  | 'INCOME'
-  | 'VOUCHER_BUY'
-  | 'VOUCHER_EXPIRE';
+export type TransactionType = 'EXPENSE' | 'INCOME';
 
 /**
  * 凑单满减分摊模式
@@ -253,7 +193,6 @@ export interface TransactionHeader {
   settled_at: string | null;
   raw_input_text: string | null;
   merchant_or_note: string | null;
-  applied_voucher_id?: number | null;
   is_deleted?: boolean;
   updated_hlc?: string;
   created_at?: string;
@@ -282,7 +221,6 @@ export interface TransactionItem {
 export interface TransactionAggregate {
   header: TransactionHeader;
   items: TransactionItem[];
-  appliedVoucherId?: number | null;
 }
 
 // ============================================================================
@@ -328,7 +266,6 @@ export type SyncEntityType =
   | 'BUDGET'
   | 'BUDGET_POOL'
   | 'CATEGORY'
-  | 'VOUCHER'
   | 'MONTHLY_BUDGET'
   | 'PROJECT_TAG'
   | 'RECURRING_RULE';
@@ -354,13 +291,9 @@ export interface SyncOpLogEntry<T = unknown> {
 /**
  * 冲突类型定义
  * - CONCURRENT_TX_EDIT: 并发编辑同一笔交易流水
- * - VOUCHER_DOUBLE_SPEND: 多端离线状态下重复核销同一张优惠券
  * - CONCURRENT_FX_SETTLE: 并发清算万事达外币预授权冻结流水
  */
-export type ConflictType =
-  | 'CONCURRENT_TX_EDIT'
-  | 'VOUCHER_DOUBLE_SPEND'
-  | 'CONCURRENT_FX_SETTLE';
+export type ConflictType = 'CONCURRENT_TX_EDIT' | 'CONCURRENT_FX_SETTLE';
 
 /**
  * 冲突解决状态
@@ -390,7 +323,6 @@ export interface FullSyncBundle {
   nodeId: string;
   exportedAt: string;
   oplogs: SyncOpLogEntry[];
-  vouchers: Voucher[];
   monthlyBudgets: MonthlyBudget[];
   budgetPools?: BudgetPool[];
   categories?: Category[];

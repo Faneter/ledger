@@ -68,7 +68,7 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
       }
 
       if (_typeFilter == 'EXPENSE') {
-        if (h['tx_type'] != 'EXPENSE' && h['tx_type'] != 'VOUCHER_BUY') {
+        if (h['tx_type'] != 'EXPENSE') {
           return false;
         }
       } else if (_typeFilter == 'INCOME') {
@@ -103,37 +103,19 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
   void _softDeleteTransaction(BuildContext context, Map<String, dynamic> tx) {
     final h = tx['header'] as Map<String, dynamic>;
     final txId = h['id'] as String;
-    final voucherId = h['applied_voucher_id'] as int?;
-    String? voucherTitle;
-    if (voucherId != null) {
-      final match =
-          widget.engine.vouchers.where((v) => v['id'] == voucherId).toList();
-      if (match.isNotEmpty) {
-        voucherTitle = match.first['title'] as String;
-      }
-    }
 
-    final isVoucherBuy = h['tx_type'] == 'VOUCHER_BUY';
     widget.engine.deleteTransaction(txId);
     _expandedTxIds.remove(txId);
     widget.onEngineChanged();
 
-    final msg = isVoucherBuy
-        ? '购券账单已删除（对应卡券已一并移除）'
-        : voucherTitle != null
-            ? '账单已删除，${voucherTitle}已退回卡包'
-            : '已删除账单：${h['merchant_or_note']}';
-
     showLedgerSnackBar(
       context,
-      msg,
-      actionLabel: isVoucherBuy ? null : '撤销',
-      onAction: isVoucherBuy
-          ? null
-          : () {
-              widget.engine.restoreTransaction(txId);
-              widget.onEngineChanged();
-            },
+      '已删除账单：${h['merchant_or_note']}',
+      actionLabel: '撤销',
+      onAction: () {
+        widget.engine.restoreTransaction(txId);
+        widget.onEngineChanged();
+      },
     );
   }
 

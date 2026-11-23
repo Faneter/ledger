@@ -74,29 +74,7 @@ CREATE TABLE IF NOT EXISTS projects_and_tags (
 );
 
 -- ----------------------------------------------------------------------------
--- 5. 优惠券与立减金虚拟卡包表 (vouchers)
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS vouchers (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    title               VARCHAR(128) NOT NULL,
-    voucher_type        VARCHAR(24) NOT NULL CHECK (voucher_type IN (
-                            'PREPAID_COUPON', -- 有偿购入立减金
-                            'FREE_COUPON'     -- 免费领取的满减券/立减券
-                        )),
-    face_value          NUMERIC(10, 2) NOT NULL,
-    acquire_cost        NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    min_spend           NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    status              VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE' CHECK (status IN (
-                            'AVAILABLE', 'USED', 'EXPIRED', 'REFUNDED'
-                        )),
-    purchase_tx_id      VARCHAR(36) DEFAULT NULL,
-    used_tx_id          VARCHAR(36) DEFAULT NULL,
-    expire_date         DATE DEFAULT NULL,
-    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- ----------------------------------------------------------------------------
--- 6. 交易流水主表 - 订单头 (transaction_headers)
+-- 5. 交易流水主表 - 订单头 (transaction_headers)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS transaction_headers (
     id                  VARCHAR(36) PRIMARY KEY,
@@ -104,9 +82,7 @@ CREATE TABLE IF NOT EXISTS transaction_headers (
     tx_timestamp        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     tx_type             VARCHAR(24) NOT NULL CHECK (tx_type IN (
                             'EXPENSE',          -- 常规/专项支出
-                            'INCOME',           -- 收入
-                            'VOUCHER_BUY',      -- 购买立减金
-                            'VOUCHER_EXPIRE'    -- 购入立减金过期损耗
+                            'INCOME'            -- 收入
                         )),
     total_gross         NUMERIC(12, 2) NOT NULL,
     platform_discount   NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
@@ -131,14 +107,13 @@ CREATE TABLE IF NOT EXISTS transaction_headers (
     settled_at          TIMESTAMP DEFAULT NULL,
     raw_input_text      TEXT,
     merchant_or_note    TEXT,
-    applied_voucher_id  INTEGER DEFAULT NULL REFERENCES vouchers(id),
     is_deleted          INTEGER NOT NULL DEFAULT 0,
     updated_hlc         VARCHAR(64) DEFAULT NULL,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ----------------------------------------------------------------------------
--- 7. 交易拆分明细子表 - 预算核销行 (transaction_items)
+-- 6. 交易拆分明细子表 - 预算核销行 (transaction_items)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS transaction_items (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -299,11 +274,4 @@ INSERT OR IGNORE INTO monthly_budgets (year_month, pool_id, base_allocation, rol
 INSERT OR IGNORE INTO recurring_rules (id, title, rule_type, cron_cycle, trigger_day, currency, amount, category_id, budget_pool_id, auto_reserve_budget, is_active) VALUES
 (1, '每月固定话费(移动8+电信29+联通49)', 'FIXED_EXPENSE',   'MONTHLY', 1, 'CNY', 86.00, 'CAT_TELECOM', 'POOL_FIXED', 1, 1),
 (2, 'Porkbun域名续费',                    'FX_SUBSCRIPTION', 'YEARLY',  1, 'USD', 10.37, 'CAT_DIGITAL_SUB', 'POOL_FLEX', 1, 1);
-
--- ----------------------------------------------------------------------------
--- 6. 默认 2 张可用卡券
--- ----------------------------------------------------------------------------
-INSERT OR IGNORE INTO vouchers (id, title, voucher_type, face_value, acquire_cost, min_spend, status) VALUES
-(1, '微信支付10元立减金',     'PREPAID_COUPON', 10.00, 5.99, 10.01, 'AVAILABLE'),
-(2, '美团外卖5元无门槛优惠券', 'FREE_COUPON',     5.00, 0.00,  5.01, 'AVAILABLE');
 `;

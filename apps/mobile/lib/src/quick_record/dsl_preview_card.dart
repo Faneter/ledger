@@ -4,24 +4,18 @@ import '../ledger_engine.dart';
 import '../ui_helpers.dart';
 import '../widgets/common_ui.dart';
 
-/// Displays eligible voucher chips, FX pre-auth warning, and live split preview sandbox.
+/// Displays FX pre-auth warning and live split preview sandbox.
 class DslSplitPreviewSection extends StatelessWidget {
   const DslSplitPreviewSection({
     super.key,
     required this.engine,
     required this.preview,
-    required this.availableVouchers,
-    required this.selectedVoucherId,
-    required this.onSelectVoucher,
     required this.onTogglePrimaryItem,
     required this.onPickItemTarget,
   });
 
   final FlutterLedgerEngine engine;
   final Map<String, dynamic>? preview;
-  final List<Map<String, dynamic>> availableVouchers;
-  final int? selectedVoucherId;
-  final ValueChanged<int?> onSelectVoucher;
   final ValueChanged<int> onTogglePrimaryItem;
   final Future<void> Function(int index, Map<String, dynamic> item)
       onPickItemTarget;
@@ -35,71 +29,10 @@ class DslSplitPreviewSection extends StatelessWidget {
             .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
             .toList()
         : <Map<String, dynamic>>[];
-    final eligibleVouchers = preview != null
-        ? (preview!['eligible_vouchers'] as List<dynamic>)
-            .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
-            .toList()
-        : <Map<String, dynamic>>[];
-    final voucherError = preview?['voucher_error'] as String?;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        // Smart Voucher Chips (only shown when eligible vouchers exist)
-        if (eligibleVouchers.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 10),
-          Text(
-            '可用卡券智能挂载',
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
-                ?.copyWith(color: cs.primary, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: <Widget>[
-              for (final v in eligibleVouchers)
-                FilterChip(
-                  selected: selectedVoucherId == v['id'],
-                  selectedColor: cs.primaryContainer,
-                  label: Text(
-                    '🎟️ 可用：${v['title']} (净省 ¥${v['net_savings']})',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  onSelected: (selected) {
-                    onSelectVoucher(selected ? (v['id'] as int) : null);
-                  },
-                ),
-            ],
-          ),
-        ] else if (availableVouchers.isNotEmpty && parsed != null) ...<Widget>[
-          const SizedBox(height: 8),
-          Text(
-            '卡包有 ${availableVouchers.length} 张可用券，达到使用门槛后将自动亮起挂载芯片',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: cs.onSurfaceVariant),
-          ),
-        ],
-
-        if (voucherError != null) ...<Widget>[
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: cs.tertiaryContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              voucherError,
-              style: TextStyle(color: cs.onTertiaryContainer, fontSize: 12),
-            ),
-          ),
-        ],
-
         if (preview?['is_fx_detected'] == true) ...<Widget>[
           const SizedBox(height: 10),
           Container(

@@ -37,7 +37,6 @@ class TransactionCard extends StatelessWidget {
     final isIncome = h['tx_type'] == 'INCOME';
     final hasDiscount =
         (double.tryParse((h['payment_discount'] as String?) ?? '0') ?? 0) > 0;
-    final hasVoucher = h['applied_voucher_id'] != null;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -130,24 +129,12 @@ class TransactionCard extends StatelessWidget {
                   ),
 
                   // Collapsed allocation pills (parent-child capsule summary)
-                  if (items.isNotEmpty || hasVoucher) ...<Widget>[
+                  if (items.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 6,
                       runSpacing: 6,
                       children: <Widget>[
-                        if (hasVoucher)
-                          LedgerBadge(
-                            label: '🎟️ 已核销立减金',
-                            backgroundColor:
-                                Colors.green.withValues(alpha: 0.14),
-                            foregroundColor: Colors.green.shade900,
-                            fontSize: 11,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                          ),
                         if (items.length > 1)
                           for (final it in items)
                             LedgerBadge(

@@ -3,19 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
 import {
-  Decimal,
-  toDecimal,
-  formatCny,
   Category,
   ProjectTag,
-  Voucher,
-  VoucherType,
   SyncOpLogEntry,
   SyncConflict,
   TransactionAggregate,
-  SplitItemInput,
   parseQuickInputDsl,
-  computeOrderAllocation,
 } from '@ledger/core';
 import { LedgerRepository, type FullSyncBundle } from '@ledger/db';
 
@@ -155,7 +148,6 @@ export function createLedgerServer(
           budgetStatus: repo.getMonthlyBudgetStatus(ym, cd),
           transactions: repo.getRecentTransactions(100),
           pendingFxTransactions: repo.getPendingFxTransactions(),
-          vouchers: repo.getVouchers(),
           metadata: repo.getMetadata(),
           conflicts: repo.getConflicts(),
           oplogCount: oplogs.length,
@@ -166,7 +158,7 @@ export function createLedgerServer(
 
     // 3. POST /api/dsl/preview
     if (method === 'POST' && pathname === '/api/dsl/preview') {
-      const { rawText, txDate, appliedVoucherId } = (body as any) || {};
+      const { rawText, txDate } = (body as any) || {};
       if (!rawText || typeof rawText !== 'string') {
         return { statusCode: 400, body: { error: 'rawText is required' } };
       }
@@ -184,69 +176,10 @@ export function createLedgerServer(
           txDate,
         });
 
-        let totalGross = parsed.total_gross;
-        let paymentDiscount = parsed.payment_discount;
-        let platformDiscount = parsed.platform_discount;
-        let totalNet = parsed.total_net;
-        let items = parsed.items;
-
-        if (appliedVoucherId != null) {
-          const voucher = repo.db
-            .prepare('SELECT * FROM vouchers WHERE id = ?')
-            .get(appliedVoucherId) as Voucher | undefined;
-
-          if (voucher) {
-            if (parsed.tx_type === 'EXPENSE') {
-              const cashPaid = Decimal.max(
-                0,
-                toDecimal(parsed.total_net).minus(toDecimal(voucher.face_value))
-              );
-              const splitInputs: SplitItemInput[] = parsed.items.map((it) => ({
-                name: it.item_name,
-                gross: it.item_gross,
-                category_id: it.category_id,
-                budget_pool_id: it.budget_pool_id,
-                project_tag_id: it.project_tag_id,
-                is_primary: it.is_primary_item,
-              }));
-
-              const alloc = computeOrderAllocation(
-                splitInputs,
-                cashPaid,
-                parsed.allocation_mode,
-                {
-                  face_value: voucher.face_value,
-                  acquire_cost: voucher.acquire_cost,
-                  voucher_type: voucher.voucher_type,
-                }
-              );
-
-              totalGross = alloc.total_gross;
-              paymentDiscount = alloc.total_discount;
-              platformDiscount = '0.00';
-              totalNet = alloc.total_net;
-              items = parsed.items.map((it, idx) => ({
-                ...it,
-                item_gross: alloc.items[idx].gross,
-                allocated_discount: alloc.items[idx].allocated_discount,
-                item_net: alloc.items[idx].net,
-              }));
-            }
-          }
-        }
-
         return {
           statusCode: 200,
           body: {
-            parsed: {
-              ...parsed,
-              total_gross: totalGross,
-              payment_discount: paymentDiscount,
-              platform_discount: platformDiscount,
-              total_net: totalNet,
-              items,
-              applied_voucher_id: appliedVoucherId ?? null,
-            },
+            parsed,
           },
         };
       } catch (err) {
@@ -259,16 +192,12 @@ export function createLedgerServer(
 
     // 4. POST /api/transactions/dsl
     if (method === 'POST' && pathname === '/api/transactions/dsl') {
-      const { rawText, txDate, appliedVoucherId } = (body as any) || {};
+      const { rawText, txDate } = (body as any) || {};
       if (!rawText || typeof rawText !== 'string') {
         return { statusCode: 400, body: { error: 'rawText is required' } };
       }
       try {
-        const transaction = repo.recordFromDsl(
-          rawText,
-          txDate,
-          appliedVoucherId
-        );
+        const transaction = repo.recordFromDsl(rawText, txDate);
         return { statusCode: 200, body: { transaction } };
       } catch (err) {
         return {
@@ -314,19 +243,6 @@ export function createLedgerServer(
         const msg = err instanceof Error ? err.message : String(err);
         const statusCode = msg.includes('not found') ? 404 : 400;
         return { statusCode, body: { error: msg } };
-      }
-    }
-
-    // 9. POST /api/vouchers/buy
-    if (method === 'POST' && pathname === '/api/vouchers/buy') {
-      try {
-        const result = repo.buyVoucher(body as any);
-        return { statusCode: 200, body: result };
-      } catch (err) {
-        return {
-          statusCode: 400,
-          body: { error: err instanceof Error ? err.message : String(err) },
-        };
       }
     }
 
@@ -505,9 +421,6 @@ export function createLedgerServer(
       const limit = Number(query.get('limit') || 100);
       return { statusCode: 200, body: repo.getRecentTransactions(limit) };
     }
-    if (method === 'GET' && pathname === '/api/vouchers') {
-      return { statusCode: 200, body: repo.getVouchers() };
-    }
 
     // ========================================================================
     // Stage 8: 全生命周期 CRUD REST Endpoints
@@ -622,29 +535,7 @@ export function createLedgerServer(
       }
     }
 
-    // 31. POST /api/vouchers
-    if (method === 'POST' && pathname === '/api/vouchers') {
-      try {
-        const res = repo.upsertVoucher(body as any);
-        return { statusCode: 200, body: res };
-      } catch (err) {
-        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
-      }
-    }
-
-    // 32. DELETE /api/vouchers/:id
-    let vMatch = pathname.match(/^\/api\/vouchers\/([^/]+)$/);
-    if (method === 'DELETE' && vMatch) {
-      const id = Number(decodeURIComponent(vMatch[1]));
-      try {
-        repo.deleteVoucher(id);
-        return { statusCode: 200, body: { success: true } };
-      } catch (err) {
-        return { statusCode: 400, body: { error: err instanceof Error ? err.message : String(err) } };
-      }
-    }
-
-    // 33. POST /api/recurring-rules
+    // 31. POST /api/recurring-rules
     if (method === 'POST' && pathname === '/api/recurring-rules') {
       try {
         const rule = repo.upsertRecurringRule(body as any);

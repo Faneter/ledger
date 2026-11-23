@@ -1,6 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
-/// Compact rounded badge/pill shared across timeline, budgets, preview, and wallet cards.
+/// Compact rounded badge/pill shared across timeline, budgets, and preview cards.
 class LedgerBadge extends StatelessWidget {
   const LedgerBadge({
     super.key,

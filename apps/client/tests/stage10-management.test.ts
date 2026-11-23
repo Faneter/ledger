@@ -12,12 +12,12 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
   });
 
   describe('1. 纯净初始账本与演示数据加载切换', () => {
-    it('resetToCleanState 应该重置为 0 交易流水与 0 优惠券', () => {
+    it('resetToCleanState 应该重置为 0 交易流水与 0 规则', () => {
       engine.resetToCleanState();
 
       expect(engine.state.transactions.length).toBe(0);
-      expect(engine.state.vouchers.length).toBe(0);
       expect(engine.state.projectTags.length).toBe(0);
+      expect(engine.state.recurringRules.length).toBe(0);
 
       // 保留常规 4 大月度预算池
       expect(engine.state.budgetPools.length).toBe(4);
@@ -25,11 +25,10 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
       expect(monthlyPools.length).toBe(4);
     });
 
-    it('loadDemoData 应该载入 PRD 标杆测试样例与 2 张测试券', () => {
+    it('loadDemoData 应该载入 PRD 标杆测试样例与预设周期规则', () => {
       engine.resetToCleanState();
       engine.loadDemoData();
 
-      expect(engine.state.vouchers.length).toBe(2);
       expect(engine.state.recurringRules.length).toBe(2);
     });
 
@@ -105,36 +104,9 @@ describe('Stage 10: Management Operations & Clean Seed State Tests', () => {
     });
   });
 
-  describe('3. 优惠券与周期规则管理操作', () => {
+  describe('3. 周期规则管理操作', () => {
     beforeEach(() => {
       engine.resetToCleanState();
-    });
-
-    it('优惠券登记与购券 (upsertVoucher + buyVoucher)', () => {
-      // 1. 免费领券登记
-      const free = engine.upsertVoucher({
-        title: '满50减5元优惠券',
-        voucher_type: 'FREE_COUPON',
-        face_value: '5.00',
-        acquire_cost: '0.00',
-        min_spend: '50.00',
-      });
-      expect(free.voucher.title).toBe('满50减5元优惠券');
-      expect(engine.state.vouchers.length).toBe(1);
-
-      // 2. 有偿购券入库（生成 VOUCHER_BUY 购买成本流水）
-      const buyRes = engine.buyVoucher({
-        title: '微信支付10元立减金',
-        voucher_type: 'PREPAID_COUPON',
-        face_value: '10.00',
-        acquire_cost: '5.99',
-        min_spend: '10.01',
-      });
-
-      expect(buyRes.voucher.face_value).toBe('10.00');
-      expect(buyRes.tx.header.tx_type).toBe('VOUCHER_BUY');
-      expect(buyRes.tx.header.total_net).toBe('5.99');
-      expect(engine.state.vouchers.length).toBe(2);
     });
 
     it('周期性规则执行记账 (upsertRecurringRule + executeRecurringRule)', () => {

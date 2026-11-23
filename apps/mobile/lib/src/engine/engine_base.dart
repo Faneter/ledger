@@ -38,7 +38,6 @@ abstract class _LedgerEngineBase {
   List<Map<String, dynamic>> categories = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> projectTags = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> transactions = <Map<String, dynamic>>[];
-  List<Map<String, dynamic>> vouchers = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> recurringRules = <Map<String, dynamic>>[];
   Map<String, String> settings = <String, String>{};
   List<Map<String, dynamic>> syncOplog = <Map<String, dynamic>>[];
@@ -56,7 +55,6 @@ abstract class _LedgerEngineBase {
 
   int _txSeq = 0;
   int _itemSeq = 0;
-  int _voucherSeq = 0;
   int _monthlyBudgetSeq = 0;
   int _recurringSeq = 0;
 
@@ -101,7 +99,6 @@ abstract class _LedgerEngineBase {
     monthlyBudgets = _cloneListOfMaps(_seedMonthlyBudgets202611);
     categories = _cloneListOfMaps(_seedCategories);
     projectTags = _cloneListOfMaps(_seedProjectTags);
-    vouchers = _cloneListOfMaps(_seedVouchers);
     recurringRules = _cloneListOfMaps(_seedRecurringRules);
     transactions = <Map<String, dynamic>>[];
     syncOplog = <Map<String, dynamic>>[];
@@ -120,7 +117,6 @@ abstract class _LedgerEngineBase {
     };
     _txSeq = 0;
     _itemSeq = 0;
-    _voucherSeq = 2;
     _monthlyBudgetSeq = 4;
     _recurringSeq = 2;
     saveToDisk();
@@ -135,7 +131,6 @@ abstract class _LedgerEngineBase {
     monthlyBudgets = <Map<String, dynamic>>[];
     categories = <Map<String, dynamic>>[];
     projectTags = <Map<String, dynamic>>[];
-    vouchers = <Map<String, dynamic>>[];
     recurringRules = <Map<String, dynamic>>[];
     transactions = <Map<String, dynamic>>[];
     syncOplog = <Map<String, dynamic>>[];
@@ -160,7 +155,6 @@ abstract class _LedgerEngineBase {
     };
     _txSeq = 0;
     _itemSeq = 0;
-    _voucherSeq = 0;
     _monthlyBudgetSeq = 0;
     _recurringSeq = 0;
     saveToDisk();

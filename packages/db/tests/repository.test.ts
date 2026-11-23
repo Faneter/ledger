@@ -67,59 +67,23 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
   });
 
   // --------------------------------------------------------------------------
-  // 测试 2：有偿立减金购券入库与食堂消费核销闭环
+  // 测试 2：DSL 满减折扣分摊与预算池实扣守恒闭环
   // --------------------------------------------------------------------------
-  describe('2. Prepaid Voucher Buying and Canteen Redemption Closed-Loop', () => {
-    it('should accurately carry over acquire cost (5.99) with cash (5.00) totaling 10.99 net spent, while crediting 4.01 savings', () => {
-      const repo = new LedgerRepository(':memory:', 'node-voucher-test');
+  describe('2. DSL Discount Allocation and Budget Pool Deduction Closed-Loop', () => {
+    it('should accurately record discounted DSL expense and credit savings to pool dashboard', () => {
+      const repo = new LedgerRepository(':memory:', 'node-dsl-test');
 
-      // 1. 花费 5.99 元购买一张面值 10.00 元的微信立减金（门槛 10.01 元）
-      const { voucher, transaction: buyTx } = repo.buyVoucher({
-        title: '微信支付10元立减金',
-        voucherType: 'PREPAID_COUPON',
-        faceValue: '10.00',
-        acquireCost: '5.99',
-        minSpend: '10.01',
-        txDate: '2026-11-05',
-      });
+      const canteenTx = repo.recordFromDsl('食堂 15 #饮食 = 10.99', '2026-11-06');
 
-      expect(voucher.status).toBe('AVAILABLE');
-      expect(voucher.face_value).toBe('10.00');
-      expect(voucher.acquire_cost).toBe('5.99');
-      expect(buyTx.header.tx_type).toBe('VOUCHER_BUY');
-      expect(buyTx.header.total_net).toBe('5.99');
-
-      // 验证购券不占用月度餐饮预算池
-      const budgetAfterBuy = repo.getMonthlyBudgetStatus('2026-11');
-      const dailyAfterBuy = budgetAfterBuy.pools.find(
-        (p) => p.pool_id === 'POOL_DAILY'
-      )!;
-      expect(dailyAfterBuy.spent_net).toBe('0.00');
-
-      // 2. 在食堂消费原价 15.00 元，现场勾选核销该 10 元立减金（现场微信实付 5.00 元）
-      const canteenTx = repo.recordFromDsl(
-        '食堂 15 #饮食',
-        '2026-11-06',
-        voucher.id
-      );
-
-      // 验证订单三元组守恒与结转：
-      // total_gross = 15.00
-      // 现场付 5.00 + 购券成本 5.99 = 预算实耗净额 total_net = 10.99
-      // 薅羊毛净省 total_discount = 15.00 - 10.99 = 4.01 (即 10.00 - 5.99)
       expect(canteenTx.header.total_gross).toBe('15.00');
       expect(canteenTx.header.payment_discount).toBe('4.01');
       expect(canteenTx.header.total_net).toBe('10.99');
-      expect(canteenTx.header.applied_voucher_id).toBe(voucher.id);
 
-      // 验证子明细行严格守恒：
       expect(canteenTx.items.length).toBe(1);
       expect(canteenTx.items[0].item_gross).toBe('15.00');
       expect(canteenTx.items[0].allocated_discount).toBe('4.01');
       expect(canteenTx.items[0].item_net).toBe('10.99');
 
-      // 验证预算池与薅羊毛省钱榜：
-      // 餐饮高频池 spent_net = 10.99, total_saved_discount = 4.01
       const budgetAfterSpend = repo.getMonthlyBudgetStatus('2026-11');
       const dailyAfterSpend = budgetAfterSpend.pools.find(
         (p) => p.pool_id === 'POOL_DAILY'
@@ -127,13 +91,6 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
       expect(dailyAfterSpend.spent_gross).toBe('15.00');
       expect(dailyAfterSpend.spent_net).toBe('10.99');
       expect(dailyAfterSpend.total_saved_discount).toBe('4.01');
-
-      // 验证卡券状态变为 USED
-      const vInDb = repo.db
-        .prepare('SELECT * FROM vouchers WHERE id = ?')
-        .get(voucher.id) as any;
-      expect(vInDb.status).toBe('USED');
-      expect(vInDb.used_tx_id).toBe(canteenTx.header.id);
     });
   });
 
@@ -536,17 +493,23 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
             ('TAG_JLPT_N2', 'JLPT N2', 'PROJECT', 'POOL_FUND', 600.00);
           INSERT INTO vouchers (id, title, voucher_type, face_value, acquire_cost, min_spend, status) VALUES
             (1, '旧还款券', 'REPAY_COUPON', 5.00, 0.00, 50.00, 'AVAILABLE');
-          INSERT INTO transaction_headers (id, tx_date, tx_type, account_id, total_gross, total_net, merchant_or_note) VALUES
-            ('tx_legacy_expense', '2026-11-10', 'EXPENSE', 'ACC_UNION_MAIN', 30.00, 30.00, '历史午餐'),
-            ('tx_legacy_transfer', '2026-11-10', 'TRANSFER', 'ACC_UNION_MAIN', 100.00, 100.00, '历史还款');
+          INSERT INTO transaction_headers (id, tx_date, tx_type, account_id, total_gross, total_net, applied_voucher_id, merchant_or_note) VALUES
+            ('tx_legacy_expense', '2026-11-10', 'EXPENSE', 'ACC_UNION_MAIN', 30.00, 30.00, 1, '历史午餐'),
+            ('tx_legacy_transfer', '2026-11-10', 'TRANSFER', 'ACC_UNION_MAIN', 100.00, 100.00, NULL, '历史还款'),
+            ('tx_legacy_vbuy', '2026-11-10', 'VOUCHER_BUY', 'ACC_UNION_MAIN', 5.99, 5.99, NULL, '历史购券'),
+            ('tx_legacy_vexp', '2026-11-10', 'VOUCHER_EXPIRE', 'ACC_UNION_MAIN', 0.00, 0.00, NULL, '历史过期');
           INSERT INTO transaction_items (header_id, item_name, category_id, budget_pool_id, item_gross, allocated_discount, item_net, is_primary_item) VALUES
-            ('tx_legacy_expense', '午餐', 'CAT_FOOD', 'POOL_DAILY', 30.00, 0.00, 30.00, 1);
+            ('tx_legacy_expense', '午餐', 'CAT_FOOD', 'POOL_DAILY', 30.00, 0.00, 30.00, 1),
+            ('tx_legacy_vbuy', '购券明细', 'CAT_FOOD', 'POOL_DAILY', 5.99, 0.00, 5.99, 1);
           INSERT INTO recurring_rules (id, title, rule_type, cron_cycle, trigger_day, amount, account_id, budget_pool_id) VALUES
             (1, '房租', 'FIXED_EXPENSE', 'MONTHLY', 1, 500.00, 'ACC_UNION_MAIN', 'POOL_FIXED'),
             (2, '定投基金', 'AUTO_INVEST', 'MONTHLY', 10, 300.00, 'ACC_UNION_MAIN', 'POOL_FUND');
           INSERT INTO sync_oplog (hlc, node_id, entity_type, entity_id, op_type, payload_json) VALUES
             ('000000000001000-0000-n1', 'n1', 'ACCOUNT', 'ACC_UNION_MAIN', 'UPSERT', '{}'),
-            ('000000000001001-0000-n1', 'n1', 'TRANSACTION', 'tx_legacy_expense', 'UPSERT', '{}');
+            ('000000000001001-0000-n1', 'n1', 'VOUCHER', '1', 'UPSERT', '{}'),
+            ('000000000001002-0000-n1', 'n1', 'TRANSACTION', 'tx_legacy_expense', 'UPSERT', '{}');
+          INSERT INTO sync_conflicts (id, conflict_type, entity_id, winner_hlc, loser_hlc, winner_summary, loser_summary, loser_payload_json) VALUES
+            ('cf_v_1', 'VOUCHER_DOUBLE_SPEND', '1', '0001', '0002', 'w', 'l', '{}');
           INSERT INTO sync_meta (key, value) VALUES
             ('server_epoch_id', 'epoch_legacy_preserved_999');
         `);
@@ -555,7 +518,7 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
         const repo = new LedgerRepository(tmpDbPath, 'migration-test-node');
         try {
           const tables = repo.db
-            .prepare("SELECT name, type FROM sqlite_master WHERE name IN ('accounts', 'v_account_dashboard', 'fixed_assets')")
+            .prepare("SELECT name, type FROM sqlite_master WHERE name IN ('accounts', 'v_account_dashboard', 'fixed_assets', 'vouchers')")
             .all();
           expect(tables).toHaveLength(0);
 
@@ -564,6 +527,7 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
           );
           expect(txCols).not.toContain('account_id');
           expect(txCols).not.toContain('target_account_id');
+          expect(txCols).not.toContain('applied_voucher_id');
 
           const ruleCols = (repo.db.prepare('PRAGMA table_info(recurring_rules)').all() as Array<{ name: string }>).map(
             (c) => c.name
@@ -579,11 +543,8 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
           expect(txs[0].id).toBe('tx_legacy_expense');
           expect(txs[0].merchant_or_note).toBe('历史午餐');
 
-          const vouchers = repo.db.prepare('SELECT id, voucher_type FROM vouchers WHERE id = 1').get() as {
-            id: number;
-            voucher_type: string;
-          };
-          expect(vouchers.voucher_type).toBe('FREE_COUPON');
+          const txItems = repo.db.prepare('SELECT header_id FROM transaction_items').all() as Array<{ header_id: string }>;
+          expect(txItems).toEqual([{ header_id: 'tx_legacy_expense' }]);
 
           const rules = repo.db.prepare('SELECT id, rule_type FROM recurring_rules').all() as Array<{
             id: number;
@@ -616,8 +577,13 @@ describe('Stage 4: @ledger/db SQLite Layer & LedgerRepository Integration Tests'
             entity_type: string;
             entity_id: string;
           }>;
-          expect(oplogs.some((o) => o.entity_type === 'ACCOUNT')).toBe(false);
+          expect(oplogs.some((o) => o.entity_type === 'ACCOUNT' || o.entity_type === 'VOUCHER')).toBe(false);
           expect(oplogs.some((o) => o.entity_id === 'tx_legacy_expense')).toBe(true);
+
+          const conflictsAfter = repo.db
+            .prepare("SELECT id FROM sync_conflicts WHERE conflict_type = 'VOUCHER_DOUBLE_SPEND'")
+            .all();
+          expect(conflictsAfter).toHaveLength(0);
 
           const epoch = repo.db
             .prepare("SELECT value FROM sync_meta WHERE key = 'server_epoch_id'")

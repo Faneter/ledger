@@ -6,17 +6,13 @@ import {
   roundRate,
   sumCny,
   equalsCny,
-  generateVoucherTitle,
   evaluateMathFormula,
   parseQuickInputDsl,
   allocateSplitDiscounts,
-  applyVoucherToOrder,
-  computeOrderAllocation,
   processMastercardFxLifecycle,
   mergeOpLogEntries,
   toDecimal,
   type AllocationMode,
-  type VoucherType,
 } from '../src/index.js';
 import { LedgerRepository } from '../../db/src/ledger-repository.js';
 import { LocalLedgerEngine } from '../../../apps/client/src/sync/local-replica.js';
@@ -96,14 +92,6 @@ describe('Golden Unification: Rust WASM (@ledger/core) + Server (LedgerRepositor
         expect(sumCny(c.input).toFixed(2)).toBe(c.expected);
       } else if (c.fn === 'equalsCny') {
         expect(equalsCny(c.input[0], c.input[1])).toBe(c.expected);
-      } else if (c.fn === 'generateVoucherTitle') {
-        expect(
-          generateVoucherTitle(
-            c.input.voucherType,
-            c.input.faceValue,
-            c.input.minSpend
-          )
-        ).toBe(c.expected);
       }
     }
 
@@ -142,27 +130,6 @@ describe('Golden Unification: Rust WASM (@ledger/core) + Server (LedgerRepositor
       c.expected.forEach((ei: any, idx: number) => {
         expect(got[idx]).toMatchObject(ei);
       });
-    }
-
-    for (const c of suites.voucher_cost_carryover) {
-      if (c.fn === 'applyVoucherToOrder') {
-        expect(
-          applyVoucherToOrder(
-            c.input.orderGross,
-            c.input.cashActuallyPaidAfterVoucher,
-            c.input.voucher
-          )
-        ).toEqual(c.expected);
-      } else {
-        expect(
-          computeOrderAllocation(
-            c.input.items,
-            c.input.cashActuallyPaid,
-            c.input.mode,
-            c.input.voucher
-          )
-        ).toEqual(c.expected);
-      }
     }
 
     for (const c of suites.mastercard_fx_lifecycle) {
@@ -263,78 +230,6 @@ describe('Golden Unification: Rust WASM (@ledger/core) + Server (LedgerRepositor
     const web = new LocalLedgerEngine('web-b');
     web.resetToSeed();
     runB(web);
-  });
-
-  it('Scenario C: voucher buy, redeem, and delete rollback matches on Server & Web', () => {
-    const sc = getScenario('scenario_c_voucher_buy_redeem_and_delete_rollback');
-
-    const runC = (engine: LedgerRepository | LocalLedgerEngine) => {
-      const s1p = sc.actions[0].params;
-      const buyRes = engine.buyVoucher({
-        voucherType: s1p.voucherType as VoucherType,
-        faceValue: s1p.faceValue,
-        acquireCost: s1p.acquireCost,
-        minSpend: s1p.minSpend,
-        txDate: s1p.txDate,
-      });
-      const buyTx = (buyRes as any).transaction ?? (buyRes as any).tx;
-      const refs: Record<string, string> = { TX_1: buyTx.header.id };
-      assertTxHeaderAndItems(buyTx, sc.expected.step_1_buy_tx, refs);
-      expect(buyRes.voucher.id).toBe(sc.expected.step_1_created_voucher.id);
-      expect(buyRes.voucher.title).toBe(sc.expected.step_1_created_voucher.title);
-      expect(buyRes.voucher.purchase_tx_id).toBe(refs.TX_1);
-
-      const d1 =
-        engine instanceof LocalLedgerEngine
-          ? engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15')
-          : engine.getMonthlyBudgetStatus('2026-11', '2026-11-15');
-      assertDashboardMatch(d1, sc.expected.step_1_budget_status);
-
-      const tx2 = engine.recordFromDsl(
-        sc.actions[1].rawText,
-        sc.actions[1].txDate,
-        sc.actions[1].appliedVoucherId
-      );
-      refs.TX_2 = tx2.header.id;
-      assertTxHeaderAndItems(tx2, sc.expected.step_2_redeem_single_tx, refs);
-      const d2 =
-        engine instanceof LocalLedgerEngine
-          ? engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15')
-          : engine.getMonthlyBudgetStatus('2026-11', '2026-11-15');
-      assertDashboardMatch(d2, sc.expected.step_2_budget_status);
-
-      const tx3 = engine.recordFromDsl(
-        sc.actions[2].rawText,
-        sc.actions[2].txDate,
-        sc.actions[2].appliedVoucherId
-      );
-      refs.TX_3 = tx3.header.id;
-      assertTxHeaderAndItems(tx3, sc.expected.step_3_redeem_split_tx, refs);
-      const d3 =
-        engine instanceof LocalLedgerEngine
-          ? engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15')
-          : engine.getMonthlyBudgetStatus('2026-11', '2026-11-15');
-      assertDashboardMatch(d3, sc.expected.step_3_budget_status);
-
-      engine.deleteTransaction(refs.TX_3);
-      const d4 =
-        engine instanceof LocalLedgerEngine
-          ? engine.getMonthlyBudgetDashboard('2026-11', '2026-11-15')
-          : engine.getMonthlyBudgetStatus('2026-11', '2026-11-15');
-      assertDashboardMatch(d4, sc.expected.step_4_budget_status);
-
-      const v3 =
-        engine instanceof LocalLedgerEngine
-          ? engine.state.vouchers.find((v) => v.id === 3)!
-          : engine.getVouchers().find((v) => v.id === 3)!;
-      expect(v3.status).toBe(sc.expected.step_4_voucher_3_restored.status);
-      expect(v3.used_tx_id).toBeNull();
-    };
-
-    runC(new LedgerRepository(':memory:', 'server-c'));
-    const web = new LocalLedgerEngine('web-c');
-    web.resetToSeed();
-    runC(web);
   });
 
   it('Scenario D: Mastercard FX pre-auth & settlement (1% vs 0% cashback) matches on Server & Web', () => {

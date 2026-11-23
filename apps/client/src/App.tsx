@@ -41,7 +41,7 @@ import {
 import SpaceDashboardRounded from '@mui/icons-material/SpaceDashboardRounded';
 import ReceiptLongRounded from '@mui/icons-material/ReceiptLongRounded';
 import SavingsRounded from '@mui/icons-material/SavingsRounded';
-import ConfirmationNumberRounded from '@mui/icons-material/ConfirmationNumberRounded';
+import EventRepeatRounded from '@mui/icons-material/EventRepeatRounded';
 import TuneRounded from '@mui/icons-material/TuneRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
 import LightModeRounded from '@mui/icons-material/LightModeRounded';
@@ -304,7 +304,7 @@ export const App: React.FC = () => {
   const handleResetToClean = () => {
     if (
       window.confirm(
-        '确定要恢复为【纯净初始账本】吗？\n将重置为 0 优惠券、0 交易流水，仅保留标准的 4 大月度预算池与常用收支分类体系。'
+        '确定要恢复为【纯净初始账本】吗？\n将重置为 0 交易流水，仅保留标准的 4 大月度预算池与常用收支分类体系。'
       )
     ) {
       engine.resetToCleanState();
@@ -315,7 +315,7 @@ export const App: React.FC = () => {
   const handleLoadDemo = () => {
     if (
       window.confirm(
-        '确定要载入【PRD 演示测试数据】吗？\n将加载标准示例预算池、专项预算、测试优惠券与周期扣款规则，方便体验完整功能闭环。'
+        '确定要载入【PRD 演示测试数据】吗？\n将加载标准示例预算池、专项预算与周期扣款规则，方便体验完整功能闭环。'
       )
     ) {
       engine.loadDemoData();
@@ -365,7 +365,6 @@ export const App: React.FC = () => {
         typeof parsed === 'object' &&
         (Array.isArray(parsed.transactions) ||
           Array.isArray(parsed.budgetPools) ||
-          Array.isArray(parsed.vouchers) ||
           Array.isArray(parsed.monthlyBudgets));
 
       if (!hasCoreArray) {
@@ -389,7 +388,7 @@ export const App: React.FC = () => {
       setBackupToast({
         open: true,
         severity: 'success',
-        message: `备份导入成功：已恢复 ${summary.transactionsCount} 笔流水、${summary.poolsCount} 个预算池、${summary.vouchersCount} 张优惠券。`,
+        message: `备份导入成功：已恢复 ${summary.transactionsCount} 笔流水、${summary.poolsCount} 个预算池。`,
       });
       if (!engine.state.isOfflineMode) {
         void runSync(false);
@@ -410,7 +409,7 @@ export const App: React.FC = () => {
     { key: 'overview', label: '概览', icon: <SpaceDashboardRounded /> },
     { key: 'transactions', label: '账单', icon: <ReceiptLongRounded /> },
     { key: 'budgets', label: '预算与专项', icon: <SavingsRounded /> },
-    { key: 'accounts', label: '卡包与周期', icon: <ConfirmationNumberRounded /> },
+    { key: 'accounts', label: '周期扣款', icon: <EventRepeatRounded /> },
     { key: 'settings', label: '设置与同步', icon: <TuneRounded /> },
   ];
 
@@ -701,7 +700,7 @@ export const App: React.FC = () => {
               <BudgetPoolsDashboard engine={engine} />
             )}
 
-            {/* Tab 4: 账户与卡包 */}
+            {/* Tab 4: 周期性扣款 */}
             {currentTab === 'accounts' && (
               <AccountMatrixPanel engine={engine} />
             )}
@@ -886,7 +885,7 @@ export const App: React.FC = () => {
                             数据备份与恢复
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            将当前预算池、专项预算、优惠券、周期扣款与账单流水导出为 JSON 备份，或从备份文件完整恢复
+                            将当前预算池、专项预算、周期扣款与账单流水导出为 JSON 备份，或从备份文件完整恢复
                           </Typography>
                         </Box>
                         <Stack direction="row" spacing={1.5} sx={{ flexShrink: 0, flexWrap: 'wrap' }}>
@@ -933,7 +932,7 @@ export const App: React.FC = () => {
                                   恢复为纯净初始账本 (推荐新用户)
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, mb: 2 }}>
-                                  0 优惠券、0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，从零开始建立个人账本。
+                                  0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，从零开始建立个人账本。
                                 </Typography>
                               </Box>
                               <Button
@@ -955,7 +954,7 @@ export const App: React.FC = () => {
                                   加载 PRD 演示测试数据 (体验样例)
                                 </Typography>
                                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, mb: 2 }}>
-                                  载入 PRD 标杆测试样例，包含 4 大预算池、专项预算、测试优惠券、校园网与外币订阅周期扣款规则，快速体验闭环。
+                                  载入 PRD 标杆测试样例，包含 4 大预算池、专项预算、校园网与外币订阅周期扣款规则，快速体验闭环。
                                 </Typography>
                               </Box>
                               <Button
@@ -1116,7 +1115,7 @@ export const App: React.FC = () => {
                 🧹 恢复为纯净初始账本
               </Typography>
               <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', my: 1 }}>
-                重置为 0 资产负债、0 优惠券、0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，推荐新用户。
+                重置为 0 交易流水，仅保留标准的 4 大月度常规预算池与收支分类体系，推荐新用户。
               </Typography>
               <Button
                 variant="contained"
@@ -1135,7 +1134,7 @@ export const App: React.FC = () => {
                 🚀 加载 PRD 演示测试数据
               </Typography>
               <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', my: 1 }}>
-                载入完整演示数据，包含花呗/借记卡初始余额、2 张测试优惠券、校园网与定投周期扣款规则，体验系统闭环。
+                载入完整演示数据，包含示例预算池、专项预算、校园网与外币订阅周期扣款规则，体验系统闭环。
               </Typography>
               <Button
                 variant="outlined"

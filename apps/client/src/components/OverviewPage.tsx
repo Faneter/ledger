@@ -111,11 +111,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       .slice(0, 5);
   }, [engine.stateVersion]);
 
-  // 可用立减金数量
-  const availableVoucherCount = useMemo(() => {
-    return engine.state.vouchers.filter((v) => v.status === 'AVAILABLE').length;
-  }, [engine.stateVersion]);
-
   // 处理万事达预授权清算
   const handleSettleFx = (tx: TransactionAggregate) => {
     const txId = tx.header.id;
@@ -367,15 +362,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 </Box>
               </Stack>
 
-              {/* 待办与卡包胶囊 */}
+              {/* 待办提示胶囊 */}
               <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap', gap: 1 }}>
-                <Chip
-                  size="small"
-                  label={`🎟️ 卡包立减金: ${availableVoucherCount} 张可用`}
-                  color={availableVoucherCount > 0 ? 'success' : 'default'}
-                  variant="outlined"
-                  sx={{ fontSize: '0.75rem' }}
-                />
                 <Chip
                   size="small"
                   label={`⏳ 外币待清算: ${pendingFxTxs.length} 笔`}
@@ -564,8 +552,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 const h = tx.header;
                 const isExpense = h.tx_type === 'EXPENSE';
                 const isIncome = h.tx_type === 'INCOME';
-                const isVoucherBuy = h.tx_type === 'VOUCHER_BUY';
-                const isExpenseLike = isExpense || isVoucherBuy;
 
                 return (
                   <React.Fragment key={h.id}>
@@ -589,7 +575,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            bgcolor: isExpenseLike
+                            bgcolor: isExpense
                               ? (t) =>
                                   t.palette.mode === 'light'
                                     ? '#ffebe9'
@@ -603,14 +589,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                                   t.palette.mode === 'light'
                                     ? '#e0f7fa'
                                     : '#00363d',
-                            color: isExpenseLike
+                            color: isExpense
                               ? 'error.main'
                               : isIncome
                               ? 'success.main'
                               : 'secondary.main',
                           }}
                         >
-                          {isExpenseLike ? (
+                          {isExpense ? (
                             <TrendingDownRounded fontSize="small" />
                           ) : isIncome ? (
                             <TrendingUpRounded fontSize="small" />
@@ -626,7 +612,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                             <Typography variant="body2" sx={{ fontWeight: 700 }}>
                               {h.merchant_or_note || h.raw_input_text}
                             </Typography>
-                            {isExpenseLike && (
+                            {isExpense && (
                               tx.items[0]?.project_tag_id ? (
                                 <Chip
                                   size="small"
@@ -648,22 +634,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                                   variant="outlined"
                                   sx={{ height: 20, fontSize: '0.7rem' }}
                                 />
-                              ) : isVoucherBuy ? (
-                                <Chip
-                                  size="small"
-                                  label="购券支出"
-                                  color="primary"
-                                  sx={{ height: 20, fontSize: '0.7rem' }}
-                                />
                               ) : null
-                            )}
-                            {h.applied_voucher_id != null && (
-                              <Chip
-                                size="small"
-                                label="🎟️ 券"
-                                color="success"
-                                sx={{ height: 20, fontSize: '0.7rem' }}
-                              />
                             )}
                             {h.settlement_status === 'PENDING_HOLD' && (
                               <Chip
@@ -696,14 +667,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                           sx={{
                             fontWeight: 800,
                             fontVariantNumeric: 'tabular-nums',
-                            color: isExpenseLike
+                            color: isExpense
                               ? 'text.primary'
                               : isIncome
                               ? 'success.main'
                               : 'secondary.main',
                           }}
                         >
-                          {isExpenseLike ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
+                          {isExpense ? `-¥${h.total_net}` : isIncome ? `+¥${h.total_net}` : `¥${h.total_net}`}
                         </Typography>
                         {(Number(h.payment_discount) > 0 ||
                           Number(h.platform_discount) > 0) && (

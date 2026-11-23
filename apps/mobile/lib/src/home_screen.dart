@@ -7,7 +7,7 @@ import 'quick_record_sheet.dart';
 import 'settings_page.dart';
 import 'timeline_tab.dart';
 import 'ui_helpers.dart';
-import 'wallet_engine_tab.dart';
+import 'recurring_rules_tab.dart';
 import 'widgets/month_picker_dialog.dart';
 
 class LedgerHomeScreen extends StatefulWidget {
@@ -227,7 +227,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
             onPullSync: _pullSync,
             onEngineChanged: _refresh,
           ),
-          WalletAndEngineTab(
+          RecurringRulesTab(
             engine: engine,
             onPullSync: _pullSync,
             onEngineChanged: _refresh,
@@ -319,9 +319,9 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
             label: '流水与专项',
           ),
           NavigationDestination(
-            icon: Icon(Icons.account_balance_wallet_outlined),
-            selectedIcon: Icon(Icons.account_balance_wallet),
-            label: '卡包与周期',
+            icon: Icon(Icons.event_repeat_outlined),
+            selectedIcon: Icon(Icons.event_repeat),
+            label: '周期扣款',
           ),
         ],
       ),

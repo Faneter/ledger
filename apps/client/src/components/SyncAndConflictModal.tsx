@@ -44,7 +44,6 @@ interface SyncAndConflictModalProps {
 function formatConflictEntityLabel(conflictType: string): string {
   const upper = (conflictType || '').toUpperCase();
   if (upper.includes('TRANSACTION')) return '流水记录';
-  if (upper.includes('VOUCHER')) return '优惠券';
   if (upper.includes('MONTHLY_BUDGET') || upper === 'BUDGET') return '月度预算';
   if (upper.includes('BUDGET_POOL')) return '预算资金池';
   if (upper.includes('PROJECT_TAG')) return '专项预算';

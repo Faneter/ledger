@@ -200,18 +200,6 @@ class RustCoreBridge {
         'b': b.toString(),
       }) as bool;
 
-  String generateVoucherTitle({
-    required String voucherType,
-    required Object faceValue,
-    Object minSpend = '0.00',
-  }) =>
-      invokeRaw(<String, dynamic>{
-        'op': 'generate_voucher_title',
-        'voucherType': voucherType,
-        'faceValue': faceValue.toString(),
-        'minSpend': minSpend.toString(),
-      }) as String;
-
   // --------------------------------------------------------------------------
   // DSL Parser & Math Evaluator
   // --------------------------------------------------------------------------
@@ -243,7 +231,7 @@ class RustCoreBridge {
   }
 
   // --------------------------------------------------------------------------
-  // Allocation & Voucher Carryover Operations
+  // Allocation Operations
   // --------------------------------------------------------------------------
 
   List<Map<String, dynamic>> allocateSplitDiscounts({
@@ -261,23 +249,10 @@ class RustCoreBridge {
           'manualNets': manualNets.map((v) => v.toString()).toList(),
       });
 
-  Map<String, dynamic> applyVoucherToOrder({
-    required Object orderGross,
-    required Object cashActuallyPaidAfterVoucher,
-    required Map<String, dynamic> voucher,
-  }) =>
-      _invokeMap(<String, dynamic>{
-        'op': 'apply_voucher_to_order',
-        'orderGross': orderGross.toString(),
-        'cashActuallyPaidAfterVoucher': cashActuallyPaidAfterVoucher.toString(),
-        'voucher': voucher,
-      });
-
   Map<String, dynamic> computeOrderAllocation({
     required List<Map<String, dynamic>> items,
     required Object cashActuallyPaid,
     String mode = 'PROPORTIONAL',
-    Map<String, dynamic>? voucher,
     List<Object>? manualNets,
   }) =>
       _invokeMap(<String, dynamic>{
@@ -285,7 +260,6 @@ class RustCoreBridge {
         'items': items,
         'cashActuallyPaid': cashActuallyPaid.toString(),
         'mode': mode,
-        if (voucher != null) 'voucher': voucher,
         if (manualNets != null)
           'manualNets': manualNets.map((v) => v.toString()).toList(),
       });

@@ -244,7 +244,7 @@ class _SettingsPageState extends State<SettingsPage> {
       widget.onAppearanceChanged();
       setState(() {
         _syncFeedback =
-            '已导入「${picked.name}」：${summary['transactionsCount']} 笔流水、${summary['poolsCount']} 个预算池、${summary['vouchersCount']} 张卡券';
+            '已导入「${picked.name}」：${summary['transactionsCount']} 笔流水、${summary['poolsCount']} 个预算池';
         _syncFeedbackIsError = false;
       });
     } on MissingPluginException {
@@ -360,7 +360,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       engine.resetToCleanState(preserveAppearance: true);
                       widget.onEngineChanged();
                       setState(() {
-                        _syncFeedback = '已清空本地数据（0 预算池 / 0 流水 / 0 卡券）';
+                        _syncFeedback = '已清空本地数据（0 预算池 / 0 流水）';
                         _syncFeedbackIsError = false;
                       });
                     },

@@ -11,7 +11,6 @@ part 'engine/engine_seed.dart';
 part 'engine/engine_base.dart';
 part 'engine/engine_dsl_transactions.dart';
 part 'engine/engine_tx_mutations.dart';
-part 'engine/engine_vouchers.dart';
 part 'engine/engine_budgets.dart';
 part 'engine/engine_rules_projects.dart';
 part 'engine/engine_persistence.dart';
@@ -53,7 +52,6 @@ class FlutterLedgerEngine extends _LedgerEngineBase
         _LedgerEngineBudgetsMixin,
         _LedgerEngineDslTransactionsMixin,
         _LedgerEngineTxMutationsMixin,
-        _LedgerEngineVouchersMixin,
         _LedgerEngineRulesProjectsMixin {
   FlutterLedgerEngine({
     super.bridge,

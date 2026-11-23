@@ -35,7 +35,6 @@ void main() {
     expect(engine.monthlyBudgets, isEmpty);
     expect(engine.categories, isEmpty);
     expect(engine.projectTags, isEmpty);
-    expect(engine.vouchers, isEmpty);
     expect(engine.recurringRules, isEmpty);
     expect(engine.transactions, isEmpty);
 
@@ -56,7 +55,8 @@ void main() {
     // 3-Tab NavigationBar + FAB (no '引擎' wording in 3rd tab)
     expect(find.text('今日看板'), findsOneWidget);
     expect(find.text('流水与专项'), findsOneWidget);
-    expect(find.text('卡包与周期'), findsOneWidget);
+    expect(find.text('周期扣款'), findsOneWidget);
+    expect(find.text('卡包与周期'), findsNothing);
     expect(find.text('卡包与引擎'), findsNothing);
     expect(find.byTooltip('设置'), findsOneWidget);
     expect(find.text('记一笔'), findsOneWidget);
@@ -84,7 +84,7 @@ void main() {
   });
 
   testWidgets(
-      'Half-screen Geek Formula BottomSheet supports live split preview, primary item toggle and voucher mounting',
+      'Half-screen Geek Formula BottomSheet supports live split preview and primary item toggle',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
     final engine = FlutterLedgerEngine(seedDemoData: true);
@@ -103,16 +103,10 @@ void main() {
           matching: find.byType(TextField),
         )
         .first;
-    await tester.enterText(sheetField, '牛奶 28 + 晾衣架 12 + 排针 15');
+    await tester.enterText(sheetField, '牛奶 28 + 晾衣架 12 + 排针 15 = 50');
     await tester.pumpAndSettle();
 
     expect(find.text('实时拆单沙盒'), findsOneWidget);
-    final voucherChip = find.text('🎟️ 可用：微信支付10元立减金 (净省 ¥4.01)');
-    expect(voucherChip, findsOneWidget);
-
-    await tester.ensureVisible(voucherChip);
-    await tester.tap(voucherChip);
-    await tester.pumpAndSettle();
 
     final pinTarget = find.descendant(
       of: find.byType(BottomSheet),
@@ -123,7 +117,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('★ 主商品'), findsOneWidget);
 
-    final confirmBtn = find.text('确认入账 · ¥50.99');
+    final confirmBtn = find.text('确认入账 · ¥50.00');
     await tester.ensureVisible(confirmBtn);
     await tester.tap(confirmBtn);
     await tester.pumpAndSettle();
@@ -131,10 +125,10 @@ void main() {
     expect(engine.transactions.length, 1);
     final h = engine.transactions.first['header'] as Map<String, dynamic>;
     expect(h['total_gross'], '55.00');
-    expect(h['total_net'], '50.99');
-    expect(h['applied_voucher_id'], 1);
-    expect(find.text('本月已省 ¥4.01'), findsOneWidget);
-    expect(find.text('已省 ¥4.01'), findsOneWidget);
+    expect(h['total_net'], '50.00');
+    expect(h.containsKey('applied_voucher_id'), isFalse);
+    expect(find.text('本月已省 ¥5.00'), findsOneWidget);
+    expect(find.text('已省 ¥5.00'), findsOneWidget);
   });
 
   testWidgets(
@@ -327,7 +321,7 @@ void main() {
   });
 
   testWidgets(
-      'Wallet & Engine tab handles empty state, adding recurring rule without pools, and honest unreachable HTTP sync error',
+      'Recurring Rules tab handles empty state, adding recurring rule without pools, and honest unreachable HTTP sync error',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
 
@@ -338,11 +332,10 @@ void main() {
     await tester.pumpWidget(GeekLedgerApp(engine: offlineEngine));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('卡包与周期'));
+    await tester.tap(find.text('周期扣款'));
     await tester.pumpAndSettle();
 
-    // Empty state cards render cleanly & Fixed Assets / FX / Manual Rollover / Engine status are all gone
-    expect(find.textContaining('暂无符合条件的卡券'), findsOneWidget);
+    // Empty state cards render cleanly & Voucher / Fixed Assets / FX / Manual Rollover / Engine status are all gone
     expect(find.textContaining('暂无周期性扣款规则'), findsOneWidget);
     expect(find.textContaining('固定资产'), findsNothing);
     expect(find.text('添置资产'), findsNothing);
@@ -485,7 +478,7 @@ void main() {
     addTearDown(() => tmpDir.deleteSync(recursive: true));
     final statePath = '${tmpDir.path}/geek_ledger_state.json';
 
-    // Session 1: Create budget pool, monthly allocation, project tag, voucher, rule, and tx
+    // Session 1: Create budget pool, monthly allocation, project tag, rule, and tx
     final engine1 = FlutterLedgerEngine(storageFilePath: statePath);
     engine1.upsertBudgetPool(
       id: 'POOL_CUSTOM',
@@ -629,6 +622,7 @@ void main() {
             'settlement_status': 'SETTLED',
             'hold_amount_cny': 0,
             'merchant_or_note': 'Web同步晚餐',
+            'applied_voucher_id': 1,
             'is_deleted': 0,
           },
           'items': <Map<String, dynamic>>[
@@ -646,12 +640,34 @@ void main() {
             },
           ],
         },
+        <String, dynamic>{
+          'header': <String, dynamic>{
+            'id': 'tx_web_vbuy',
+            'tx_date': '2026-11-16',
+            'tx_type': 'VOUCHER_BUY',
+            'total_gross': 5.5,
+            'platform_discount': 0,
+            'payment_discount': 0,
+            'total_net': 5.5,
+            'merchant_or_note': '旧版购券支出',
+            'is_deleted': 0,
+          },
+          'items': <dynamic>[],
+        },
       ],
       'oplogs': <Map<String, dynamic>>[
         <String, dynamic>{
           'hlc': '00000001763251200000-0001-web-browser-1',
           'node_id': 'web-browser-1',
           'entity_type': 'FIXED_ASSET',
+          'entity_id': '1',
+          'op_type': 'UPSERT',
+          'payload_json': <String, dynamic>{'id': 1},
+        },
+        <String, dynamic>{
+          'hlc': '00000001763251200001-0001-web-browser-1',
+          'node_id': 'web-browser-1',
+          'entity_type': 'VOUCHER',
           'entity_id': '1',
           'op_type': 'UPSERT',
           'payload_json': <String, dynamic>{'id': 1},
@@ -706,6 +722,13 @@ void main() {
     expect(find.text('Web 日常餐饮'), findsWidgets);
     expect(engine.budgetPools.any((p) => p['id'] == 'POOL_ASSET'), isFalse);
     expect(engine.projectTags.first.containsKey('linked_pool_id'), isFalse);
+    expect(engine.transactions.length, 1);
+    expect(
+      (engine.transactions.first['header'] as Map<String, dynamic>)
+          .containsKey('applied_voucher_id'),
+      isFalse,
+    );
+    expect(engine.syncOplog.any((op) => op['entity_type'] == 'VOUCHER'), isFalse);
     expect(engine.settings['fx_default_hold_ratio'], '1.030');
 
     await tester.tap(find.text('流水与专项'));
