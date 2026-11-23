@@ -272,3 +272,12 @@ class EngineChangeNotifier extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// Returns combined order discount (`platform_discount + payment_discount`) in integer cents.
+int headerTotalDiscountCents(Map<String, dynamic> header) {
+  final platform =
+      double.tryParse((header['platform_discount'] as String?) ?? '0') ?? 0;
+  final payment =
+      double.tryParse((header['payment_discount'] as String?) ?? '0') ?? 0;
+  return (platform * 100).round() + (payment * 100).round();
+}

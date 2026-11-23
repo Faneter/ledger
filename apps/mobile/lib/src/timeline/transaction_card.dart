@@ -35,8 +35,8 @@ class TransactionCard extends StatelessWidget {
     final items = (tx['items'] as List<dynamic>).cast<Map<String, dynamic>>();
     final isPendingFx = h['settlement_status'] == 'PENDING_HOLD';
     final isIncome = h['tx_type'] == 'INCOME';
-    final hasDiscount =
-        (double.tryParse((h['payment_discount'] as String?) ?? '0') ?? 0) > 0;
+    final totalDiscountCents = headerTotalDiscountCents(h);
+    final hasDiscount = !isIncome && totalDiscountCents > 0;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -105,7 +105,7 @@ class TransactionCard extends StatelessWidget {
                           ),
                           if (hasDiscount)
                             Text(
-                              '省 ¥${h['payment_discount']}',
+                              '省 ¥${(totalDiscountCents / 100).toStringAsFixed(2)}',
                               style: TextStyle(
                                 fontSize: 11,
                                 color: Colors.green.shade700,

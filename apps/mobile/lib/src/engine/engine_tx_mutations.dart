@@ -163,6 +163,9 @@ mixin _LedgerEngineTxMutationsMixin on _LedgerEngineBase {
     }
     if (patch.containsKey('payment_discount') &&
         patch['payment_discount'] != null) {
+      if (!patch.containsKey('platform_discount')) {
+        h['platform_discount'] = '0.00';
+      }
       h['payment_discount'] =
           _bridge.formatCny(patch['payment_discount'] as Object);
     }

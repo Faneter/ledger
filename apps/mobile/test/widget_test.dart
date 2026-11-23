@@ -5,9 +5,11 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:geek_ledger_mobile/main.dart';
+import 'package:geek_ledger_mobile/src/budgets_tab.dart';
 import 'package:geek_ledger_mobile/src/ledger_engine.dart';
 import 'package:geek_ledger_mobile/src/overview/daily_allowance_card.dart';
 import 'package:geek_ledger_mobile/src/overview/pool_water_card.dart';
+import 'package:geek_ledger_mobile/src/overview_tab.dart';
 import 'package:geek_ledger_mobile/src/platform_backup.dart';
 
 Future<void> _setPhoneViewport(WidgetTester tester) async {
@@ -49,20 +51,28 @@ void main() {
     expect(find.text('今日生活日均'), findsOneWidget);
     expect(find.text('全月总剩余'), findsOneWidget);
     expect(find.textContaining('POOL_DAILY'), findsNothing);
-    expect(find.text('暂无月度预算池'), findsOneWidget);
-    expect(find.text('月度预算池水位 (0)'), findsOneWidget);
-    expect(find.text('月度预算池'), findsOneWidget);
-    expect(find.text('专项预算'), findsOneWidget);
 
-    // 2-Tab NavigationBar + FAB
+    // 3-Tab NavigationBar + FAB
     expect(find.text('今日看板'), findsOneWidget);
     expect(find.text('流水与周期'), findsOneWidget);
+    expect(find.text('预算与专项'), findsOneWidget);
     expect(find.text('流水与专项'), findsNothing);
     expect(find.text('周期扣款'), findsNothing);
     expect(find.text('卡包与周期'), findsNothing);
     expect(find.text('卡包与引擎'), findsNothing);
     expect(find.byTooltip('设置'), findsOneWidget);
     expect(find.text('记一笔'), findsOneWidget);
+
+    // Navigate to Budgets & Projects page to verify empty budget pool & segmented tabs
+    await tester.tap(find.text('预算与专项'));
+    await tester.pumpAndSettle();
+    expect(find.text('月度预算池'), findsOneWidget);
+    expect(find.text('专项预算'), findsOneWidget);
+    expect(find.text('暂无月度预算池'), findsOneWidget);
+    expect(find.text('月度预算池水位 (0)'), findsOneWidget);
+
+    await tester.tap(find.text('今日看板'));
+    await tester.pumpAndSettle();
 
     // Quick record works even when budgetPools is completely empty
     await tester.tap(find.text('记一笔'));
@@ -219,7 +229,10 @@ void main() {
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
     expect(find.text('${todayYear + 1}-12'), findsOneWidget);
 
-    // 2. Create a new Monthly Budget Pool via Overview dialog
+    // 2. Navigate to 预算与专项 and create a new Monthly Budget Pool
+    await tester.tap(find.text('预算与专项'));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.text('新增/调配'));
     await tester.pumpAndSettle();
     expect(find.text('新增月度预算池'), findsOneWidget);
@@ -239,7 +252,7 @@ void main() {
       isTrue,
     );
 
-    // 3. Switch to 专项预算 segment on 今日看板 and create a detached Project Budget
+    // 3. Switch to 专项预算 segment on 预算与专项 and create a detached Project Budget
     final projectSeg = find.text('专项预算');
     await tester.ensureVisible(projectSeg);
     await tester.tap(projectSeg);
@@ -318,7 +331,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.getRecentTransactions().length, 2);
 
-    await tester.tap(find.text('今日看板'));
+    await tester.tap(find.text('预算与专项'));
     await tester.pumpAndSettle();
 
     final projectSeg = find.text('专项预算');
@@ -739,7 +752,6 @@ void main() {
     await tester.pumpAndSettle();
 
     // Normalized data renders cleanly across all tabs without Dart type cast crashes
-    expect(find.text('Web 日常餐饮'), findsWidgets);
     expect(engine.budgetPools.any((p) => p['id'] == 'POOL_ASSET'), isFalse);
     expect(engine.projectTags.first.containsKey('linked_pool_id'), isFalse);
     expect(engine.transactions.length, 1);
@@ -755,8 +767,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Web同步晚餐'), findsOneWidget);
 
-    await tester.tap(find.text('今日看板'));
+    await tester.tap(find.text('预算与专项'));
     await tester.pumpAndSettle();
+    expect(find.text('Web 日常餐饮'), findsWidgets);
     final projectSeg = find.text('专项预算');
     await tester.ensureVisible(projectSeg);
     await tester.tap(projectSeg);
@@ -843,6 +856,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('2026-12'), findsOneWidget);
+    await tester.tap(find.text('预算与专项'));
+    await tester.pumpAndSettle();
     // 500.00 base + 380.00 rolled-over remaining = 880.00 available
     expect(find.text('总额 ¥880.00'), findsOneWidget);
 
@@ -866,6 +881,8 @@ void main() {
     await tester.tap(find.text('12月'));
     await tester.pumpAndSettle();
     expect(find.text('2026-12'), findsOneWidget);
+    await tester.tap(find.text('预算与专项'));
+    await tester.pumpAndSettle();
     expect(find.text('总额 ¥850.00'), findsOneWidget);
   });
 
@@ -897,8 +914,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.tap(find.text('预算与专项'));
+    await tester.pumpAndSettle();
 
-    // Mutate engine directly without calling onEngineChanged(): ListenableBuilder updates OverviewTab
+    // Mutate engine directly without calling onEngineChanged(): ListenableBuilder updates BudgetsTab
     engine.upsertBudgetPool(
       id: 'POOL_DAILY',
       name: '异步餐饮池',
@@ -998,6 +1017,9 @@ void main() {
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('预算与专项'));
+    await tester.pumpAndSettle();
+
     // Daily pool header, segmented progress bar ratios, and 3-column footer
     expect(find.text('日常'), findsOneWidget);
     expect(find.text('¥415.10'), findsOneWidget);
@@ -1032,7 +1054,11 @@ void main() {
     expect(dailyTotalWidget.maxLines, 1);
 
     // Scroll down to inspect Fixed pool and Overspent Flex pool
-    await tester.drag(find.byType(ListView), const Offset(0, -320));
+    final budgetsScroll = find.descendant(
+      of: find.byType(BudgetsTab),
+      matching: find.byType(ListView),
+    );
+    await tester.drag(budgetsScroll, const Offset(0, -320));
     await tester.pumpAndSettle();
 
     // Fixed pool uses "剩余 ¥204.00" (not "日均") and has 0 discountRatio
@@ -1196,7 +1222,12 @@ void main() {
     }
 
     // Bottom clearance >= 96 prevents +FAB overlap
-    final listView = tester.widget<ListView>(find.byType(ListView));
+    final listView = tester.widget<ListView>(
+      find.descendant(
+        of: find.byType(OverviewTab),
+        matching: find.byType(ListView),
+      ),
+    );
     expect((listView.padding as EdgeInsets).bottom, greaterThanOrEqualTo(96));
     expect(tester.takeException(), isNull);
 
@@ -1234,5 +1265,67 @@ void main() {
     );
     expect(zeroHeroBar.spentRatio, closeTo(0.2, 1e-4));
     expect(zeroHeroBar.discountRatio, 0.0);
+  });
+
+  testWidgets(
+      'Timeline renders both platform_discount and payment_discount on TransactionCard, summary strip, and edit dialog',
+      (WidgetTester tester) async {
+    await _setPhoneViewport(tester);
+    final engine = FlutterLedgerEngine(seedDemoData: true);
+    final today = getLocalTodayDateStr();
+
+    // DSL minus bills use platform_discount; `=` total overrides use payment_discount
+    engine.recordFromDsl('洗衣服 3-1', txDate: today);
+    engine.recordFromDsl('里脊饼 5.76-0.15', txDate: today);
+    engine.recordFromDsl('牛奶 28 + 排针 15 = 35', txDate: today);
+
+    await tester.pumpWidget(GeekLedgerApp(engine: engine));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('流水与周期'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('省 ¥1.00'), findsOneWidget);
+    expect(find.text('省 ¥0.15'), findsOneWidget);
+    expect(find.text('省 ¥8.00'), findsOneWidget);
+    expect(find.textContaining('省 ¥9.15'), findsOneWidget);
+
+    // Editing a platform_discount transaction pre-populates combined discount and preserves conservation
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -250));
+    await tester.pumpAndSettle();
+    final laundryCard = find.text('洗衣服');
+    await tester.ensureVisible(laundryCard);
+    await tester.tap(laundryCard);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -250));
+    await tester.pumpAndSettle();
+    final editBtn = find.text('编辑主账单');
+    await tester.ensureVisible(editBtn);
+    await tester.tap(editBtn);
+    await tester.pumpAndSettle();
+
+    final fields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    expect(
+      tester.widget<TextField>(fields.at(3)).controller?.text,
+      '1.00',
+    );
+    await tester.enterText(fields.at(3), '0.50');
+    await tester.tap(find.text('保存重算'));
+    await tester.pumpAndSettle();
+
+    final edited = engine.transactions.firstWhere(
+      (t) => (t['header'] as Map<String, dynamic>)['merchant_or_note'] == '洗衣服',
+    );
+    final eh = edited['header'] as Map<String, dynamic>;
+    expect(eh['platform_discount'], '0.00');
+    expect(eh['payment_discount'], '0.50');
+    expect(eh['total_net'], '2.50');
+    expect(find.text('省 ¥0.50'), findsOneWidget);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 500));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('省 ¥8.65'), findsOneWidget);
   });
 }

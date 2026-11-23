@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'budgets_tab.dart';
 import 'ledger_engine.dart';
 import 'overview_tab.dart';
 import 'platform_backup.dart';
@@ -229,7 +230,6 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
             onSettleFx: _showSettleFxDialog,
             onPullSync: _pullSync,
             onEngineChanged: _refresh,
-            onFilterByProject: _jumpToProjectTimeline,
           ),
           TimelineAndRecurringTab(
             engine: engine,
@@ -238,6 +238,13 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
             onEngineChanged: _refresh,
             externalProjectFilter: _projectFilterTagId,
             externalFilterNonce: _projectFilterNonce,
+          ),
+          BudgetsTab(
+            engine: engine,
+            selectedMonth: _selectedMonth,
+            onPullSync: _pullSync,
+            onEngineChanged: _refresh,
+            onFilterByProject: _jumpToProjectTimeline,
           ),
         ],
       ),
@@ -324,6 +331,11 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
             label: '流水与周期',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.pie_chart_outline),
+            selectedIcon: Icon(Icons.pie_chart),
+            label: '预算与专项',
           ),
         ],
       ),

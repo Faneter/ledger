@@ -171,7 +171,8 @@ class _TimelineAndRecurringTabState extends State<TimelineAndRecurringTab> {
       builder: (_) => EditTransactionDialog(
         initialNote: (h['merchant_or_note'] as String?) ?? '',
         initialGross: (h['total_gross'] as String?) ?? '0.00',
-        initialDiscount: (h['payment_discount'] as String?) ?? '0.00',
+        initialDiscount:
+            (headerTotalDiscountCents(h) / 100).toStringAsFixed(2),
         initialDate: (h['tx_date'] as String?) ?? getLocalTodayDateStr(),
       ),
     );
@@ -234,21 +235,26 @@ class _TimelineAndRecurringTabState extends State<TimelineAndRecurringTab> {
     final cs = Theme.of(context).colorScheme;
     final filtered = _filteredTransactions();
 
-    double sumExpense = 0;
-    double sumIncome = 0;
-    double sumDiscount = 0;
+    var sumExpenseCents = 0;
+    var sumIncomeCents = 0;
+    var sumDiscountCents = 0;
     for (final tx in filtered) {
       final h = tx['header'] as Map<String, dynamic>;
       final net = double.tryParse((h['total_net'] as String?) ?? '0') ?? 0;
+      final netCents = (net * 100).round();
       if (h['tx_type'] == 'INCOME') {
-        sumIncome += net;
+        sumIncomeCents += netCents;
       } else {
-        sumExpense += net;
-        final disc =
-            double.tryParse((h['payment_discount'] as String?) ?? '0') ?? 0;
-        sumDiscount += disc;
+        sumExpenseCents += netCents;
+        final discCents = headerTotalDiscountCents(h);
+        if (discCents > 0) {
+          sumDiscountCents += discCents;
+        }
       }
     }
+    final sumExpense = sumExpenseCents / 100;
+    final sumIncome = sumIncomeCents / 100;
+    final sumDiscount = sumDiscountCents / 100;
 
     return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
