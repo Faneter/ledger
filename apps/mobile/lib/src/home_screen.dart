@@ -7,7 +7,6 @@ import 'quick_record_sheet.dart';
 import 'settings_page.dart';
 import 'timeline_tab.dart';
 import 'ui_helpers.dart';
-import 'recurring_rules_tab.dart';
 import 'widgets/month_picker_dialog.dart';
 
 class LedgerHomeScreen extends StatefulWidget {
@@ -33,6 +32,8 @@ class LedgerHomeScreen extends StatefulWidget {
 class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   int _tabIndex = 0;
   late String _selectedMonth;
+  String? _projectFilterTagId;
+  int _projectFilterNonce = 0;
   late EngineChangeNotifier _engineNotifier;
 
   @override
@@ -72,6 +73,14 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
   void _refresh() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  void _jumpToProjectTimeline(String tagId) {
+    setState(() {
+      _projectFilterTagId = tagId;
+      _projectFilterNonce += 1;
+      _tabIndex = 1;
+    });
   }
 
   Future<void> _openQuickRecordSheet({
@@ -220,17 +229,15 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
             onSettleFx: _showSettleFxDialog,
             onPullSync: _pullSync,
             onEngineChanged: _refresh,
+            onFilterByProject: _jumpToProjectTimeline,
           ),
-          TimelineAndProjectsTab(
+          TimelineAndRecurringTab(
             engine: engine,
             onSettleFx: _showSettleFxDialog,
             onPullSync: _pullSync,
             onEngineChanged: _refresh,
-          ),
-          RecurringRulesTab(
-            engine: engine,
-            onPullSync: _pullSync,
-            onEngineChanged: _refresh,
+            externalProjectFilter: _projectFilterTagId,
+            externalFilterNonce: _projectFilterNonce,
           ),
         ],
       ),
@@ -316,12 +323,7 @@ class _LedgerHomeScreenState extends State<LedgerHomeScreen> {
           NavigationDestination(
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
-            label: '流水与专项',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.event_repeat_outlined),
-            selectedIcon: Icon(Icons.event_repeat),
-            label: '周期扣款',
+            label: '流水与周期',
           ),
         ],
       ),

@@ -51,11 +51,14 @@ void main() {
     expect(find.textContaining('POOL_DAILY'), findsNothing);
     expect(find.text('暂无月度预算池'), findsOneWidget);
     expect(find.text('月度预算池水位 (0)'), findsOneWidget);
+    expect(find.text('月度预算池'), findsOneWidget);
+    expect(find.text('专项预算'), findsOneWidget);
 
-    // 3-Tab NavigationBar + FAB (no '引擎' wording in 3rd tab)
+    // 2-Tab NavigationBar + FAB
     expect(find.text('今日看板'), findsOneWidget);
-    expect(find.text('流水与专项'), findsOneWidget);
-    expect(find.text('周期扣款'), findsOneWidget);
+    expect(find.text('流水与周期'), findsOneWidget);
+    expect(find.text('流水与专项'), findsNothing);
+    expect(find.text('周期扣款'), findsNothing);
     expect(find.text('卡包与周期'), findsNothing);
     expect(find.text('卡包与引擎'), findsNothing);
     expect(find.byTooltip('设置'), findsOneWidget);
@@ -236,13 +239,15 @@ void main() {
       isTrue,
     );
 
-    // 3. Switch to 流水与专项 -> 专项立项 and create a detached Project Budget
-    await tester.tap(find.text('流水与专项'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('专项立项'));
+    // 3. Switch to 专项预算 segment on 今日看板 and create a detached Project Budget
+    final projectSeg = find.text('专项预算');
+    await tester.ensureVisible(projectSeg);
+    await tester.tap(projectSeg);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('新增专项'));
+    final addProjBtn = find.text('新增专项');
+    await tester.ensureVisible(addProjBtn);
+    await tester.tap(addProjBtn);
     await tester.pumpAndSettle();
     expect(find.text('新增跨期独立专项预算'), findsOneWidget);
     expect(find.text('关联预算池'), findsNothing);
@@ -275,7 +280,7 @@ void main() {
     await tester.pumpWidget(GeekLedgerApp(engine: engine));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('流水与专项'));
+    await tester.tap(find.text('流水与周期'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.textContaining('原价 ¥43.00'));
@@ -313,15 +318,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.getRecentTransactions().length, 2);
 
-    await tester.tap(find.text('专项立项'));
+    await tester.tap(find.text('今日看板'));
+    await tester.pumpAndSettle();
+
+    final projectSeg = find.text('专项预算');
+    await tester.ensureVisible(projectSeg);
+    await tester.tap(projectSeg);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('专项预算总览'), findsOneWidget);
     expect(find.text('#JLPT_N2考试专项'), findsOneWidget);
+
+    final filterBtn = find.text('查流水').first;
+    await tester.ensureVisible(filterBtn);
+    await tester.tap(filterBtn);
+    await tester.pumpAndSettle();
+
+    expect(find.text('N2报名费'), findsOneWidget);
+    expect(find.textContaining('原价 ¥43.00'), findsNothing);
   });
 
   testWidgets(
-      'Recurring Rules tab handles empty state, adding recurring rule without pools, and honest unreachable HTTP sync error',
+      'Recurring Rules segment handles empty state, adding recurring rule without pools, and honest unreachable HTTP sync error',
       (WidgetTester tester) async {
     await _setPhoneViewport(tester);
 
@@ -332,6 +350,8 @@ void main() {
     await tester.pumpWidget(GeekLedgerApp(engine: offlineEngine));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('流水与周期'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('周期扣款'));
     await tester.pumpAndSettle();
 
@@ -731,10 +751,15 @@ void main() {
     expect(engine.syncOplog.any((op) => op['entity_type'] == 'VOUCHER'), isFalse);
     expect(engine.settings['fx_default_hold_ratio'], '1.030');
 
-    await tester.tap(find.text('流水与专项'));
+    await tester.tap(find.text('流水与周期'));
     await tester.pumpAndSettle();
     expect(find.text('Web同步晚餐'), findsOneWidget);
-    await tester.tap(find.text('专项立项'));
+
+    await tester.tap(find.text('今日看板'));
+    await tester.pumpAndSettle();
+    final projectSeg = find.text('专项预算');
+    await tester.ensureVisible(projectSeg);
+    await tester.tap(projectSeg);
     await tester.pumpAndSettle();
     expect(find.text('#Web考证'), findsOneWidget);
   });

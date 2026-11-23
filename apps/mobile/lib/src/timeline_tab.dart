@@ -1,31 +1,36 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'ledger_engine.dart';
-import 'timeline/projects_view.dart';
+import 'recurring/recurring_rules_view.dart';
 import 'timeline/transaction_card.dart';
 import 'timeline/transaction_dialogs.dart';
 import 'ui_helpers.dart';
 
-class TimelineAndProjectsTab extends StatefulWidget {
-  const TimelineAndProjectsTab({
+class TimelineAndRecurringTab extends StatefulWidget {
+  const TimelineAndRecurringTab({
     super.key,
     required this.engine,
     required this.onSettleFx,
     required this.onPullSync,
     required this.onEngineChanged,
+    this.externalProjectFilter,
+    this.externalFilterNonce = 0,
   });
 
   final FlutterLedgerEngine engine;
   final Future<void> Function(Map<String, dynamic> tx) onSettleFx;
   final Future<void> Function() onPullSync;
   final VoidCallback onEngineChanged;
+  final String? externalProjectFilter;
+  final int externalFilterNonce;
 
   @override
-  State<TimelineAndProjectsTab> createState() => _TimelineAndProjectsTabState();
+  State<TimelineAndRecurringTab> createState() =>
+      _TimelineAndRecurringTabState();
 }
 
-class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
-  int _segmentIndex = 0; // 0 = 按日流水, 1 = 专项立项
+class _TimelineAndRecurringTabState extends State<TimelineAndRecurringTab> {
+  int _segmentIndex = 0; // 0 = 按日流水, 1 = 周期扣款
   String _keyword = '';
   String _typeFilter = 'ALL'; // ALL | EXPENSE | INCOME | PENDING_HOLD
   String _targetFilter = 'ALL'; // ALL | POOL:<id> | PROJECT:<id>
@@ -36,6 +41,16 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
   String _cachedTypeFilter = 'ALL';
   String _cachedTargetFilter = 'ALL';
   List<Map<String, dynamic>> _cachedFilteredTxs = const <Map<String, dynamic>>[];
+
+  @override
+  void didUpdateWidget(covariant TimelineAndRecurringTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.externalFilterNonce != oldWidget.externalFilterNonce &&
+        widget.externalProjectFilter != null) {
+      _targetFilter = 'PROJECT:${widget.externalProjectFilter}';
+      _segmentIndex = 0;
+    }
+  }
 
   @override
   void dispose() {
@@ -172,59 +187,6 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
     }
   }
 
-  Future<void> _openProjectEditorDialog({
-    Map<String, dynamic>? existing,
-  }) async {
-    final isEdit = existing != null;
-    final defaultYm = getLocalTodayDateStr().substring(0, 7);
-    final result = await showDialog<ProjectDialogResult>(
-      context: context,
-      builder: (_) => ProjectEditorDialog(
-        isEdit: isEdit,
-        initialName: isEdit ? (existing['name'] as String) : '',
-        initialBudget:
-            isEdit ? ((existing['target_budget'] as String?) ?? '') : '500.00',
-        initialStartDate:
-            isEdit ? ((existing['start_date'] as String?) ?? '') : '$defaultYm-01',
-        initialEndDate:
-            isEdit ? ((existing['end_date'] as String?) ?? '') : '$defaultYm-30',
-        initialActive: existing != null ? existing['is_active'] != false : true,
-      ),
-    );
-
-    if (result == null) return;
-    try {
-      widget.engine.upsertProjectTag(
-        id: existing?['id'] as String?,
-        name: result.name,
-        targetBudget: result.targetBudget,
-        startDate: result.startDate,
-        endDate: result.endDate,
-        isActive: result.isActive,
-      );
-      widget.onEngineChanged();
-      if (mounted) {
-        showLedgerSnackBar(
-          context,
-          isEdit ? '专项立项已更新' : '已新增专项【${result.name}】',
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        showLedgerSnackBar(context, '保存专项预算失败: $e', isError: true);
-      }
-    }
-  }
-
-  void _deleteProjectTag(String tagId) {
-    try {
-      widget.engine.deleteProjectTag(tagId);
-      widget.onEngineChanged();
-    } catch (e) {
-      showLedgerSnackBar(context, '$e', isError: true);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -244,8 +206,8 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
                   ),
                   ButtonSegment<int>(
                     value: 1,
-                    icon: Icon(Icons.flag_outlined),
-                    label: Text('专项立项'),
+                    icon: Icon(Icons.event_repeat_outlined),
+                    label: Text('周期扣款'),
                   ),
                 ],
                 selected: <int>{_segmentIndex},
@@ -258,16 +220,9 @@ class _TimelineAndProjectsTabState extends State<TimelineAndProjectsTab> {
           Expanded(
             child: _segmentIndex == 0
                 ? _buildTimelineList(context)
-                : ProjectsView(
+                : RecurringRulesView(
                     engine: widget.engine,
-                    onOpenProjectEditor: _openProjectEditorDialog,
-                    onDeleteProject: _deleteProjectTag,
-                    onFilterByProject: (tagId) {
-                      setState(() {
-                        _targetFilter = 'PROJECT:$tagId';
-                        _segmentIndex = 0;
-                      });
-                    },
+                    onEngineChanged: widget.onEngineChanged,
                   ),
           ),
         ],
