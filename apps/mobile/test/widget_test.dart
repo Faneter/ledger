@@ -1327,5 +1327,42 @@ void main() {
     await tester.drag(find.byType(CustomScrollView), const Offset(0, 500));
     await tester.pumpAndSettle();
     expect(find.textContaining('省 ¥8.65'), findsOneWidget);
+
+    // Legacy header with duplicated platform_discount + payment_discount still displays (gross - net)
+    engine.transactions.add(<String, dynamic>{
+      'header': <String, dynamic>{
+        'id': 'tx_dup_disc_legacy',
+        'tx_date': today,
+        'tx_type': 'EXPENSE',
+        'total_gross': '49.45',
+        'platform_discount': '0.65',
+        'payment_discount': '0.65',
+        'total_net': '48.80',
+        'allocation_mode': 'SINGLE',
+        'original_currency': 'CNY',
+        'settlement_status': 'SETTLED',
+        'hold_amount_cny': '0.00',
+        'merchant_or_note': '秋衣重复折扣兼容',
+        'created_at': '${today}T12:00:00Z',
+        'is_deleted': false,
+      },
+      'items': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 999,
+          'tx_id': 'tx_dup_disc_legacy',
+          'item_index': 0,
+          'item_name': '秋衣',
+          'budget_pool_id': 'POOL_FLEX',
+          'item_gross': '49.45',
+          'allocated_discount': '0.65',
+          'item_net': '48.80',
+          'is_primary_item': true,
+        },
+      ],
+    });
+    engine.upsertBudgetPool(id: 'POOL_FLEX', name: '弹性');
+    await tester.pumpAndSettle();
+    expect(find.text('省 ¥0.65'), findsOneWidget);
+    expect(find.textContaining('省 ¥9.30'), findsOneWidget);
   });
 }

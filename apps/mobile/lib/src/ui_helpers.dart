@@ -273,11 +273,14 @@ class EngineChangeNotifier extends ChangeNotifier {
   }
 }
 
-/// Returns combined order discount (`platform_discount + payment_discount`) in integer cents.
+/// Returns effective order discount (`total_gross - total_net`, clamped >= 0) in integer cents.
+/// Using `total_gross - total_net` guarantees exact agreement with pool/project `allocated_discount`
+/// sums even on legacy headers edited before `platform_discount` clearing was added.
 int headerTotalDiscountCents(Map<String, dynamic> header) {
-  final platform =
-      double.tryParse((header['platform_discount'] as String?) ?? '0') ?? 0;
-  final payment =
-      double.tryParse((header['payment_discount'] as String?) ?? '0') ?? 0;
-  return (platform * 100).round() + (payment * 100).round();
+  if (header['tx_type'] == 'INCOME') return 0;
+  final gross =
+      double.tryParse((header['total_gross'] as String?) ?? '0') ?? 0;
+  final net = double.tryParse((header['total_net'] as String?) ?? '0') ?? 0;
+  final diffCents = (gross * 100).round() - (net * 100).round();
+  return diffCents > 0 ? diffCents : 0;
 }
